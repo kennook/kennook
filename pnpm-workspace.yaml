@@ -1,0 +1,13 @@
+# pnpm v10+ canonical settings file. Used even for single-package repos.
+# Approve native-binding install/postinstall scripts for legitimate deps.
+allowBuilds:
+  # tfjs-node's postinstall downloads the platform-native libtensorflow
+  # shared lib used for face-recognition inference.
+  '@tensorflow/tfjs-node': true
+  # core-js postinstall is a donation banner — harmless, declined.
+  core-js: false
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true

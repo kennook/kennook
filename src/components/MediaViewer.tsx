@@ -1,0 +1,1768 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { MediaItemDto } from './MediaGrid';
+import { VideoPlayer } from './VideoPlayer';
+import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
+import { getMediaView, setMediaView } from '@/lib/media-pan';
+import { isSensitive } from '@/lib/sensitive-thresholds';
+import { trpc } from '@/lib/trpc-client';
+import { ViewerReel } from './ViewerReel';
+import { SparkleBurst } from './SparkleBurst';
+import { RatingFlash } from './RatingFlash';
+import { VoiceTagButton, useVoiceTagger, VoiceTagStatusLine, MicIcon } from './VoiceTagButton';
+import { FEATURES } from '@/lib/feature-flags';
+import { usePreference } from '@/lib/preferences';
+import { ViewportMinimap } from './ViewportMinimap';
+
+const CHROME_IDLE_MS = 2500;
+
+const MAX_LIKES = 5;
+
+// Debounce window for the like action — rapid H presses or clicks during this
+// window accumulate into a single server mutation. Long enough to feel
+// forgiving (a user tapping H four times still gets one request), short
+// enough that a deliberate single press feels responsive.
+const LIKE_DEBOUNCE_MS = 500;
+
+// Slideshow timing. Photo display matches the Ken Burns animation duration
+// so the zoom plays once through per slide. Fade overlap is short so the
+// motion on the new slide isn't washed out by the crossfade.
+// Default slideshow per-photo dwell. Overridable by the user via
+// `slideshowPhotoMs` preference; constants below cap the adjustable
+// range so the slideshow can't be set unusably fast or slow.
+const SLIDESHOW_MIN_MS = 2000;
+const SLIDESHOW_MAX_MS = 30000;
+const SLIDESHOW_STEP_MS = 1000;
+const SLIDESHOW_FADE_MS = 600;
+
+interface Props {
+  item: MediaItemDto | null;
+  onClose: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  onSeeSimilar?: (item: MediaItemDto) => void;
+  /** Same handler the grid uses; lets viewer rate without leaving the modal. */
+  onSetLikes?: (item: MediaItemDto, count: number) => Promise<void> | void;
+  position?: { index: number; total: number };
+  /** When true, the viewer is in slideshow mode: always fullscreen, photos
+   *  auto-advance after SLIDESHOW_PHOTO_MS with crossfade + Ken Burns,
+   *  videos advance when they reach the end. Space pauses; Esc exits to
+   *  the regular viewer. */
+  slideshow?: boolean;
+  /** Called when Esc is pressed while slideshow is active — exits slideshow
+   *  but keeps the viewer open on the current item. */
+  onSlideshowExit?: () => void;
+  /** If the page is filtering by a person, pass that uuid here so the
+   *  viewer can show a "Reassign person" affordance. */
+  currentPersonUuid?: string | null;
+  /** Called when the user clicks "Reassign person". Parent owns the
+   *  dialog so it can mount above this viewer. */
+  onReassignPerson?: (item: MediaItemDto) => void;
+  /** Persist a rotation override for the current photo (0/90/180/270).
+   *  Photo-only — videos handle their own orientation. */
+  onRotate?: (item: MediaItemDto, rotation: 0 | 90 | 180 | 270) => void;
+  /** Items + cursor + has-more for the "coming up" reel rendered along
+   *  the bottom of the maxed viewer. Pass all three together; if any is
+   *  missing the reel is silently skipped. */
+  reelItems?: MediaItemDto[];
+  reelHasMore?: boolean;
+  onSelectItem?: (item: MediaItemDto) => void;
+  /** Open the "Add to playlist" dialog targeting this item. Parent owns
+   *  the dialog so it can mount above the viewer. */
+  onAddToPlaylist?: (item: MediaItemDto) => void;
+  /** Controlled maxed-mode flag. When BOTH `maxed` and `onMaxedChange`
+   *  are provided, the viewer is controlled and the parent owns the
+   *  state (typically synced to the URL). When omitted, the viewer
+   *  falls back to internal `useState` for backward compatibility. */
+  maxed?: boolean;
+  onMaxedChange?: (maxed: boolean) => void;
+}
+
+/**
+ * Single unified tree for both normal and maxed views. The media element
+ * (image or VideoPlayer) is always rendered at the same JSX position, so
+ * React keeps it mounted when `maxed` toggles — preserving video playback
+ * state (currentTime, paused, muted, etc.) across F-key toggles.
+ *
+ * Outer container class + sidebar/toolbar visibility flip based on mode.
+ */
+export function MediaViewer({
+  item, onClose, onPrev, onNext, onSeeSimilar, onSetLikes, position,
+  slideshow = false, onSlideshowExit,
+  currentPersonUuid = null, onReassignPerson,
+  onRotate,
+  reelItems, reelHasMore, onSelectItem,
+  onAddToPlaylist,
+  maxed: controlledMaxed,
+  onMaxedChange,
+}: Props) {
+  // Maxed can be controlled by the parent (preferred — typically synced
+  // to the URL) or self-managed via useState (back-compat). Controlled
+  // when both `controlledMaxed` and `onMaxedChange` are provided.
+  const [internalMaxed, setInternalMaxed] = useState(false);
+  const isMaxedControlled = controlledMaxed !== undefined && onMaxedChange !== undefined;
+  const maxed = isMaxedControlled ? controlledMaxed : internalMaxed;
+  // Ref shadow so `setMaxed`'s function-updater form can read the
+  // latest value without recapturing on every render.
+  const maxedRef = useRef(maxed);
+  maxedRef.current = maxed;
+  const setMaxed = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    const resolved = typeof next === 'function'
+      ? (next as (prev: boolean) => boolean)(maxedRef.current)
+      : next;
+    if (isMaxedControlled) onMaxedChange!(resolved);
+    else setInternalMaxed(resolved);
+  }, [isMaxedControlled, onMaxedChange]);
+
+  const [fit, setFit] = useState<'cover' | 'contain'>('cover');
+  // Zoom multiplier applied as `transform: scale(zoom)` on top of the
+  // current fit mode. Range [1.0, 4.0] — can only zoom IN past the
+  // chosen fit, never further out (toggling to contain handles "see the
+  // whole thing"). Resets to 1.0 on item change and on fit toggle.
+  const [zoom, setZoom] = useState(1);
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 4;
+  const ZOOM_STEP = 0.25;
+
+  // Slideshow state. `prevItem` holds the previously-displayed item for one
+  // crossfade duration so the dual-layer render can fade it out alongside
+  // the new one fading in. `paused` freezes the auto-advance timer and the
+  // Ken Burns animation.
+  const [prevItem, setPrevItem] = useState<MediaItemDto | null>(null);
+  const [paused, setPaused] = useState(false);
+
+  // Chrome auto-hide in maxed mode: floating buttons + nav arrows + position
+  // indicator fade out after ~2.5s of mouse inactivity. Same UX as YouTube
+  // / Plex / Apple TV. Reset on any mouse movement.
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const idleTimerRef = useRef<number | null>(null);
+
+  // Pan offset in pixels (translate applied to media in maxed + cover mode).
+  // Only meaningful when content overflows the viewport (cover fit clips
+  // edges). Driven by the corner minimap widget — direct drag-on-content
+  // is intentionally disabled so it doesn't fight the video controls.
+  // Persisted per item in localStorage — see `lib/media-pan.ts`.
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+
+  // Intentionally do NOT reset `maxed`/`fit` when `item` briefly becomes null.
+  // During cross-page navigation the parent may flicker `item` to null for a
+  // single render between pages; resetting would kick the user out of
+  // fullscreen mid-transition. Users exit fullscreen explicitly via Esc/F.
+
+  // Resize trigger: derived geometry (bounds, minimap layout) reads
+  // window.innerWidth/Height during render. Without this, a window
+  // resize wouldn't re-render the viewer and the minimap rectangle
+  // would lag the actual visible region until something else triggered
+  // a render.
+  const [resizeTick, setResizeTick] = useState(0);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setResizeTick((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Cover-fit pixel dimensions of the current item plus pan limits.
+  //   cw, ch    = image dimensions when rendered with `object-fit: cover`
+  //               (baseline; zoom multiplies the visual rendering).
+  //   maxX, maxY = pan limits in cover-pixel units. At zoom 1 this is
+  //               just the cover-overflow on each axis (one is usually
+  //               zero for non-matching aspect ratios). At zoom > 1 the
+  //               limit grows on BOTH axes because the scaled image
+  //               now overflows in both directions — the user can pan
+  //               into the dimension that previously had no overflow.
+  //
+  //   formula: maxX = (cw·zoom − vw) / (2·zoom) cover-pixels
+  //     • At zoom 1: (cw − vw) / 2 = pure cover-overflow.
+  //     • At zoom 2: (2cw − vw) / 4, strictly larger than zoom-1 limit.
+  //     • The `/ (2·zoom)` converts viewport-pixels of overflow back
+  //       into cover-pixels (1 cover-pixel = `zoom` viewport-pixels
+  //       after the CSS scale transform).
+  const computeBounds = useCallback(() => {
+    if (!item || !item.width || !item.height || typeof window === 'undefined') {
+      return { maxX: 0, maxY: 0, cw: 0, ch: 0, vw: 0, vh: 0 };
+    }
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const contentRatio = item.width / item.height;
+    const viewportRatio = vw / vh;
+    let cw: number; let ch: number;
+    if (contentRatio > viewportRatio) {
+      ch = vh;
+      cw = ch * contentRatio;
+    } else {
+      cw = vw;
+      ch = cw / contentRatio;
+    }
+    return {
+      maxX: Math.max(0, (cw * zoom - vw) / (2 * zoom)),
+      maxY: Math.max(0, (ch * zoom - vh) / (2 * zoom)),
+      cw, ch, vw, vh,
+    };
+    // resizeTick + zoom intentionally included so consumers recompute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item, resizeTick, zoom]);
+
+  // Restore the saved pan offset for this item (or reset to (0,0) when none).
+  // Zoom always resets to 1.0 on item change — each item starts at its
+  // natural fit framing. Pan is persisted across navigation and reloads
+  // so returning to a previously-panned item lands you on the same framing.
+  //
+  // Gated on a uuid-change ref because `item` itself can be replaced by a
+  // new object after a refetch (e.g., a like mutation invalidates queries);
+  // without this guard, an in-progress pan drag could be snapped back to
+  // the saved value mid-gesture.
+  const lastPanUuidRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!item) {
+      setPan({ x: 0, y: 0 });
+      setZoom(1);
+      lastPanUuidRef.current = null;
+      return;
+    }
+    if (lastPanUuidRef.current === item.uuid) return;
+    lastPanUuidRef.current = item.uuid;
+    const saved = getMediaView(`${item.workspaceSlug}:${item.uuid}`);
+    if (!saved) {
+      setPan({ x: 0, y: 0 });
+      setZoom(1);
+      return;
+    }
+    setZoom(saved.zoom);
+    // Pan limits depend on zoom; computeBounds reads the current zoom
+    // state which hasn't flushed yet, so recompute manually with the
+    // saved zoom to clamp the restored pan correctly.
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    const r = (item.width ?? 1) / (item.height ?? 1);
+    const vr = vw / (vh || 1);
+    const cw = r > vr ? vh * r : vw;
+    const ch = r > vr ? vh : vw / r;
+    const maxX = Math.max(0, (cw * saved.zoom - vw) / (2 * saved.zoom));
+    const maxY = Math.max(0, (ch * saved.zoom - vh) / (2 * saved.zoom));
+    setPan({
+      x: Math.max(-maxX, Math.min(maxX, saved.x)),
+      y: Math.max(-maxY, Math.min(maxY, saved.y)),
+    });
+  }, [item]);
+
+  // Pan is meaningful only in maxed + cover-fit, and never during
+  // slideshow — the slideshow's automated Ken Burns owns the framing,
+  // and reactivating pan on pause would snap the photo to whatever pan
+  // offset was last saved for this item, which feels like a bug.
+  const isPanEnabled = maxed && fit === 'cover' && !slideshow;
+
+  // Re-clamp pan whenever zoom changes — the bounds grew (zoom in)
+  // or shrunk (zoom out), so a previously-valid pan may now be out of
+  // range. Return the same ref when unchanged to avoid render churn.
+  useEffect(() => {
+    const { maxX, maxY } = computeBounds();
+    setPan((p) => {
+      const nx = Math.max(-maxX, Math.min(maxX, p.x));
+      const ny = Math.max(-maxY, Math.min(maxY, p.y));
+      return (nx === p.x && ny === p.y) ? p : { x: nx, y: ny };
+    });
+  }, [zoom, computeBounds]);
+
+  // Zoom mutators. Clamp into [MIN_ZOOM, MAX_ZOOM]. Zoom out below 1.0
+  // is intentionally disallowed — use Fit (C) to see the whole image
+  // instead.
+  const clampZoom = useCallback((z: number) =>
+    Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z)), []);
+
+  // panRef lets persist helpers read the latest pan without dragging
+  // it into useCallback deps (which would re-create them on every
+  // pan tick — wasteful).
+  const panRef = useRef(pan);
+  panRef.current = pan;
+
+  // Persist the current view (pan + new zoom) for this item. Called
+  // from user-initiated zoom changes; not from the restore effect
+  // (which loaded from storage in the first place). Skipped during
+  // slideshow so transient adjustments (e.g. Fit/Cover toggle while
+  // viewing the slideshow) don't overwrite the item's saved view.
+  const persistZoom = useCallback((newZoom: number) => {
+    if (!item || slideshow) return;
+    setMediaView(`${item.workspaceSlug}:${item.uuid}`, {
+      x: panRef.current.x,
+      y: panRef.current.y,
+      zoom: newZoom,
+    });
+  }, [item, slideshow]);
+
+  const zoomIn = useCallback(() => {
+    setZoom((z) => {
+      const next = clampZoom(z + ZOOM_STEP);
+      if (next !== z) persistZoom(next);
+      return next;
+    });
+  }, [clampZoom, persistZoom]);
+  const zoomOut = useCallback(() => {
+    setZoom((z) => {
+      const next = clampZoom(z - ZOOM_STEP);
+      if (next !== z) persistZoom(next);
+      return next;
+    });
+  }, [clampZoom, persistZoom]);
+
+  // ── Slideshow effects ───────────────────────────────────────────────
+  //
+  // 1) Force fullscreen whenever slideshow turns on.
+  useEffect(() => {
+    if (slideshow) {
+      setMaxed(true);
+      setPaused(false);
+    }
+  }, [slideshow]);
+
+  // 2) Track the prior item for crossfade. When `item.uuid` changes while
+  //    slideshow is active, capture the outgoing item into `prevItem` for
+  //    SLIDESHOW_FADE_MS so its fade-out keyframes can run alongside the
+  //    new slide's fade-in.
+  const prevItemForFadeRef = useRef<MediaItemDto | null>(null);
+  useEffect(() => {
+    if (!slideshow) {
+      setPrevItem(null);
+      prevItemForFadeRef.current = item ?? null;
+      return;
+    }
+    const outgoing = prevItemForFadeRef.current;
+    if (outgoing && outgoing.uuid !== item?.uuid && outgoing.kind === 'photo') {
+      setPrevItem(outgoing);
+      const t = window.setTimeout(() => setPrevItem(null), SLIDESHOW_FADE_MS);
+      prevItemForFadeRef.current = item ?? null;
+      return () => window.clearTimeout(t);
+    }
+    prevItemForFadeRef.current = item ?? null;
+  }, [item, slideshow]);
+
+  // 3) Auto-advance for photos. Videos advance via onEnded; this timer is
+  //    photo-only. Pause stops scheduling. Duration is the user's
+  //    slideshow preference (adjustable via , / . in slideshow mode).
+  const [slideshowPhotoMs, setSlideshowPhotoMs] = usePreference('slideshowPhotoMs');
+  useEffect(() => {
+    if (!slideshow || paused || !item) return;
+    if (item.kind !== 'photo') return;
+    if (!onNext) return;
+    const t = window.setTimeout(() => onNext(), slideshowPhotoMs);
+    return () => window.clearTimeout(t);
+  }, [item, slideshow, paused, onNext, slideshowPhotoMs]);
+
+  // Brief overlay shown when the user adjusts slideshow speed.
+  // Incrementing the key re-mounts the indicator so its fade-out
+  // animation re-plays on every adjustment.
+  const [speedNotice, setSpeedNotice] = useState<{ key: number; ms: number } | null>(null);
+  useEffect(() => {
+    if (!speedNotice) return;
+    const t = window.setTimeout(() => setSpeedNotice(null), 1500);
+    return () => window.clearTimeout(t);
+  }, [speedNotice]);
+
+  const adjustSlideshowSpeed = useCallback((deltaMs: number) => {
+    const next = Math.max(
+      SLIDESHOW_MIN_MS,
+      Math.min(SLIDESHOW_MAX_MS, slideshowPhotoMs + deltaMs),
+    );
+    if (next === slideshowPhotoMs) return;
+    setSlideshowPhotoMs(next);
+    setSpeedNotice({ key: Date.now(), ms: next });
+  }, [slideshowPhotoMs, setSlideshowPhotoMs]);
+
+  // Whenever we leave maxed mode (or the viewer closes), drop any pending
+  // idle timer and show all chrome.
+  useEffect(() => {
+    if (!maxed) {
+      if (idleTimerRef.current) {
+        window.clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      setChromeVisible(true);
+    } else {
+      // Entering maxed: show chrome immediately, then start the idle timer.
+      setChromeVisible(true);
+      idleTimerRef.current = window.setTimeout(
+        () => setChromeVisible(false),
+        CHROME_IDLE_MS,
+      );
+    }
+    return () => {
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    };
+  }, [maxed]);
+
+  // While the cursor is over any chrome element, the idle timer is
+  // suspended — fading the controls out from under the user's pointer
+  // looks like a bug. Tracked via a ref so the chrome-hover handlers
+  // can read/write it without triggering renders.
+  const chromeHoveredRef = useRef(false);
+
+  // Show chrome and (re-)arm the idle timer. Used by both mouse movement
+  // and by shortcut handlers — pressing a key in fullscreen now reveals
+  // the chrome briefly so the user sees the effect of their action. If
+  // the cursor is over chrome, we show but DON'T start the timer (the
+  // mouseleave handler restarts it when the cursor exits).
+  const pulseChrome = useCallback(() => {
+    if (!maxed) return;
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    setChromeVisible(true);
+    if (chromeHoveredRef.current) return;
+    idleTimerRef.current = window.setTimeout(
+      () => setChromeVisible(false),
+      CHROME_IDLE_MS,
+    );
+  }, [maxed]);
+
+  // Handlers spread onto every chrome wrapper so the idle timer
+  // suspends/resumes correctly as the cursor enters/leaves controls.
+  const chromeHoverHandlers = {
+    onMouseEnter: () => {
+      chromeHoveredRef.current = true;
+      if (idleTimerRef.current) {
+        window.clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      setChromeVisible(true);
+    },
+    onMouseLeave: () => {
+      chromeHoveredRef.current = false;
+      pulseChrome();
+    },
+  };
+
+  // Minimap drives pan: continuous updates during drag, final commit on
+  // release. We persist on commit, not on every move, to keep
+  // localStorage writes off the hot path. The `panDragging` flag turns
+  // off the object-position transition during drag — otherwise the
+  // rendered content would lag the minimap rectangle.
+  const [panDragging, setPanDragging] = useState(false);
+  const handleMinimapPan = useCallback((next: { x: number; y: number }) => {
+    setPan(next);
+    setPanDragging(true);
+  }, []);
+  const handleMinimapCommit = useCallback((final: { x: number; y: number }) => {
+    setPanDragging(false);
+    if (item) {
+      setMediaView(`${item.workspaceSlug}:${item.uuid}`, { ...final, zoom });
+    }
+  }, [item, zoom]);
+
+  // Step-down "back" handler. Used by both the Esc shortcut and the
+  // top-right X button so they behave identically:
+  //   slideshow → exit slideshow (keep viewer on current item)
+  //   maxed     → un-maximize (drop back to the preview modal)
+  //   preview   → close the viewer entirely
+  // A second press repeats the same logic at the next level.
+  const handleStepBack = useCallback(() => {
+    if (slideshow) { onSlideshowExit?.(); return; }
+    if (maxed) { setMaxed(false); return; }
+    onClose();
+  }, [slideshow, maxed, onSlideshowExit, setMaxed, onClose]);
+
+  useShortcut('viewer.close', handleStepBack, { enabled: !!item });
+
+  // Space toggles pause when the slide is a photo. For videos we let
+  // VideoPlayer's own Space handler pause playback (pausing the video
+  // naturally stops the slideshow from advancing past it).
+  useShortcut(
+    'video.playPause',
+    (e) => { e.preventDefault(); setPaused((v) => !v); pulseChrome(); },
+    { enabled: !!item && slideshow && item?.kind === 'photo' },
+  );
+
+  useShortcut('viewer.maximize', () => setMaxed((v) => !v), { enabled: !!item });
+
+  useShortcut('viewer.fitToggle', () => {
+    if (maxed) {
+      setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
+      // Toggling fit resets the zoom multiplier — the new fit is the
+      // new baseline. Without this, zooming in then toggling fit would
+      // leave the user looking at a scaled-up contain-fit image.
+      setZoom(1);
+      persistZoom(1);
+      pulseChrome();
+    }
+  }, { enabled: !!item && maxed });
+  useShortcut('viewer.zoomIn', () => {
+    if (maxed) { zoomIn(); pulseChrome(); }
+  }, { enabled: !!item && maxed && !slideshow });
+  useShortcut('viewer.zoomOut', () => {
+    if (maxed) { zoomOut(); pulseChrome(); }
+  }, { enabled: !!item && maxed && !slideshow });
+  // Slideshow speed adjust — only active when slideshow is on. `,`
+  // slows down (more time per photo), `.` speeds up (less time).
+  useShortcut('viewer.slideshowSlower', () => {
+    adjustSlideshowSpeed(SLIDESHOW_STEP_MS);
+  }, { enabled: !!item && slideshow });
+  useShortcut('viewer.slideshowFaster', () => {
+    adjustSlideshowSpeed(-SLIDESHOW_STEP_MS);
+  }, { enabled: !!item && slideshow });
+
+  // Up/Down navigates between items regardless of kind. Left/Right are
+  // now reserved for video seek (handled inside VideoPlayer); for a
+  // photo, those keys do nothing.
+  useShortcut('nav.prevItem', () => { onPrev?.(); pulseChrome(); }, { enabled: !!item && !!onPrev });
+  useShortcut('nav.nextItem', () => { onNext?.(); pulseChrome(); }, { enabled: !!item && !!onNext });
+
+  // ── Debounced like state ────────────────────────────────────────────
+  //
+  // Both the H shortcut and the heart-button click(s) drive the SAME
+  // optimistic counter. Rapid bumps update the optimistic value immediately
+  // and (re-)arm a single debounce timer; only the final value is sent to
+  // the server. This lets the user tap H four times for "really likes" and
+  // get one request, not four — and also fixes a latent bug where each tap
+  // recomputed `next` from the stale `item.likeCount` and stuck at +1.
+  const [pendingLikes, setPendingLikes] = useState<number | null>(null);
+  const likeTimerRef = useRef<number | null>(null);
+  // Captured so the timer/flush-on-leave fires against the right item even
+  // if `item` changes (or goes null) before the debounce window elapses.
+  const pendingItemRef = useRef<MediaItemDto | null>(null);
+  // Sparkle bursts use leading-edge debounce on the SAME window as the
+  // mutation: the FIRST bump in a rate-burst fires the visual; subsequent
+  // bumps inside the window are suppressed (rapid taps still register as
+  // likes, they just don't stack confetti on top of each other). One burst
+  // per "I'm rating this" gesture.
+  const [sparkleKey, setSparkleKey] = useState(0);
+  const lastSparkleAtRef = useRef(0);
+
+  const displayLikes = pendingLikes ?? item?.likeCount ?? 0;
+
+  const bumpLikes = useCallback(() => {
+    if (!item || !onSetLikes) return;
+    const target = item;
+    setPendingLikes((curr) => {
+      const base = curr ?? target.likeCount;
+      const next = base >= MAX_LIKES ? 0 : base + 1;
+      pendingItemRef.current = target;
+      if (likeTimerRef.current) window.clearTimeout(likeTimerRef.current);
+      likeTimerRef.current = window.setTimeout(() => {
+        likeTimerRef.current = null;
+        void onSetLikes(target, next);
+      }, LIKE_DEBOUNCE_MS);
+      return next;
+    });
+    const now = Date.now();
+    if (now - lastSparkleAtRef.current > LIKE_DEBOUNCE_MS) {
+      lastSparkleAtRef.current = now;
+      setSparkleKey((k) => k + 1);
+    }
+    pulseChrome();
+  }, [item, onSetLikes, pulseChrome]);
+
+  // Clear the optimistic overlay once the server count catches up — then
+  // subsequent bumps base off the real value again.
+  useEffect(() => {
+    if (pendingLikes !== null && item && pendingLikes === item.likeCount) {
+      setPendingLikes(null);
+    }
+  }, [item?.likeCount, item, pendingLikes]);
+
+  // If the user navigates to a different item with un-committed bumps, flush
+  // the pending value for the OLD item immediately so their intent isn't
+  // lost, then reset for the new item.
+  const lastItemUuidRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const prevUuid = lastItemUuidRef.current;
+    const nextUuid = item?.uuid;
+    if (prevUuid !== undefined && prevUuid !== nextUuid) {
+      if (likeTimerRef.current !== null) {
+        window.clearTimeout(likeTimerRef.current);
+        likeTimerRef.current = null;
+        const target = pendingItemRef.current;
+        if (target && pendingLikes !== null && onSetLikes) {
+          void onSetLikes(target, pendingLikes);
+        }
+      }
+      setPendingLikes(null);
+      pendingItemRef.current = null;
+    }
+    lastItemUuidRef.current = nextUuid;
+  }, [item?.uuid, pendingLikes, onSetLikes]);
+
+  useShortcut('viewer.like', bumpLikes, { enabled: !!item && !!onSetLikes });
+
+  // ── Mark viewed on viewer open ───────────────────────────────────────
+  //
+  // Opening an item in the viewer counts as an interaction (per the
+  // watched/unwatched filter). Deduped per-session so paging quickly
+  // through 60 items doesn't fire 60 mutations on every re-render.
+  // We intentionally do NOT invalidate the list query on success — if the
+  // user is filtering by "unwatched", that would yank the currently-shown
+  // item out from under them. The list refreshes on next navigation.
+  const { mutate: markViewedMutate } = trpc.media.markViewed.useMutation();
+  const viewedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!item) return;
+    const key = `${item.workspaceSlug}:${item.uuid}`;
+    if (viewedRef.current.has(key)) return;
+    viewedRef.current.add(key);
+    markViewedMutate({ uuid: item.uuid, workspaceSlug: item.workspaceSlug });
+  }, [item?.uuid, item?.workspaceSlug, markViewedMutate]);
+
+  // Maxed-mode voice tagger. Separate instance from the sidebar
+  // VoiceTagButton's hook — the two are never both interacted with at
+  // once (sidebar lives in non-maxed; toolbar + shortcut in maxed). We
+  // pass empty fallback strings so the hook can be unconditionally
+  // called even before `item` is defined; `start()` is gated by the
+  // shortcut/button being enabled, which both require `item`.
+  const utils = trpc.useUtils();
+  const maxedVoiceTagger = useVoiceTagger({
+    uuid: item?.uuid ?? '',
+    workspaceSlug: item?.workspaceSlug ?? '',
+    onCommitted: (tags) => {
+      if (tags.length > 0) {
+        utils.media.getDetails.invalidate();
+        utils.media.facets.invalidate();
+      }
+    },
+  });
+
+  // V (held) → record; release → commit. Only active in maxed mode to
+  // avoid stealing the key from grid navigation. The hold threshold is
+  // very short (1ms via the tap suppression below) — for a hold-to-do
+  // shortcut we don't want a tap fallback.
+  useTapOrHold('viewer.voiceTag', {
+    enabled: FEATURES.voiceTagging && !!item && maxed,
+    holdThresholdMs: 1,
+    onHoldStart: () => maxedVoiceTagger.start(),
+    onHoldEnd: () => maxedVoiceTagger.stop(),
+  });
+
+  if (!item) return null;
+  const fitClass = fit === 'cover' ? 'object-cover' : 'object-contain';
+
+  const panBounds = computeBounds();
+
+  // ── Pan model (hybrid at zoom > 1) ─────────────────────────────────
+  //
+  // Pan state is stored in cover-pixel units. Two CSS mechanisms apply
+  // it in parallel:
+  //
+  //   • object-position shifts the cover-fit slice WITHIN the image
+  //     element. Its range is bounded by the cover-overflow at zoom 1
+  //     (= (cw − vw)/2 cover-pixels on each axis). For images whose
+  //     aspect matches one viewport dimension exactly, the limit on
+  //     that axis is zero.
+  //
+  //   • transform: translate moves the entire (scaled) element within
+  //     the wrapper. Used for pan that goes BEYOND the cover-overflow
+  //     range — only possible at zoom > 1, where the scaled element
+  //     overflows in both dimensions.
+  //
+  // Total pan = the object-position-bounded chunk PLUS any excess that
+  // goes into translate. At zoom 1 the translate component is always
+  // zero (because excess pan is impossible — bounds collapse to
+  // cover-overflow).
+  const maxObjX = Math.max(0, (panBounds.cw - panBounds.vw) / 2);
+  const maxObjY = Math.max(0, (panBounds.ch - panBounds.vh) / 2);
+  const panObjX = Math.max(-maxObjX, Math.min(maxObjX, pan.x));
+  const panObjY = Math.max(-maxObjY, Math.min(maxObjY, pan.y));
+  // Translate is in viewport pixels (post-scale). The remainder of pan
+  // is in cover-pixels, so multiply by zoom to convert.
+  const panTransX = (pan.x - panObjX) * zoom;
+  const panTransY = (pan.y - panObjY) * zoom;
+
+  const opX = maxObjX > 0 ? 50 * (1 - panObjX / maxObjX) : 50;
+  const opY = maxObjY > 0 ? 50 * (1 - panObjY / maxObjY) : 50;
+  const objectPosition = isPanEnabled ? `${opX}% ${opY}%` : undefined;
+
+  // Zoom layered on top via transform: scale; translate provides extra
+  // pan beyond cover-overflow. Wrapper has overflow-hidden so the
+  // scaled/translated element clips at viewport bounds.
+  const zoomActive = maxed && zoom !== 1;
+  const translateActive = panTransX !== 0 || panTransY !== 0;
+  const translatePart = translateActive
+    ? `translate(${panTransX}px, ${panTransY}px) `
+    : '';
+
+  // Class fragment applied to every chrome element in maxed mode. Outside
+  // maxed mode it's a no-op (chrome is always visible) so the same prop
+  // can be passed unconditionally.
+  const chromeFadeClass = maxed
+    ? `transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`
+    : '';
+
+  return (
+    <div
+      className={maxed
+        ? `fixed inset-0 z-50 bg-black ${chromeVisible ? '' : 'cursor-none'}`
+        : 'fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4'}
+      // Only close on direct backdrop clicks — child floating chrome
+      // (top-right toolbar, nav arrows, position indicator) sit outside
+      // the middle wrapper, so without this guard their clicks bubble
+      // up here and would close the viewer unintentionally.
+      onClick={maxed ? undefined : (e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      onMouseMove={pulseChrome}
+    >
+      {/* ── Media area — single mounted instance across modes ────────── */}
+      <div
+        className={maxed
+          ? 'absolute inset-0'
+          : 'flex-1 flex items-center justify-center min-h-0 relative group max-w-7xl w-full h-full max-h-[92vh] flex-row'}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Pan lives in the corner minimap; the actual visual shift
+            happens via `object-position` on the inner media element.
+            `overflow-hidden` here clips the media when zoom > 1 so the
+            scaled-up element doesn't bleed outside the viewport.
+            `self-stretch min-h-0` in non-maxed bounds the wrapper to
+            the parent's height — otherwise tall (portrait) images
+            grow the wrapper past the modal, pushing absolutely-
+            positioned chrome (e.g. the maximize button) off-screen. */}
+        <div
+          className={maxed
+            ? 'absolute inset-0 overflow-hidden'
+            : 'flex-1 self-stretch flex items-center justify-center min-h-0 relative group'}
+        >
+          {/* Outgoing photo, briefly rendered alongside the new one so its
+              fade-out keyframes can run as the new one fades in. Only set
+              while slideshow is active and the outgoing item was a photo.
+              Keeps its own rotation through the fade. */}
+          {slideshow && prevItem && prevItem.kind === 'photo' && (
+            <img
+              key={`prev-${prevItem.uuid}`}
+              src={prevItem.previewUrl}
+              alt=""
+              draggable={false}
+              className={`absolute inset-0 w-full h-full ${fitClass}
+                          kn-photo-out select-none pointer-events-none`}
+              style={{
+                ['--kn-rotation' as string]: `${prevItem.rotation ?? 0}deg`,
+                transform: 'rotate(var(--kn-rotation))',
+              } as React.CSSProperties}
+            />
+          )}
+
+          {item.kind === 'photo' ? (
+            <img
+              key={slideshow ? `cur-${item.uuid}` : undefined}
+              src={item.previewUrl}
+              alt={item.filename}
+              draggable={false}
+              className={slideshow
+                ? `absolute inset-0 w-full h-full ${fitClass} kn-photo-in select-none`
+                : maxed
+                  ? `w-full h-full ${fitClass} select-none`
+                  : 'max-h-full max-w-full object-contain rounded'}
+              style={{
+                ['--kn-rotation' as string]: `${item.rotation ?? 0}deg`,
+                objectPosition,
+                transform: slideshow
+                  ? undefined
+                  : zoomActive || translateActive
+                    ? `${translatePart}rotate(var(--kn-rotation)) scale(${zoom})`
+                    : 'rotate(var(--kn-rotation))',
+                transition: panDragging
+                  ? undefined
+                  : 'object-position 200ms, transform 200ms',
+                animationDuration: slideshow ? `${slideshowPhotoMs}ms` : undefined,
+                animationPlayState: slideshow && paused ? 'paused' : undefined,
+                ['WebkitUserDrag' as string]: 'none',
+                ['userDrag' as string]: 'none',
+              } as React.CSSProperties}
+            />
+          ) : (
+            <VideoPlayer
+              src={item.mediaUrl}
+              progressKey={`${item.workspaceSlug}:${item.uuid}`}
+              className={maxed
+                ? 'w-full h-full overflow-hidden'
+                : 'max-h-full max-w-full rounded overflow-hidden bg-black'}
+              videoClassName={maxed
+                ? `w-full h-full ${fitClass}`
+                : 'max-h-[88vh] max-w-full'}
+              videoStyle={{
+                objectPosition,
+                transform: (zoomActive || translateActive)
+                  ? `${translatePart}scale(${zoom})`
+                  : undefined,
+                transition: panDragging
+                  ? undefined
+                  : 'object-position 200ms, transform 200ms',
+              }}
+              onPrev={onPrev}
+              onNext={onNext}
+              // Pause respects: if user paused the slideshow during a
+              // video, end-of-video does NOT auto-advance to next.
+              onEnded={slideshow && !paused ? onNext : undefined}
+            />
+          )}
+
+          {!maxed && (
+            <ToolbarButton
+              onClick={() => setMaxed(true)}
+              title="Maximize — F"
+              className="absolute top-3 right-3 z-30 ring-1 ring-zinc-700/80"
+            >
+              <MaximizeIcon />
+            </ToolbarButton>
+          )}
+
+          {/* Brief rating chip that appears each time a new asset loads.
+              `key={item.uuid}` makes it re-mount (and the CSS animation
+              re-fire) on item change. Renders for unrated items too, in
+              a dimmed/zinc variant — hints "this is rateable" without
+              shouting like the full-color rose version. */}
+          <div
+            key={`rating-flash-${item.uuid}`}
+            className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none"
+          >
+            <RatingFlash count={displayLikes} />
+          </div>
+
+          {/* Slideshow speed feedback. Pops in for ~1.5s after the
+              user adjusts via , / . — the key changes with each
+              adjustment so React re-mounts the element and the
+              animation re-plays. */}
+          {speedNotice && (
+            <div
+              key={speedNotice.key}
+              className="absolute top-16 left-1/2 z-30 pointer-events-none
+                         bg-black/80 backdrop-blur text-zinc-100 text-sm font-medium
+                         rounded-full px-4 py-2 ring-1 ring-zinc-700 kn-speed-notice"
+            >
+              Slideshow: {(speedNotice.ms / 1000).toFixed(0)} s / photo
+            </div>
+          )}
+
+          {/* Pan + zoom widget — both controls live together because
+              they're the same gesture conceptually (re-framing). Zoom
+              row is always visible in maxed mode; the minimap appears
+              below it when pan is meaningful (cover-fit + overflow). */}
+          {maxed && (
+            <div
+              {...chromeHoverHandlers}
+              className={`absolute left-3 z-20 ${chromeFadeClass}
+                          ${item.kind === 'video' ? 'bottom-16' : 'bottom-3'}
+                          flex flex-col gap-1.5 items-center`}
+            >
+              {/* Zoom controls are hidden during slideshow — the Ken
+                  Burns animation owns the transform, so zoom inputs
+                  wouldn't apply. Fit/Cover stays visible because it
+                  DOES affect slideshow rendering via `${fitClass}`. */}
+              <div className="flex items-center gap-1 bg-black/60 backdrop-blur
+                              rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs">
+                {!slideshow && (
+                  <>
+                    <button
+                      onClick={zoomOut}
+                      disabled={zoom <= MIN_ZOOM + 0.001}
+                      title="Zoom out (−)"
+                      aria-label="Zoom out"
+                      className="px-2 py-1.5 hover:bg-white/10 rounded-l-md transition
+                                 disabled:opacity-40 disabled:cursor-not-allowed
+                                 disabled:hover:bg-transparent"
+                    >
+                      <ZoomOutIcon />
+                    </button>
+                    <div className="px-1 min-w-[3rem] text-center tabular-nums select-none">
+                      {Math.round(zoom * 100)}%
+                    </div>
+                    <button
+                      onClick={zoomIn}
+                      disabled={zoom >= MAX_ZOOM - 0.001}
+                      title="Zoom in (+)"
+                      aria-label="Zoom in"
+                      className="px-2 py-1.5 hover:bg-white/10 transition
+                                 disabled:opacity-40 disabled:cursor-not-allowed
+                                 disabled:hover:bg-transparent"
+                    >
+                      <ZoomInIcon />
+                    </button>
+                  </>
+                )}
+                {/* Fit/Cover toggle — left-divider only when paired
+                    with the zoom controls; standalone (rounded both
+                    sides) during slideshow. */}
+                <button
+                  onClick={() => {
+                    setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
+                    setZoom(1);
+                    persistZoom(1);
+                  }}
+                  title={fit === 'cover' ? 'Fit (no crop) — C' : 'Fill (crop edges) — C'}
+                  aria-label={fit === 'cover' ? 'Fit' : 'Fill'}
+                  className={`px-2 py-1.5 hover:bg-white/10 transition
+                              ${slideshow
+                                ? 'rounded-md'
+                                : 'rounded-r-md border-l border-zinc-700/60'}`}
+                >
+                  {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
+                </button>
+              </div>
+
+              {/* Slideshow controls — pause/play (always shown during
+                  slideshow) + speed slider (photo items only, since the
+                  per-photo dwell timer doesn't apply to videos which
+                  auto-advance via `onEnded`). Slider updates live as the
+                  user drags; the brief pop-up notice fires only for
+                  keyboard adjustments to avoid redundancy. */}
+              {slideshow && (
+                <div className="flex items-center gap-2 bg-black/60 backdrop-blur
+                                rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs
+                                px-2 py-1.5">
+                  <button
+                    onClick={() => { setPaused((p) => !p); pulseChrome(); }}
+                    title={paused ? 'Play slideshow (Space)' : 'Pause slideshow (Space)'}
+                    aria-label={paused ? 'Play slideshow' : 'Pause slideshow'}
+                    className="px-1.5 py-0.5 rounded hover:bg-white/10 transition
+                               flex items-center justify-center"
+                  >
+                    {paused ? <SlideshowPlayIcon /> : <SlideshowPauseIcon />}
+                  </button>
+                  {item.kind === 'photo' && (
+                    <>
+                      <span className="select-none text-zinc-400 pl-1">Speed</span>
+                      <input
+                        type="range"
+                        min={SLIDESHOW_MIN_MS}
+                        max={SLIDESHOW_MAX_MS}
+                        step={SLIDESHOW_STEP_MS}
+                        value={slideshowPhotoMs}
+                        onChange={(e) => setSlideshowPhotoMs(Number(e.target.value))}
+                        aria-label="Slideshow speed"
+                        title="Time per photo · , slower · . faster"
+                        className="w-24 accent-emerald-400 cursor-pointer"
+                      />
+                      <span className="tabular-nums select-none min-w-[2.25rem] text-right pr-1">
+                        {(slideshowPhotoMs / 1000).toFixed(0)}s
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Minimap renders in maxed mode but never during slideshow
+                  — the slideshow owns the framing automatically, and
+                  re-introducing a saved pan on pause would yank the
+                  image to a different position mid-pause. */}
+              {!slideshow && (
+                <ViewportMinimap
+                  src={item.previewUrl}
+                  contentRatio={(item.width ?? 1) / (item.height ?? 1)}
+                  contentDisplayWidth={panBounds.cw}
+                  contentDisplayHeight={panBounds.ch}
+                  viewportWidth={panBounds.vw}
+                  viewportHeight={panBounds.vh}
+                  pan={pan}
+                  maxX={isPanEnabled ? panBounds.maxX : 0}
+                  maxY={isPanEnabled ? panBounds.maxY : 0}
+                  zoom={zoom}
+                  onPanChange={handleMinimapPan}
+                  onPanCommit={handleMinimapCommit}
+                  // Click toggles fit symmetrically: cover ↔ contain.
+                  //   • In contain (inactive minimap): switch to cover
+                  //     to give the user something to pan.
+                  //   • In cover (active minimap): switch to contain
+                  //     to see the whole image.
+                  // Zoom resets to 1 either way so the new fit is the
+                  // baseline framing.
+                  onActivate={() => {
+                    setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
+                    setZoom(1);
+                    persistZoom(1);
+                  }}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Coming-up film strip — visible in every viewer mode, including
+              slideshow. Position bumps clear of video native controls when
+              applicable. */}
+          {reelItems && onSelectItem && position && (
+            <div
+              data-component="viewer-reel-wrapper"
+              className={`absolute inset-x-0 z-20 ${chromeFadeClass}
+                          ${item.kind === 'video' ? 'bottom-16' : 'bottom-3'}
+                          px-3 flex justify-center pointer-events-none`}
+            >
+              <div className="pointer-events-auto" {...chromeHoverHandlers}>
+                <ViewerReel
+                  items={reelItems}
+                  currentIndex={position.index}
+                  hasMore={reelHasMore ?? false}
+                  onSelect={onSelectItem}
+                />
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* Sidebar — normal mode only */}
+        {!maxed && (
+          <div className="md:w-80 bg-zinc-900/80 backdrop-blur rounded-xl p-5 ml-6
+                          flex flex-col gap-3 text-sm overflow-y-auto self-stretch">
+            <div className="flex items-start gap-2">
+              <h2 className="font-medium text-base text-zinc-100 break-all flex-1">
+                {item.filename}
+              </h2>
+              {onSetLikes && (
+                <LikeControl
+                  count={displayLikes}
+                  onBump={bumpLikes}
+                  sparkleKey={sparkleKey}
+                  compact
+                />
+              )}
+            </div>
+
+            {isSensitive(item.nsfwScore, item.violenceScore) && (
+              <SensitiveBadge
+                nsfwScore={item.nsfwScore}
+                violenceScore={item.violenceScore}
+              />
+            )}
+
+            {onSeeSimilar && (
+              <button
+                onClick={() => onSeeSimilar(item)}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-md
+                           py-2 text-sm font-medium transition flex items-center justify-center gap-2"
+              >
+                <SparkleIcon />
+                See similar
+              </button>
+            )}
+
+            {onAddToPlaylist && (
+              <button
+                onClick={() => onAddToPlaylist(item)}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-md
+                           py-2 text-sm font-medium transition flex items-center justify-center gap-2"
+              >
+                <PlaylistAddIcon />
+                Add to playlist…
+              </button>
+            )}
+
+            {/* Reassign affordance — only shown when we're inside a person
+                filter, since "reassign from X" needs a known X. The picker
+                handles the rest (move to a different person, split off into
+                a new one, or unassign). */}
+            {currentPersonUuid && onReassignPerson && (
+              <button
+                onClick={() => onReassignPerson(item)}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-md
+                           py-2 text-sm font-medium transition flex items-center justify-center gap-2"
+              >
+                <ReassignIcon />
+                Reassign person
+              </button>
+            )}
+
+            {/* Rotate — photo-only. Click cycles 0 → 90 → 180 → 270 → 0.
+                Persists server-side; applied via CSS transform on render. */}
+            {item.kind === 'photo' && onRotate && (
+              <button
+                onClick={() => {
+                  const next = (((item.rotation ?? 0) + 90) % 360) as 0 | 90 | 180 | 270;
+                  onRotate(item, next);
+                }}
+                title={`Rotate (currently ${item.rotation ?? 0}°)`}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-md
+                           py-2 text-sm font-medium transition flex items-center justify-center gap-2"
+              >
+                <RotateIcon />
+                Rotate 90°
+              </button>
+            )}
+
+            <Field label="Type" value={item.kind} />
+            {item.width && item.height && (
+              <Field label="Dimensions" value={`${item.width} × ${item.height}`} />
+            )}
+            {item.durationMs && (
+              <Field label="Duration" value={formatDuration(item.durationMs)} />
+            )}
+            {item.capturedAt && (
+              <Field label="Captured" value={new Date(item.capturedAt).toLocaleString()} />
+            )}
+            {item.capturedPlace && <Field label="Place" value={item.capturedPlace} />}
+            {(item.cameraMake || item.cameraModel) && (
+              <Field
+                label="Camera"
+                value={[item.cameraMake, item.cameraModel].filter(Boolean).join(' ')}
+              />
+            )}
+            {item.sizeBytes && (
+              <Field label="Size" value={formatBytes(item.sizeBytes)} />
+            )}
+
+            {item.scores && (
+              <div className="mt-3 pt-3 border-t border-zinc-800 space-y-1">
+                <div className="text-xs uppercase text-zinc-500 tracking-wider">Search scores</div>
+                <Field label="Visual match" value={(item.scores.vector * 100).toFixed(1) + '%'} />
+                {item.scores.fts !== null && (
+                  <Field label="Text match" value={item.scores.fts.toFixed(2)} />
+                )}
+                <Field label="Final" value={(item.scores.final * 100).toFixed(1) + '%'} />
+              </div>
+            )}
+
+            <DetailsSection item={item} />
+
+            <div className="mt-auto pt-3 border-t border-zinc-800 text-xs text-zinc-500 space-y-1">
+              <div>
+                <kbd className="text-zinc-300">F</kbd> max ·{' '}
+                <kbd className="text-zinc-300">←</kbd>{' '}
+                <kbd className="text-zinc-300">→</kbd> nav ·{' '}
+                <kbd className="text-zinc-300">Esc</kbd> close
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Floating top-right toolbar ───────────────────────────────── */}
+      <div
+        {...chromeHoverHandlers}
+        onClick={(e) => e.stopPropagation()}
+        className={`absolute top-4 right-4 flex gap-2 z-10 ${chromeFadeClass}`}
+      >
+        {/* Like control shown only in maxed mode — the preview sidebar
+            has its own LikeControl, so duplicating it here would be
+            redundant (and the floating one used to close the modal
+            because clicks bubbled to the backdrop). */}
+        {maxed && onSetLikes && (
+          <LikeControl
+            count={displayLikes}
+            onBump={bumpLikes}
+            sparkleKey={sparkleKey}
+          />
+        )}
+        {maxed && (
+          <>
+            {onAddToPlaylist && (
+              <ToolbarButton
+                onClick={() => onAddToPlaylist(item)}
+                title="Add to playlist…"
+              >
+                <PlaylistAddIcon />
+              </ToolbarButton>
+            )}
+            {FEATURES.voiceTagging && (
+              <button
+                type="button"
+                disabled={maxedVoiceTagger.status.kind === 'processing'}
+                onPointerDown={(e) => { e.preventDefault(); maxedVoiceTagger.start(); }}
+                onPointerUp={maxedVoiceTagger.stop}
+                onPointerLeave={() => {
+                  if (maxedVoiceTagger.status.kind === 'recording') maxedVoiceTagger.stop();
+                }}
+                onPointerCancel={() => {
+                  if (maxedVoiceTagger.status.kind === 'recording') maxedVoiceTagger.stop();
+                }}
+                title="Hold to record voice tags (V)"
+                className={`w-8 h-8 rounded grid place-items-center transition select-none
+                            ${maxedVoiceTagger.status.kind === 'recording'
+                              ? 'bg-red-950/70 text-red-200 ring-1 ring-red-700/60'
+                              : 'bg-zinc-900/80 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'}
+                            disabled:opacity-50 disabled:cursor-wait`}
+              >
+                <MicIcon recording={maxedVoiceTagger.status.kind === 'recording'} />
+              </button>
+            )}
+            {item.kind === 'photo' && onRotate && (
+              <ToolbarButton
+                onClick={() => {
+                  const next = (((item.rotation ?? 0) + 90) % 360) as 0 | 90 | 180 | 270;
+                  onRotate(item, next);
+                }}
+                title={`Rotate (currently ${item.rotation ?? 0}°)`}
+              >
+                <RotateIcon />
+              </ToolbarButton>
+            )}
+            <ToolbarButton onClick={() => setMaxed(false)} title="Restore — F or Esc">
+              <MinimizeIcon />
+            </ToolbarButton>
+          </>
+        )}
+        <ToolbarButton
+          onClick={handleStepBack}
+          title={slideshow ? 'Exit slideshow (Esc)'
+            : maxed ? 'Back to preview (Esc)'
+            : 'Close (Esc)'}
+        >
+          <CloseIcon />
+        </ToolbarButton>
+      </div>
+
+      {/* ── Nav arrows ──────────────────────────────────────────────── */}
+      <div {...chromeHoverHandlers} className={chromeFadeClass}>
+        <NavButton side="left"  onClick={onPrev} disabled={!onPrev} />
+        <NavButton side="right" onClick={onNext} disabled={!onNext} />
+      </div>
+
+
+      {position && (
+        <div {...chromeHoverHandlers} className={`absolute top-4 left-4 z-10 flex items-center gap-2 ${chromeFadeClass}`}>
+          <div className={`${maxed ? 'bg-black/60 backdrop-blur' : 'bg-black/40'}
+                          text-zinc-200 text-sm rounded-md px-3 py-1.5`}>
+            {position.index + 1} / {position.total}
+          </div>
+          {isSensitive(item.nsfwScore, item.violenceScore) && (
+            <SensitiveBadge
+              nsfwScore={item.nsfwScore}
+              violenceScore={item.violenceScore}
+              floating
+            />
+          )}
+        </div>
+      )}
+
+      {/* Maxed-mode voice-tag HUD. Shows recording / processing / done
+          state in a top-centred pill since the sidebar isn't visible
+          here. Mirrors the sidebar's inline status line via the same
+          status object so messaging stays consistent. Stays visible
+          while recording (overrides chrome fade) so the user always
+          knows the mic is hot. */}
+      {FEATURES.voiceTagging && maxed && maxedVoiceTagger.status.kind !== 'idle' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none
+                        flex flex-col items-center gap-1">
+          {maxedVoiceTagger.status.kind === 'recording' && (
+            <div className="bg-red-950/80 backdrop-blur text-red-200 text-xs
+                            rounded-full px-3 py-1.5 ring-1 ring-red-700/60
+                            flex items-center gap-2 animate-pulse">
+              <MicIcon recording />
+              <span>Listening… release V to tag</span>
+            </div>
+          )}
+          {maxedVoiceTagger.status.kind === 'processing' && (
+            <div className="bg-zinc-900/80 backdrop-blur text-zinc-300 text-xs
+                            rounded-full px-3 py-1.5 ring-1 ring-zinc-700">
+              Transcribing…
+            </div>
+          )}
+          {(maxedVoiceTagger.status.kind === 'done' || maxedVoiceTagger.status.kind === 'error') && (
+            <div className="bg-black/80 backdrop-blur text-xs rounded-md px-3 py-1.5
+                            ring-1 ring-zinc-800 max-w-md text-center">
+              <VoiceTagStatusLine status={maxedVoiceTagger.status} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Like control (used in both sidebar and floating toolbar) ──────────────
+
+function LikeControl({
+  count,
+  onBump,
+  sparkleKey = 0,
+  compact = false,
+}: {
+  count: number;
+  onBump: () => void;
+  /** Incremented by the parent on every like so the sparkle restarts. */
+  sparkleKey?: number;
+  compact?: boolean;
+}) {
+  const tooltip =
+    count === 0 ? 'Like (click to add)'
+    : count >= MAX_LIKES ? `${MAX_LIKES} likes — click to reset`
+    : `${count} like${count === 1 ? '' : 's'} — click for more`;
+
+  // Wrap the heart in a `relative` span so the absolute sparkle particles
+  // anchor to the heart's center, not the whole button (which is wider
+  // when a count is showing). Mounted only after the first bump so the
+  // initial render doesn't fire a burst.
+  const sparkles = sparkleKey > 0 ? <SparkleBurst key={sparkleKey} /> : null;
+
+  if (compact) {
+    return (
+      <button
+        onClick={onBump}
+        title={tooltip}
+        aria-label={tooltip}
+        className="flex items-center gap-1 px-2 py-1 rounded
+                   bg-zinc-800 hover:bg-zinc-700 transition shrink-0"
+      >
+        <span className="relative inline-flex items-center justify-center">
+          <Heart filled={count > 0} size={14} />
+          {sparkles}
+        </span>
+        {count > 0 && (
+          <span className="text-xs font-semibold text-rose-400 tabular-nums">{count}</span>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={onBump}
+      title={tooltip}
+      aria-label={tooltip}
+      className="bg-black/60 hover:bg-black/80 backdrop-blur text-zinc-100
+                 rounded-md h-9 px-2.5 flex items-center gap-1.5 transition"
+    >
+      <span className="relative inline-flex items-center justify-center">
+        <Heart filled={count > 0} size={16} />
+        {sparkles}
+      </span>
+      {count > 0 && (
+        <span className="text-sm font-semibold text-rose-400 tabular-nums">{count}</span>
+      )}
+    </button>
+  );
+}
+
+function Heart({ filled, size = 14 }: { filled: boolean; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill={filled ? '#f43f5e' : 'none'}
+      stroke={filled ? '#f43f5e' : 'currentColor'}
+      strokeWidth="1.6"
+      strokeLinejoin="round"
+    >
+      <path d="M8 14s-5-3.5-5-7a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 7-5 7z" />
+    </svg>
+  );
+}
+
+
+function SensitiveBadge({
+  nsfwScore,
+  violenceScore,
+  floating = false,
+}: {
+  nsfwScore: number;
+  violenceScore: number;
+  floating?: boolean;
+}) {
+  const tooltip =
+    `Flagged — nsfw ${(nsfwScore * 100).toFixed(0)}%, ` +
+    `violence ${(violenceScore * 100).toFixed(0)}%`;
+  return (
+    <span
+      title={tooltip}
+      className={`inline-flex items-center gap-1 text-amber-300
+                  text-[11px] font-medium px-2 py-0.5 rounded-full
+                  border border-amber-700/50
+                  ${floating ? 'bg-amber-950/85 backdrop-blur' : 'bg-amber-950/60'}`}
+    >
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 1.5l7 12.5H1L8 1.5z" />
+        <path d="M8 6v4M8 12v0.5" />
+      </svg>
+      Sensitive
+    </span>
+  );
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────
+
+function NavButton({
+  side,
+  onClick,
+  disabled,
+}: {
+  side: 'left' | 'right';
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  if (disabled) return null;
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+      title={side === 'left' ? 'Previous — ←' : 'Next — →'}
+      aria-label={side === 'left' ? 'Previous' : 'Next'}
+      className={`absolute top-1/2 -translate-y-1/2 z-10
+                  ${side === 'left' ? 'left-4' : 'right-4'}
+                  w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur
+                  text-zinc-100 flex items-center justify-center transition shadow-lg`}
+    >
+      {side === 'left' ? <ChevronLeftIcon /> : <ChevronRightIcon />}
+    </button>
+  );
+}
+
+function ToolbarButton({
+  onClick,
+  title,
+  children,
+  className = '',
+  disabled = false,
+}: {
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      className={`bg-black/60 hover:bg-black/80 backdrop-blur text-zinc-100
+                  rounded-md w-9 h-9 flex items-center justify-center transition
+                  disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-black/60
+                  ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-zinc-500">{label}</span>
+      <span className="text-zinc-200 text-right break-words">{value}</span>
+    </div>
+  );
+}
+
+function DetailsSection({ item }: { item: MediaItemDto }) {
+  const [expanded, setExpanded] = useState(true);
+  const [ocrExpanded, setOcrExpanded] = useState(false);
+  const [tagInput, setTagInput] = useState('');
+
+  const utils = trpc.useUtils();
+  const details = trpc.media.getDetails.useQuery(
+    { uuid: item.uuid, workspaceSlug: item.workspaceSlug },
+    { enabled: !!item },
+  );
+
+  const addTag = trpc.media.addUserTag.useMutation({
+    onSuccess: () => {
+      utils.media.getDetails.invalidate();
+      utils.media.facets.invalidate();
+      setTagInput('');
+    },
+  });
+
+  const removeTag = trpc.media.removeUserTag.useMutation({
+    onSuccess: () => {
+      utils.media.getDetails.invalidate();
+      utils.media.facets.invalidate();
+    },
+  });
+
+  const submitTag = async (e: React.FormEvent) => {
+    e.preventDefault();
+    // Accept either a single tag or a comma-separated list. Splitting in
+    // the client (vs. teaching addUserTag to accept arrays) keeps the
+    // server mutation single-purpose; the existing onConflict upsert
+    // makes duplicate submissions cheap and idempotent.
+    const names = Array.from(new Set(
+      tagInput.split(',').map((s) => s.trim()).filter(Boolean),
+    ));
+    if (names.length === 0) return;
+    // Sequential to avoid SQLITE_BUSY on the shared media_tags index for
+    // the same row. Counts are small (typically 1-5).
+    for (const name of names) {
+      try {
+        await addTag.mutateAsync({
+          uuid: item.uuid,
+          workspaceSlug: item.workspaceSlug,
+          name,
+        });
+      } catch {
+        // Skip per-tag failures; loop continues so the user doesn't lose
+        // the rest of a batch because of one duplicate or length error.
+      }
+    }
+    setTagInput('');
+  };
+
+  if (!details.data && !details.isLoading) return null;
+  const d = details.data;
+  const OCR_TRUNCATE = 180;
+  const ocrIsLong = (d?.ocrText?.length ?? 0) > OCR_TRUNCATE;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-zinc-800">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between mb-2
+                   text-xs uppercase text-zinc-500 tracking-wider hover:text-zinc-300 transition"
+      >
+        <span>AI metadata</span>
+        <span className="text-zinc-600">{expanded ? '▾' : '▸'}</span>
+      </button>
+
+      {expanded && (
+        <div className="space-y-2 text-xs">
+          {details.isLoading && <div className="text-zinc-500">Loading…</div>}
+
+          {d && (
+            <>
+              {d.enrichmentStatus !== 'done' && (
+                <div className={`px-2 py-1 rounded ${
+                  d.enrichmentStatus === 'failed'
+                    ? 'bg-red-950/40 text-red-300'
+                    : 'bg-amber-950/40 text-amber-300'
+                }`}>
+                  Enrichment: {d.enrichmentStatus}
+                </div>
+              )}
+
+              {d.aiCaption && (
+                <DetailBlock label="Caption" body={d.aiCaption} />
+              )}
+
+              {d.ocrText && (
+                <div>
+                  <div className="text-zinc-500 mb-0.5">OCR text</div>
+                  <div className="text-zinc-200 leading-relaxed break-words font-mono text-[11px]
+                                  bg-zinc-950/40 rounded px-2 py-1.5">
+                    {ocrIsLong && !ocrExpanded
+                      ? d.ocrText.slice(0, OCR_TRUNCATE) + '…'
+                      : d.ocrText}
+                  </div>
+                  {ocrIsLong && (
+                    <button
+                      onClick={() => setOcrExpanded((v) => !v)}
+                      className="text-zinc-500 hover:text-zinc-300 mt-1"
+                    >
+                      {ocrExpanded ? 'show less' : `show more (${d.ocrText.length} chars)`}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {d.transcript && (
+                <DetailBlock label="Transcript" body={d.transcript} />
+              )}
+
+              <div>
+                <div className="text-zinc-500 mb-1">Tags ({d.tags.length})</div>
+                <div className="flex flex-wrap gap-1">
+                  {d.tags.map((t) => {
+                    const isUser = t.source === 'user';
+                    return (
+                      <span
+                        key={`${t.source}-${t.name}`}
+                        className={`px-1.5 py-0.5 rounded text-[10px] border
+                                    inline-flex items-center gap-1
+                                    ${isUser
+                                      ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50'
+                                      : 'bg-zinc-800 text-zinc-300 border-zinc-700/50'}`}
+                      >
+                        {t.name}
+                        {isUser && (
+                          <button
+                            onClick={() => removeTag.mutate({
+                              uuid: item.uuid,
+                              workspaceSlug: item.workspaceSlug,
+                              name: t.name,
+                            })}
+                            disabled={removeTag.isPending}
+                            className="text-emerald-500 hover:text-emerald-200 leading-none ml-0.5"
+                            title="Remove tag"
+                            aria-label="Remove tag"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <form onSubmit={submitTag} className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Add tags (comma-separated)…"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    disabled={addTag.isPending}
+                    maxLength={60}
+                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1
+                               text-[11px] focus:border-zinc-600 outline-none disabled:opacity-50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={addTag.isPending || !tagInput.trim()}
+                    className="text-[11px] text-zinc-400 hover:text-zinc-100 disabled:opacity-30
+                               px-2 py-1"
+                  >
+                    Add
+                  </button>
+                </form>
+                {addTag.error && (
+                  <div className="text-[10px] text-red-400 mt-1">
+                    {addTag.error.message}
+                  </div>
+                )}
+
+                {FEATURES.voiceTagging && (
+                  <VoiceTagButton
+                    uuid={item.uuid}
+                    workspaceSlug={item.workspaceSlug}
+                    onCommitted={(tags) => {
+                      if (tags.length > 0) {
+                        utils.media.getDetails.invalidate();
+                        utils.media.facets.invalidate();
+                      }
+                    }}
+                  />
+                )}
+              </div>
+
+              <div className="pt-2 mt-2 border-t border-zinc-800/60 space-y-0.5
+                              text-[10px] font-mono text-zinc-600">
+                <DebugId label="uuid" value={d.uuid} />
+                <DebugId label="ws"   value={d.workspaceSlug} />
+                {d.sha256 && (
+                  <DebugId label="sha" value={d.sha256.slice(0, 12) + '…'} />
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailBlock({ label, body }: { label: string; body: string }) {
+  return (
+    <div>
+      <div className="text-zinc-500 mb-0.5">{label}</div>
+      <div className="text-zinc-200 leading-relaxed break-words">{body}</div>
+    </div>
+  );
+}
+
+function DebugId({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <span>{label}</span>
+      <button
+        onClick={() => {
+          if (typeof navigator !== 'undefined') navigator.clipboard?.writeText(value);
+        }}
+        className="text-zinc-500 hover:text-zinc-300 transition"
+        title="Click to copy"
+      >
+        {value}
+      </button>
+    </div>
+  );
+}
+
+// ─── Icons ───────────────────────────────────────────────────────────────
+
+function MaximizeIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" strokeLinecap="round" />
+  </svg>
+); }
+function MinimizeIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" strokeLinecap="round" />
+  </svg>
+); }
+function FitCoverIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="3" y="3" width="10" height="10" rx="1" />
+    <path d="M5 8h6M8 5v6" strokeLinecap="round" />
+  </svg>
+); }
+function FitContainIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="2" y="4" width="12" height="8" rx="1" />
+  </svg>
+); }
+function ZoomInIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="7" cy="7" r="4" />
+    <path d="M5 7h4M7 5v4M10 10l3 3" strokeLinecap="round" />
+  </svg>
+); }
+function ZoomOutIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="7" cy="7" r="4" />
+    <path d="M5 7h4M10 10l3 3" strokeLinecap="round" />
+  </svg>
+); }
+function CloseIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M3 3l10 10M13 3L3 13" strokeLinecap="round" />
+  </svg>
+); }
+function ChevronLeftIcon() { return (
+  <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+); }
+function ChevronRightIcon() { return (
+  <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+); }
+function SparkleIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 1l1.5 4L13 6.5l-3.5 1.5L8 12l-1.5-4L3 6.5l3.5-1.5L8 1z" />
+  </svg>
+); }
+function SlideshowPlayIcon() { return (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M4 2.5v11l9-5.5z" />
+  </svg>
+); }
+function SlideshowPauseIcon() { return (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+    <rect x="3.5" y="2.5" width="3" height="11" rx="0.5" />
+    <rect x="9.5" y="2.5" width="3" height="11" rx="0.5" />
+  </svg>
+); }
+function PlaylistAddIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 4h10M2 8h7M2 12h4" />
+    <path d="M12 9v6M9 12h6" />
+  </svg>
+); }
+function ReassignIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="5" cy="5" r="2.2" />
+    <path d="M2 13c0-1.8 1.3-3 3-3" />
+    <circle cx="11" cy="11" r="2.2" />
+    <path d="M9.5 4.5l3-3M12.5 1.5l1 1M12.5 1.5h-2" />
+  </svg>
+); }
+function RotateIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    {/* Three-quarter-circle arrow suggesting "rotate 90°". */}
+    <path d="M3 8a5 5 0 0 1 9-3" />
+    <path d="M12 2v3h-3" />
+  </svg>
+); }
+
+function formatDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
