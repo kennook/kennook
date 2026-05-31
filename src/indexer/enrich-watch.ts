@@ -13,7 +13,7 @@
 //
 // To run truly in the background:
 //   nohup pnpm enrich:watch > /dev/null 2>&1 &
-//   # check the log:  tail -f ~/kennook-app/data/<library>/enrich.log
+//   # check the log:  tail -f ~/kennook/data/<library>/enrich.log
 //   # stop with:      pkill -f enrich-watch.ts
 
 import fs from 'node:fs';

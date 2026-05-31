@@ -14,30 +14,36 @@
 
 import { App, Tags } from 'aws-cdk-lib';
 import { ENVS } from '../lib/env.js';
+import { GithubOidcStack } from '../lib/github-oidc-stack.js';
 import { MarketingCertStack } from '../lib/marketing-cert-stack.js';
 import { MarketingStack } from '../lib/marketing-stack.js';
 
 const app = new App();
 
 for (const env of Object.values(ENVS)) {
-  const tag = (scope: object): void => {
+  const tag = (scope: object, component: string): void => {
     Tags.of(scope as never).add('Project', 'KenNook');
     Tags.of(scope as never).add('Environment', env.name);
-    Tags.of(scope as never).add('Component', 'marketing');
+    Tags.of(scope as never).add('Component', component);
   };
+
+  // GitHub Actions OIDC role — standalone, doesn't depend on the marketing
+  // resources. Deploy once per env (then GitHub Actions does the rest).
+  const oidc = new GithubOidcStack(app, `KenNookGithubOidc-${env.stackSuffix}`, { env });
+  tag(oidc, 'ci-cd');
 
   let certStack: MarketingCertStack | undefined;
   if (env.marketingDomains.length > 0) {
     certStack = new MarketingCertStack(app, `KenNookMarketingCert-${env.stackSuffix}`, {
       env,
     });
-    tag(certStack);
+    tag(certStack, 'marketing');
   }
 
   const marketing = new MarketingStack(app, `KenNookMarketing-${env.stackSuffix}`, {
     env,
     certificate: certStack?.certificate,
   });
-  tag(marketing);
+  tag(marketing, 'marketing');
   if (certStack) marketing.addDependency(certStack);
 }

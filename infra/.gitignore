@@ -3,7 +3,7 @@ cdk.out/
 *.d.ts
 *.js
 !jest.config.js
-.tsbuildinfo
+*.tsbuildinfo
 .env
 .env.*
 !.env.example

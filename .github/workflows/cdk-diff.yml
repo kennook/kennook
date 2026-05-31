@@ -1,0 +1,78 @@
+name: CDK diff
+
+# Runs cdk diff against the DEV account for every PR that could change infra
+# behavior (changes to /infra, /marketing, or this workflow itself). Posts
+# the diff as a sticky PR comment so a quick scroll tells you what'll change.
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - 'marketing/**'
+      - '.github/workflows/**'
+      - 'pnpm-workspace.yaml'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write   # for posting the diff comment
+
+concurrency:
+  group: cdk-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Configure AWS credentials (OIDC, dev account)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::719146259408:role/KenNookGithubDeploy-Dev
+          aws-region: us-west-2
+
+      # Build marketing so cdk synth can read .open-next/ — without it cdk
+      # would error trying to bundle Lambda assets that don't exist yet.
+      - name: Build marketing site
+        run: pnpm --filter @kennook/marketing build:all
+
+      - name: cdk diff
+        id: diff
+        working-directory: infra
+        run: |
+          set +e
+          pnpm exec cdk diff 'KenNook*-Dev' > /tmp/diff.txt 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat /tmp/diff.txt
+
+      - name: Format diff for PR comment
+        run: |
+          {
+            echo "### \`cdk diff\` — dev stacks"
+            echo ""
+            echo '```diff'
+            head -c 60000 /tmp/diff.txt
+            echo ''
+            echo '```'
+            echo ""
+            echo "<sub>Exit code: ${{ steps.diff.outputs.exit_code }} · only dev stacks shown; prod uses the same template, deployed via push to <code>main</code>.</sub>"
+          } > /tmp/diff-comment.md
+
+      - name: Post diff as PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: cdk-diff
+          path: /tmp/diff-comment.md

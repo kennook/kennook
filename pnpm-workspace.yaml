@@ -1,6 +1,6 @@
 # pnpm v10+ canonical settings file.
 
-# Workspace packages. Root is the kennook-app (Next.js library viewer).
+# Workspace packages. Root is the kennook app (Next.js library viewer).
 # `marketing/` is the public kennook.com Next.js site (deployed via OpenNext
 # + CDK). `infra/` is the CDK TypeScript app that provisions both.
 packages:

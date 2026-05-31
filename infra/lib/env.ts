@@ -28,7 +28,15 @@ export interface KennookEnv {
   /** Whether stateful resources should be locked down (RETAIN policies,
    *  deletion protection). True only in prod. */
   hardenStateful: boolean;
+  /** Git branch that maps to this env. GitHub Actions on a push to this
+   *  branch can assume the env's OIDC role and deploy. */
+  trustedBranch: 'develop' | 'main';
 }
+
+/** GitHub repo coordinates — used as the OIDC trust constraint so only
+ *  workflows from THIS repo can assume the deploy roles. Update if the repo
+ *  ever gets renamed or transferred. */
+export const GITHUB_REPO = 'kennook/kennook' as const;
 
 export const PRIMARY_REGION = 'us-west-2' as const;
 /** Mandatory region for CloudFront ACM certificates. */
@@ -43,6 +51,7 @@ export const ENVS: Record<EnvName, KennookEnv> = {
     hostedZoneName: 'kennook.dev',
     marketingDomains: ['kennook.dev', 'www.kennook.dev'],
     hardenStateful: false,
+    trustedBranch: 'develop',
   },
   prod: {
     name: 'prod',
@@ -52,5 +61,6 @@ export const ENVS: Record<EnvName, KennookEnv> = {
     hostedZoneName: 'kennook.com',
     marketingDomains: ['kennook.com', 'www.kennook.com'],
     hardenStateful: true,
+    trustedBranch: 'main',
   },
 };

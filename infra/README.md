@@ -55,3 +55,39 @@ pnpm --filter @kennook/infra deploy:prod    # deploy to prod (broadening approva
   `env.hardenStateful` is true).
 - Always run `diff` before `deploy`. CI requires manual approval on prod
   `Replace` actions.
+
+## GitHub Actions / OIDC setup (one-time per env)
+
+The `KenNookGithubOidc-{Env}` stack creates an OIDC trust + deploy role
+that the workflows in `.github/workflows/` assume. No long-lived secrets
+in the repo — short-lived STS sessions via GitHub's OIDC token.
+
+First-time bootstrap, **after** the workspace is fresh from clone:
+
+```bash
+# 1. Deploy the OIDC stacks (idempotent; re-run safely if anything changes).
+pnpm --filter @kennook/infra exec cdk deploy KenNookGithubOidc-Dev --profile kennook-dev
+pnpm --filter @kennook/infra exec cdk deploy KenNookGithubOidc-Prod --profile kennook-prod
+
+# 2. Confirm the role ARNs match what the workflows expect:
+#    arn:aws:iam::719146259408:role/KenNookGithubDeploy-Dev
+#    arn:aws:iam::045064752951:role/KenNookGithubDeploy-Prod
+```
+
+Then in GitHub:
+- **Branches**: ensure `develop` exists. The dev workflow triggers on push
+  to `develop`; prod on push to `main`.
+- **Environments** (repo Settings → Environments):
+  - Create `development` (no rules needed — instant deploys).
+  - Create `production` (no required reviewers for the solo-dev flow now;
+    add reviewers later if/when the team grows).
+
+The workflows then run on every push.
+
+## Workflows
+
+| File | Trigger | What it does |
+|---|---|---|
+| `.github/workflows/cdk-diff.yml` | PR touching `infra/`, `marketing/`, or workflow files | Builds marketing, runs `cdk diff` against dev, posts a sticky comment with the diff. |
+| `.github/workflows/deploy-dev.yml` | Push to `develop` | Builds marketing, deploys all `*-Dev` stacks to the dev account via OIDC. |
+| `.github/workflows/deploy-prod.yml` | Push to `main` | Builds marketing, deploys all `*-Prod` stacks via OIDC. Uses `--require-approval broadening` for an extra safety check on IAM-broadening diffs. |
