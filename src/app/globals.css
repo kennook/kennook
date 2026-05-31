@@ -6,6 +6,72 @@
   color-scheme: dark;
 }
 
+/* Full-mode (maxed viewer) control scaling — accessibility. On larger
+   displays the floating controls grow so they stay legible and easy to hit
+   from a distance. `zoom` scales the whole cluster (button box, icon, padding,
+   AND text) uniformly while still participating in layout, so the corner
+   anchoring (top/right-4) and the nav arrows' top-1/2 centering keep working
+   without per-control rewrites. Stepped by viewport width. */
+:root { --kn-chrome-scale: 1; }
+@media (min-width: 1680px) { :root { --kn-chrome-scale: 1.2; } }
+@media (min-width: 2200px) { :root { --kn-chrome-scale: 1.45; } }
+@media (min-width: 3000px) { :root { --kn-chrome-scale: 1.75; } }
+.kn-chrome-scaled { zoom: var(--kn-chrome-scale, 1); }
+/* Video controls run a step larger than the surrounding chrome — they're the
+   primary interactive surface during playback (small targets like seek/mute/
+   volume) so they get an extra 1.3× base multiplier on top of the responsive
+   chrome scale. Both still grow together: bumping --kn-chrome-scale moves
+   them in lockstep with the rest of the maxed chrome. */
+.kn-video-controls-scaled { zoom: calc(var(--kn-chrome-scale, 1) * 1.3); }
+
+/* Single fading container for the maxed viewer chrome (nav arrows, position
+   pill, bottom toolbar, pan/zoom widget, reel). One opacity transition + one
+   compositor layer instead of one per chrome cluster — bigly cheaper on the
+   GPU when the chrome shows/hides, especially with multiple browser windows
+   open competing for compositor budget. `will-change: opacity` opts the
+   subtree into a stable promoted layer so the transition doesn't churn paint.
+
+   `kn-chrome-hidden` and `kn-chrome-quiet` modifiers also disable descendant
+   pointer events so faded controls don't intercept clicks (the previous
+   per-element pointer-events-none lived inside chromeFadeClass — this rule
+   recreates that behavior at the overlay level). */
+.kn-chrome-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 300ms;
+  will-change: opacity;
+}
+.kn-chrome-overlay.kn-chrome-hidden { opacity: 0; }
+.kn-chrome-overlay.kn-chrome-quiet { opacity: 0.3; transition-duration: 500ms; }
+.kn-chrome-overlay.kn-chrome-hidden *,
+.kn-chrome-overlay.kn-chrome-quiet * { pointer-events: none; }
+
+/* Bottom-edge clearance for widgets that have to sit above the scaled video
+   controls bar — the reel film-strip and the panning minimap. Bumps with the
+   same breakpoints as --kn-chrome-scale so both widgets keep clear of the
+   controls as they grow, without per-breakpoint className gymnastics. */
+/* Lands the toolbar / reel / pan-zoom widget ~10px above the visible
+   progress bar at each chrome-scale breakpoint. The bottom edge of these
+   widgets sits inside the seek bar's invisible hit slop (the ::before's
+   20px upper half) — they all have higher z-index than the seek bar so
+   they win clicks in that overlap, and the slop is still ~10px above the
+   visible bar for accidental near-misses. */
+/* Inner padding for the bottom-corner chrome (toolbar on the left, pan/zoom
+   widget on the right). The video controls bar has `px-4` (1rem) AND
+   kn-video-controls-scaled (zoom × chrome × 1.3) — so its play/pause and
+   mute/volume buttons sit `1rem × scale × 1.3` from the viewport edges. The
+   corner chrome itself isn't zoomed (positioning would drift with scale), so
+   we mirror that scaled offset here to keep them flush at every breakpoint. */
+:root { --kn-chrome-pad: calc(1rem * var(--kn-chrome-scale, 1) * 1.3); }
+
+:root { --kn-controls-clearance: 7rem; }              /* 112px (1.3x bar) */
+@media (min-width: 1680px) { :root { --kn-controls-clearance: 8.5rem; } } /* 136px */
+@media (min-width: 2200px) { :root { --kn-controls-clearance: 10rem; } }  /* 160px */
+@media (min-width: 3000px) { :root { --kn-controls-clearance: 12rem; } }  /* 192px */
+
+
 /* Range-slider styling. Filled portion is driven by `--fill` inline. */
 .kn-slider {
   -webkit-appearance: none;

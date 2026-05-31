@@ -9,35 +9,37 @@
 // extraction is its own can of worms; will revisit if needed).
 //
 // Run with:
-//   pnpm enrich:sensitive                  # default workspace
-//   pnpm enrich:sensitive -w work          # named workspace
+//   pnpm enrich:sensitive                  # default library
+//   pnpm enrich:sensitive -w work          # named library
 //   pnpm enrich:sensitive --reset          # re-score everything
 //   pnpm enrich:sensitive --limit 50       # cap for testing
 
 import fs from 'node:fs/promises';
-import { DEFAULT_WORKSPACE_SLUG, resolveWorkspace } from '@/server/workspaces';
+import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 import { getRawSqlite } from '@/db/client';
+import { parseRootPath, resolveMediaPath } from '@/server/storage';
 import { scoreSensitiveContent } from '@/ai/sensitive';
 import { emitProgress } from './progress';
+import { installGracefulStop, shouldStop } from './graceful-stop';
 
 interface Args {
-  workspaceSlug: string;
+  librarySlug: string;
   reset: boolean;
   retryFailed: boolean;
   limit: number | null;
 }
 
 function parseArgs(argv: string[]): Args {
-  let workspaceSlug = DEFAULT_WORKSPACE_SLUG;
+  let librarySlug = DEFAULT_LIBRARY_SLUG;
   let reset = false;
   let retryFailed = false;
   let limit: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
-      const v = argv[++i]; if (v) workspaceSlug = v;
-    } else if (a.startsWith('--workspace=')) {
-      workspaceSlug = a.split('=')[1];
+    if (a === '--library' || a === '-w') {
+      const v = argv[++i]; if (v) librarySlug = v;
+    } else if (a.startsWith('--library=')) {
+      librarySlug = a.split('=')[1];
     } else if (a === '--reset') {
       reset = true;
     } else if (a === '--retry-failed') {
@@ -48,20 +50,22 @@ function parseArgs(argv: string[]): Args {
       limit = parseInt(a.split('=')[1], 10);
     }
   }
-  return { workspaceSlug, reset, retryFailed, limit };
+  return { librarySlug, reset, retryFailed, limit };
 }
 
 interface PendingRow {
   id: number;
   uuid: string;
   filename: string;
-  path: string;
+  rel_path: string;
+  storage_config: string;
 }
 
 async function main() {
+  installGracefulStop();
   const args = parseArgs(process.argv.slice(2));
-  const workspace = resolveWorkspace(args.workspaceSlug);
-  const sqlite = getRawSqlite(workspace.slug);
+  const library = resolveLibrary(args.librarySlug);
+  const sqlite = getRawSqlite(library.slug);
 
   if (args.reset) {
     sqlite.exec(`
@@ -81,17 +85,18 @@ async function main() {
     ? `sensitive_status IN ('pending', 'failed')`
     : `sensitive_status = 'pending'`;
   const pending = sqlite.prepare(`
-    SELECT id, uuid, filename, path
-    FROM media_items
-    WHERE kind = 'photo'
+    SELECT m.id, m.uuid, m.filename, m.path AS rel_path, sl.config AS storage_config
+    FROM media_items m
+    JOIN storage_locations sl ON sl.id = m.storage_location_id
+    WHERE m.kind = 'photo'
       AND ${statusClause}
-      AND deleted_at IS NULL
-    ORDER BY id
+      AND m.deleted_at IS NULL
+    ORDER BY m.id
     ${limitClause}
   `).all() as unknown as PendingRow[];
 
   console.log(
-    `Sensitive enrichment in workspace "${workspace.name}" (${workspace.slug}): ` +
+    `Sensitive enrichment in library "${library.name}" (${library.slug}): ` +
     `${pending.length} photo(s) to process.`,
   );
   if (pending.length === 0) return;
@@ -115,6 +120,7 @@ async function main() {
   const LOG_VIOLENCE = 0.27;
 
   for (const row of pending) {
+    if (shouldStop()) { console.log('\n[paused] stopping after current batch — progress saved.'); break; }
     emitProgress({
       step: 'Enrich: sensitive',
       current: done + failed,
@@ -122,12 +128,13 @@ async function main() {
       label: 'NSFW + violence scoring',
       currentItem: row.uuid,
       currentItemKind: 'uuid',
-      currentItemWorkspace: workspace.slug,
+      currentItemLibrary: library.slug,
     });
     const idx = `[${done + failed + 1}/${pending.length}]`;
     process.stdout.write(`${idx} ${row.filename} … `);
+    const absPath = resolveMediaPath(parseRootPath(row.storage_config), row.rel_path);
     try {
-      await fs.access(row.path);
+      await fs.access(absPath);
     } catch {
       update.run(0, 0, 'failed', row.id);
       failed++;
@@ -135,7 +142,7 @@ async function main() {
       continue;
     }
     try {
-      const { nsfw, violence } = await scoreSensitiveContent(row.path);
+      const { nsfw, violence } = await scoreSensitiveContent(absPath);
       update.run(nsfw, violence, 'done', row.id);
       if (nsfw > LOG_NSFW) flaggedNsfw++;
       if (violence > LOG_VIOLENCE) flaggedViolence++;

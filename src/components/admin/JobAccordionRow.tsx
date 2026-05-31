@@ -55,11 +55,11 @@ export function JobAccordionRow({
         </span>
         <span className="font-mono text-xs text-zinc-300 min-w-[120px]">{job.command}</span>
         <span className="text-xs text-zinc-500 min-w-[80px]">
-          {job.workspaceSlug ?? '—'}
+          {job.librarySlug ?? '—'}
         </span>
         <span className="text-xs text-zinc-600 flex-1 truncate">
           {Object.entries(job.args)
-            .filter(([k]) => k !== 'workspace')
+            .filter(([k]) => k !== 'library')
             .map(([k, v]) => `${k}=${v}`)
             .join(' · ') || ' '}
         </span>

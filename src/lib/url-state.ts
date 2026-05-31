@@ -24,37 +24,46 @@ export interface PageState {
   cameraMake: string | null;
   year: number | null;
   tags: string[];
+  /** "Mentioned" tags from transcripts (source='transcript') — what's SAID. */
+  mentioned: string[];
   minLikes: number | null;
   watched: Watched | null;
   sensitive: SensitiveFilter | null;
-  /** Active workspace slug. Lives in the URL (not just the cookie) so each
+  /** Active library slug. Lives in the URL (not just the cookie) so each
    *  tab has its own source of truth — fixes a cross-tab leak where flipping
-   *  workspaces in one tab silently changed the next tab's reload. */
-  workspace: string | null;
+   *  libraries in one tab silently changed the next tab's reload. */
+  library: string | null;
   page: number;
   /** UUID of the currently-open item in the viewer, or null when the
    *  viewer is closed. Reflects the modal-style preview/maxed state
    *  in the URL so it's bookmarkable and survives browser back/forward. */
   item: string | null;
-  /** Whether the viewer is in maximized (full-screen) state. `null`
-   *  means preview-modal mode; `'full'` means maxed. Only meaningful
-   *  when `item` is set. */
-  view: 'full' | null;
+  /** Viewer presentation mode. `null` = preview-modal; `'full'` = maxed
+   *  fullscreen; `'slideshow'` = maxed + auto-advancing slideshow. Kept in
+   *  the URL so it survives overlays (screensaver) and refreshes. Only
+   *  meaningful when `item` is set. */
+  view: 'full' | 'slideshow' | null;
+  /** Initial seek position (ms) for the open viewer. Search-result clicks
+   *  on a timestamped text match set this so the viewer opens at the match
+   *  point. Null = no auto-seek. */
+  tMs: number | null;
 }
 
 // Keys we manage in the URL. Anything not in this list is left alone, so other
 // libraries (analytics, etc.) can drop their own params without us clobbering.
-const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'camera', 'year', 'tags', 'likes', 'seen', 'sensitive', 'ws', 'page', 'item', 'view'] as const;
+// `ws` is the pre-rename library key — we still read it but always write `lib`.
+const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'camera', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
 type UrlKey = typeof ALL_KEYS[number];
 
 // Keys that DON'T reset `page` when they change — these don't alter
 // the underlying list, just what's currently shown over it (the
 // viewer modal). Same idea as `preservePage: true` but applied
 // automatically for these specific keys.
-const VIEWPORT_KEYS = new Set(['page', 'item', 'view']);
+const VIEWPORT_KEYS = new Set(['page', 'item', 'view', 'tMs']);
 
 function parseState(params: URLSearchParams): PageState {
   const tagsRaw = params.get('tags');
+  const mentionedRaw = params.get('mentioned');
   const yearRaw = params.get('year');
   const pageRaw = params.get('page');
   const likesRaw = params.get('likes');
@@ -69,16 +78,27 @@ function parseState(params: URLSearchParams): PageState {
     cameraMake: params.get('camera'),
     year: yearRaw ? parseInt(yearRaw, 10) : null,
     tags: tagsRaw ? tagsRaw.split(',').filter(Boolean) : [],
+    mentioned: mentionedRaw ? mentionedRaw.split(',').filter(Boolean) : [],
     minLikes: likesRaw ? Math.max(1, Math.min(5, parseInt(likesRaw, 10))) : null,
     watched: seenRaw === 'watched' || seenRaw === 'unwatched' ? seenRaw : null,
     sensitive: (() => {
       const s = params.get('sensitive');
       return s === 'hide' || s === 'only' ? s : null;
     })(),
-    workspace: params.get('ws'),
+    // Prefer the new `lib` key; fall back to legacy `ws` for old bookmarks.
+    library: params.get('lib') ?? params.get('ws'),
     page: pageRaw ? Math.max(1, parseInt(pageRaw, 10)) : 1,
     item: params.get('item'),
-    view: params.get('view') === 'full' ? 'full' : null,
+    view: (() => {
+      const v = params.get('view');
+      return v === 'full' || v === 'slideshow' ? v : null;
+    })(),
+    tMs: (() => {
+      const raw = params.get('t');
+      if (!raw) return null;
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    })(),
   };
 }
 
@@ -107,13 +127,19 @@ function applyPatchToParams(
   if ('cameraMake' in patch) writeKey(out, 'camera', patch.cameraMake);
   if ('year' in patch) writeKey(out, 'year', patch.year);
   if ('tags' in patch) writeKey(out, 'tags', patch.tags);
+  if ('mentioned' in patch) writeKey(out, 'mentioned', patch.mentioned);
   if ('minLikes' in patch) writeKey(out, 'likes', patch.minLikes);
   if ('watched' in patch) writeKey(out, 'seen', patch.watched);
   if ('sensitive' in patch) writeKey(out, 'sensitive', patch.sensitive);
-  if ('workspace' in patch) writeKey(out, 'ws', patch.workspace);
+  if ('library' in patch) {
+    // Write the new key and clear the legacy one so old `?ws=` doesn't linger.
+    writeKey(out, 'lib', patch.library);
+    out.delete('ws');
+  }
   if ('page' in patch) writeKey(out, 'page', patch.page);
   if ('item' in patch) writeKey(out, 'item', patch.item);
   if ('view' in patch) writeKey(out, 'view', patch.view);
+  if ('tMs' in patch) writeKey(out, 't', patch.tMs);
   return out;
 }
 
@@ -135,7 +161,7 @@ export function usePageState() {
       const params = applyPatchToParams(searchParams, patch);
       // If anything BUT page changed, drop back to page 1 — unless the
       // caller explicitly opts out (used for "back-fill the URL with the
-      // current workspace on first load" where we're not really
+      // current library on first load" where we're not really
       // navigating, just anchoring this tab's state).
       if (!options?.preservePage) {
         // Viewport keys (item/view) DON'T reset page either — opening

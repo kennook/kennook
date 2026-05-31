@@ -3,7 +3,7 @@
 /**
  * Per-item viewer-state memory, persisted to localStorage.
  *
- * Each entry is keyed by "<workspace_slug>:<item_uuid>" — globally
+ * Each entry is keyed by "<library_slug>:<item_uuid>" — globally
  * unique across the user's library — and stores pan + zoom. Capped
  * LRU-style by `updatedAt` so the map can't bloat.
  *

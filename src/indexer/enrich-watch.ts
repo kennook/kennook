@@ -1,19 +1,19 @@
 // Background enrichment daemon.
 //
-// Polls a workspace for items needing VLM enrichment, processes them in
+// Polls a library for items needing VLM enrichment, processes them in
 // batches, and sleeps between cycles. Designed to run detached (nohup, pm2,
 // launchd, systemd) — logs to a file so output survives terminal closing.
 //
 // Usage:
 //   pnpm enrich:watch                                    # personal, defaults
-//   pnpm enrich:watch --workspace work --interval 60     # named workspace, 60s poll
+//   pnpm enrich:watch --library work --interval 60     # named library, 60s poll
 //   pnpm enrich:watch --batch 10                         # process 10 items per cycle
 //   pnpm enrich:watch --include-failed                   # retry previously failed items
 //   pnpm enrich:watch --once                             # one cycle then exit (cron-friendly)
 //
 // To run truly in the background:
 //   nohup pnpm enrich:watch > /dev/null 2>&1 &
-//   # check the log:  tail -f ~/kennook-app/data/<workspace>/enrich.log
+//   # check the log:  tail -f ~/kennook-app/data/<library>/enrich.log
 //   # stop with:      pkill -f enrich-watch.ts
 
 import fs from 'node:fs';
@@ -21,11 +21,11 @@ import path from 'node:path';
 import { getRawSqlite } from '@/db/client';
 import { enrichImage } from '@/ai/vlm';
 import {
-  DEFAULT_WORKSPACE_SLUG,
-  resolveWorkspace,
-  workspaceRoot,
-  type Workspace,
-} from '@/server/workspaces';
+  DEFAULT_LIBRARY_SLUG,
+  resolveLibrary,
+  libraryRoot,
+  type Library,
+} from '@/server/libraries';
 
 interface PendingRow {
   id: number;
@@ -36,7 +36,7 @@ interface PendingRow {
 }
 
 interface CliArgs {
-  workspaceSlug: string;
+  librarySlug: string;
   intervalSec: number;
   batchSize: number;
   includeFailed: boolean;
@@ -44,7 +44,7 @@ interface CliArgs {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  let workspaceSlug = DEFAULT_WORKSPACE_SLUG;
+  let librarySlug = DEFAULT_LIBRARY_SLUG;
   let intervalSec = 30;
   let batchSize = 5;
   let includeFailed = false;
@@ -52,12 +52,12 @@ function parseArgs(argv: string[]): CliArgs {
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
+    if (a === '--library' || a === '-w') {
       const v = argv[++i];
-      if (!v) throw new Error('--workspace requires a value');
-      workspaceSlug = v;
-    } else if (a.startsWith('--workspace=')) {
-      workspaceSlug = a.split('=')[1];
+      if (!v) throw new Error('--library requires a value');
+      librarySlug = v;
+    } else if (a.startsWith('--library=')) {
+      librarySlug = a.split('=')[1];
     } else if (a === '--interval') {
       const v = argv[++i];
       if (!v) throw new Error('--interval requires a value (seconds)');
@@ -76,7 +76,7 @@ function parseArgs(argv: string[]): CliArgs {
       once = true;
     } else if (a === '--help' || a === '-h') {
       console.log(`Usage:
-  pnpm enrich:watch [--workspace <slug>] [--interval <sec>] [--batch <N>]
+  pnpm enrich:watch [--library <slug>] [--interval <sec>] [--batch <N>]
                     [--include-failed] [--once]
 `);
       process.exit(0);
@@ -87,7 +87,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   if (intervalSec < 5) throw new Error('--interval must be at least 5 seconds');
   if (batchSize < 1 || batchSize > 50) throw new Error('--batch must be 1–50');
-  return { workspaceSlug, intervalSec, batchSize, includeFailed, once };
+  return { librarySlug, intervalSec, batchSize, includeFailed, once };
 }
 
 // ─── Logging ─────────────────────────────────────────────────────────────
@@ -122,14 +122,14 @@ interface Stats {
 }
 
 async function runOneCycle(
-  workspace: Workspace,
+  library: Library,
   batchSize: number,
   includeFailed: boolean,
   stats: Stats,
   log: Logger,
   shouldStop: () => boolean,
 ): Promise<{ processed: number; remaining: number }> {
-  const sqlite = getRawSqlite(workspace.slug);
+  const sqlite = getRawSqlite(library.slug);
 
   const statusClause = includeFailed
     ? "enrichment_status != 'done'"
@@ -231,9 +231,9 @@ function sleep(ms: number, shouldStop: () => boolean): Promise<void> {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const workspace = resolveWorkspace(args.workspaceSlug);
+  const library = resolveLibrary(args.librarySlug);
 
-  const logPath = path.join(workspaceRoot(workspace.slug), 'enrich.log');
+  const logPath = path.join(libraryRoot(library.slug), 'enrich.log');
   const log = new Logger(logPath);
 
   let stopRequested = false;
@@ -247,7 +247,7 @@ async function main() {
     stopRequested = true;
   });
 
-  log.log(`Starting enrich-watch for workspace "${workspace.name}" (${workspace.slug})`);
+  log.log(`Starting enrich-watch for library "${library.name}" (${library.slug})`);
   log.log(`  interval=${args.intervalSec}s  batch=${args.batchSize}  includeFailed=${args.includeFailed}  once=${args.once}`);
   log.log(`  log file: ${logPath}`);
 
@@ -256,7 +256,7 @@ async function main() {
   while (!stopRequested) {
     stats.cycles++;
     const { processed, remaining } = await runOneCycle(
-      workspace, args.batchSize, args.includeFailed, stats, log, shouldStop,
+      library, args.batchSize, args.includeFailed, stats, log, shouldStop,
     );
 
     if (processed > 0) {

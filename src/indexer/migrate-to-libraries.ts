@@ -1,4 +1,4 @@
-// One-shot migration: move pre-workspace data into the personal workspace.
+// One-shot migration: move pre-library data into the personal library.
 //
 // Before: data/kennook.db, data/thumbnails/*.jpg
 // After:  data/personal/kennook.db, data/personal/thumbnails/*.jpg
@@ -6,19 +6,19 @@
 // Also rewrites the thumbnail_path column on every media_items row so the app
 // can serve thumbnails from their new location.
 //
-// Run with: pnpm tsx src/indexer/migrate-to-workspaces.ts
+// Run with: pnpm tsx src/indexer/migrate-to-libraries.ts
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { workspaceDbPath, workspaceThumbnailsDir } from '@/server/workspaces';
+import { libraryDbPath, libraryThumbnailsDir } from '@/server/libraries';
 
 const DATA_ROOT = process.env.KENNOOK_DATA_ROOT ?? './data';
 const OLD_DB = path.join(DATA_ROOT, 'kennook.db');
 const OLD_THUMBS = path.join(DATA_ROOT, 'thumbnails');
 
-const NEW_DB = workspaceDbPath('personal');
-const NEW_THUMBS = workspaceThumbnailsDir('personal');
+const NEW_DB = libraryDbPath('personal');
+const NEW_THUMBS = libraryThumbnailsDir('personal');
 
 function exists(p: string) {
   return fs.existsSync(p);
@@ -31,14 +31,14 @@ function moveFile(src: string, dst: string) {
 
 async function main() {
   if (!exists(OLD_DB) && !exists(OLD_THUMBS)) {
-    console.log('Nothing to migrate — no pre-workspace data found.');
+    console.log('Nothing to migrate — no pre-library data found.');
     return;
   }
 
   if (exists(NEW_DB)) {
     console.error(
       `Refusing to migrate: ${NEW_DB} already exists. ` +
-      `Move or remove the personal workspace files first, then re-run.`,
+      `Move or remove the personal library files first, then re-run.`,
     );
     process.exit(1);
   }
@@ -83,7 +83,7 @@ async function main() {
     db.close();
   }
 
-  console.log('\nMigration complete. The 138 (or however many) items are now in workspace "personal".');
+  console.log('\nMigration complete. The 138 (or however many) items are now in library "personal".');
 }
 
 main().catch((err) => {

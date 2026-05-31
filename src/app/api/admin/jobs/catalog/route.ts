@@ -2,7 +2,7 @@
  * GET /api/admin/jobs/catalog  — list of every runnable job in the
  * catalog (used to render the cards on /admin/indexing).
  *
- * Workspace dropdown is populated client-side from a separate tRPC
+ * Library dropdown is populated client-side from a separate tRPC
  * query the app already has — keeps this endpoint pure config.
  */
 

@@ -155,7 +155,7 @@ export function MobileViewer({
       ) : (
         <NativeVideo
           src={item.mediaUrl}
-          progressKey={`${item.workspaceSlug}:${item.uuid}`}
+          progressKey={`${item.librarySlug}:${item.uuid}`}
           onFullscreenExit={onClose}
         />
       )}

@@ -14,7 +14,7 @@
  * shortcut goes through the hook directly.
  *
  * Why hold-to-record (vs. tap-to-toggle): mic stays live ONLY while
- * the button is depressed. There's no scenario where Kennook is
+ * the button is depressed. There's no scenario where KenNook is
  * listening without an explicit, currently-held gesture. Release →
  * recorder stops, stream tracks are stopped, the browser's mic
  * indicator disappears.
@@ -32,7 +32,7 @@ export type VoiceTagStatus =
 
 interface UseVoiceTaggerOptions {
   uuid: string;
-  workspaceSlug: string;
+  librarySlug: string;
   /** Called after tags are committed; lets parent invalidate caches. */
   onCommitted?: (tags: string[]) => void;
 }
@@ -47,12 +47,12 @@ export interface VoiceTagger {
  * Imperative recording lifecycle. Call `start()` on press / keydown,
  * `stop()` on release / keyup. The hook handles everything else: mic
  * acquisition, MediaRecorder events, server round-trip, tag commits,
- * and the status state machine. Same uuid/workspaceSlug pair → same
+ * and the status state machine. Same uuid/librarySlug pair → same
  * commit destination, no matter who's driving.
  */
 export function useVoiceTagger({
   uuid,
-  workspaceSlug,
+  librarySlug,
   onCommitted,
 }: UseVoiceTaggerOptions): VoiceTagger {
   const [status, setStatus] = useState<VoiceTagStatus>({ kind: 'idle' });
@@ -118,7 +118,7 @@ export function useVoiceTagger({
     const committed: string[] = [];
     for (const tag of payload.tags) {
       try {
-        await addTag.mutateAsync({ uuid, workspaceSlug, name: tag });
+        await addTag.mutateAsync({ uuid, librarySlug, name: tag });
         committed.push(tag);
       } catch {
         // duplicates / length errors — skip and continue
@@ -130,7 +130,7 @@ export function useVoiceTagger({
       tags: committed,
       transcript: payload.transcript,
     });
-  }, [addTag, uuid, workspaceSlug, onCommitted]);
+  }, [addTag, uuid, librarySlug, onCommitted]);
 
   const start = useCallback(() => {
     const current = statusRef.current.kind;
@@ -146,7 +146,7 @@ export function useVoiceTagger({
         kind: 'error',
         message: window.isSecureContext
           ? 'Mic API unavailable in this browser.'
-          : 'Mic needs HTTPS — open Kennook via https:// (or http://localhost).',
+          : 'Mic needs HTTPS — open KenNook via https:// (or http://localhost).',
       });
       return;
     }
@@ -229,12 +229,12 @@ export function useVoiceTagger({
 
 interface SidebarProps {
   uuid: string;
-  workspaceSlug: string;
+  librarySlug: string;
   onCommitted?: (tags: string[]) => void;
 }
 
-export function VoiceTagButton({ uuid, workspaceSlug, onCommitted }: SidebarProps) {
-  const { status, start, stop } = useVoiceTagger({ uuid, workspaceSlug, onCommitted });
+export function VoiceTagButton({ uuid, librarySlug, onCommitted }: SidebarProps) {
+  const { status, start, stop } = useVoiceTagger({ uuid, librarySlug, onCommitted });
   const recording = status.kind === 'recording';
   const processing = status.kind === 'processing';
 

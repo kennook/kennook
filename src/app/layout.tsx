@@ -3,8 +3,11 @@ import { TRPCProvider } from '@/lib/trpc-client';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Kennook',
+  title: 'KenNook',
   description: 'Your personal media library, smarter.',
+  icons: {
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+  },
 };
 
 // Disable pinch + double-tap zoom on mobile. The viewer's video element

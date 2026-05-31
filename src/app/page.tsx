@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { keepPreviousData, useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc-client';
 import { usePageState } from '@/lib/url-state';
@@ -16,7 +16,8 @@ import { AddToPlaylistDialog } from '@/components/AddToPlaylistDialog';
 import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { MobileApp } from '@/components/mobile/MobileApp';
-import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
+import { LibrarySwitcher } from '@/components/LibrarySwitcher';
+import { KenNookLogo } from '@/components/KenNookLogo';
 import { AdminLinkButton } from '@/components/admin/AdminLinkButton';
 import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
@@ -29,7 +30,7 @@ import { useShortcut } from '@/lib/shortcuts';
 import { useSync, useSyncEvent } from '@/lib/sync';
 
 interface SelectionRef {
-  workspaceSlug: string;
+  librarySlug: string;
   itemUuid: string;
 }
 
@@ -66,10 +67,16 @@ function HomeContent() {
     url.set({ item: uuid });
   }, [url]);
 
-  // Maxed (full-screen) state ALSO lives in the URL via ?view=full.
-  // Open viewer in modal mode unless ?view=full is set.
-  const viewerMaxed = url.view === 'full';
+  // Fullscreen + slideshow BOTH live in the URL via ?view= (tri-state:
+  // 'full' | 'slideshow' | null). Keeping slideshow in the URL — not React
+  // state — means it survives anything that overlays the page (the
+  // screensaver) and hard refreshes: dismissing the screensaver restores the
+  // exact view the URL describes. Slideshow implies fullscreen.
+  const viewerMaxed = url.view === 'full' || url.view === 'slideshow';
+  const slideshow = url.view === 'slideshow';
   const setViewerMaxed = useCallback((m: boolean) => {
+    // Un-maximizing always exits to the modal viewer (clears slideshow too).
+    // Maximizing from the modal enters plain fullscreen, not slideshow.
     url.set({ view: m ? 'full' : null });
   }, [url]);
 
@@ -78,11 +85,12 @@ function HomeContent() {
   const [selection, setSelection] = useState<SelectionRef[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [anchor, setAnchor] = useState<SelectionRef | null>(null);
-  // Slideshow auto-play mode. Triggered from the playlist header's Play
-  // button; cleared on Esc-from-slideshow, viewer close, or playlist switch.
-  const [slideshow, setSlideshow] = useState(false);
   // Walk-away screensaver. Triggered by `S` shortcut, exits on any input.
   const [screensaverOpen, setScreensaverOpen] = useState(false);
+  // Post-screensaver "quiet" state: when true, page chrome (header, sidebar,
+  // viewer chrome) fades to a low-opacity, non-interactive state. Cleared on
+  // the first real user input (mouse move / key / wheel / touch).
+  const [quietMode, setQuietMode] = useState(false);
   // When prev/next steps across a page boundary, we update the URL's `page`
   // param and remember which end of the next page to land on. The viewer
   // uses this as a fallback selection while React Query is fetching, so the
@@ -90,7 +98,7 @@ function HomeContent() {
   const [postLoadIntent, setPostLoadIntent] = useState<'first' | 'last' | null>(null);
 
   const selectedKeys = useMemo(
-    () => new Set(selection.map((s) => selectionKey(s.workspaceSlug, s.itemUuid))),
+    () => new Set(selection.map((s) => selectionKey(s.librarySlug, s.itemUuid))),
     [selection],
   );
 
@@ -103,18 +111,73 @@ function HomeContent() {
   // (sync.tsx filters by sessionId).
   const sync = useSync();
 
+  // Timestamp of the last LOCAL screensaver toggle. The cross-process poll
+  // below trusts local intent for a short window after a toggle so a stale
+  // in-flight poll can't briefly re-open/close the screensaver under us.
+  const lastLocalScreensaverChangeRef = useRef(0);
+
   const triggerScreensaver = () => {
+    lastLocalScreensaverChangeRef.current = Date.now();
     setScreensaverOpen(true);
     sync.publish({ type: 'screensaver', open: true });
   };
   const dismissScreensaver = () => {
+    lastLocalScreensaverChangeRef.current = Date.now();
     setScreensaverOpen(false);
+    setQuietMode(true);
     sync.publish({ type: 'screensaver', open: false });
   };
 
   useShortcut('global.screensaver', triggerScreensaver);
 
-  useSyncEvent('screensaver', (e) => setScreensaverOpen(e.open));
+  // Instant path: same-process devices get the toggle live via SSE.
+  useSyncEvent('screensaver', (e) => {
+    lastLocalScreensaverChangeRef.current = Date.now();
+    setScreensaverOpen(e.open);
+  });
+
+  // Cross-process path: caddy fronts a prod build (:3001) AND the dev server
+  // (:3000), so devices on different origins land on different Node processes
+  // whose in-memory SSE brokers don't talk to each other. They DO share one
+  // user.db, so poll the persisted state to converge. The guard window keeps
+  // a stale poll from clobbering a just-made local change.
+  useEffect(() => {
+    let alive = true;
+    const SCREENSAVER_POLL_MS = 2000;
+    const GUARD_MS = 3000;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/sync/state', { cache: 'no-store' });
+        if (!res.ok || !alive) return;
+        const data = await res.json() as { screensaver?: boolean };
+        if (typeof data.screensaver !== 'boolean') return;
+        if (Date.now() - lastLocalScreensaverChangeRef.current < GUARD_MS) return;
+        setScreensaverOpen((cur) => (cur === data.screensaver ? cur : data.screensaver!));
+      } catch { /* offline / transient — try again next tick */ }
+    };
+    const t = setInterval(poll, SCREENSAVER_POLL_MS);
+    void poll();
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  // While quiet mode is on, any real user input wakes the page back up.
+  // Listeners attach only when quietMode flips true so we're not paying for
+  // global event subscriptions in the common case. `passive: true` keeps us
+  // off the scroll/wheel hot path.
+  useEffect(() => {
+    if (!quietMode) return;
+    const wake = () => setQuietMode(false);
+    window.addEventListener('mousemove', wake, { passive: true });
+    window.addEventListener('keydown', wake, { passive: true });
+    window.addEventListener('wheel', wake, { passive: true });
+    window.addEventListener('touchstart', wake, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', wake);
+      window.removeEventListener('keydown', wake);
+      window.removeEventListener('wheel', wake);
+      window.removeEventListener('touchstart', wake);
+    };
+  }, [quietMode]);
 
   // A like on another device — patch our caches the same way the local
   // mutation does. No refetch, no risk of dismissing an open viewer.
@@ -159,6 +222,7 @@ function HomeContent() {
     cameraMake: url.cameraMake ?? undefined,
     year: url.year ?? undefined,
     tags: url.tags.length > 0 ? url.tags : undefined,
+    mentioned: url.mentioned.length > 0 ? url.mentioned : undefined,
     minLikes: url.minLikes ?? undefined,
     watched: url.watched ?? undefined,
     person: url.person ?? undefined,
@@ -214,6 +278,13 @@ function HomeContent() {
         onRemove: () => url.set({ tags: url.tags.filter((x) => x !== t) }),
       });
     }
+    for (const t of url.mentioned) {
+      out.push({
+        key: `mentioned-${t}`,
+        label: `“${t}”`,
+        onRemove: () => url.set({ mentioned: url.mentioned.filter((x) => x !== t) }),
+      });
+    }
     if (url.minLikes != null) {
       out.push({
         key: 'likes',
@@ -261,6 +332,7 @@ function HomeContent() {
       cameraMake: null,
       year: null,
       tags: [],
+      mentioned: [],
       minLikes: null,
       watched: null,
       person: null,
@@ -356,30 +428,52 @@ function HomeContent() {
 
   // ── Handlers ──────────────────────────────────────────────────────────
 
-  const handleOpen = (item: MediaItemDto) => setSelectedUuid(item.uuid);
+  const handleOpen = (item: MediaItemDto, match?: { tStartMs: number | null }) => {
+    if (match?.tStartMs != null) {
+      // Search-hit click on a timestamped match — open viewer AND seek to
+      // the match point in a single url.set so they propagate together.
+      url.set({ item: item.uuid, tMs: match.tStartMs });
+    } else {
+      // Clear any stale `t` from a previous search-hit click so non-search
+      // opens don't inherit a deep-link seek.
+      url.set({ item: item.uuid, tMs: null });
+    }
+  };
   const handleClose = () => {
-    // Clear both item AND view from the URL so closing the viewer
-    // doesn't leave a stale ?view=full hanging on the URL.
-    url.set({ item: null, view: null });
-    setSlideshow(false);
+    // Clearing `view` drops both fullscreen AND slideshow (slideshow is
+    // derived from view==='slideshow'). Also clear any deep-link seek.
+    url.set({ item: null, view: null, tMs: null });
   };
 
   const startSlideshow = () => {
     if (items.length === 0) return;
-    if (!selectedUuid) setSelectedUuid(items[0].uuid);
-    setSlideshow(true);
+    // Open the item AND enter slideshow in one url.set so they propagate
+    // together (view='slideshow' implies fullscreen). Single write avoids an
+    // intermediate render where the viewer is unmounted.
+    //
+    // Guard against a STALE url.item: now that view+item persist in the URL,
+    // a reload can leave ?item=X where X isn't in the current visible set
+    // (different filter/page). selectedUuid would then be that stale X, and
+    // re-setting it produces the same URL → router.replace no-ops → nothing
+    // opens. So only honor selectedUuid if it's actually visible; otherwise
+    // start from the first item.
+    const targetUuid =
+      selectedUuid && items.some((i) => i.uuid === selectedUuid)
+        ? selectedUuid
+        : items[0].uuid;
+    url.set({ item: targetUuid, view: 'slideshow' });
   };
 
   const handleToggleSelection = (item: MediaItemDto, e: React.MouseEvent) => {
-    const targetRef: SelectionRef = { workspaceSlug: item.workspaceSlug, itemUuid: item.uuid };
-    const targetKey = selectionKey(item.workspaceSlug, item.uuid);
+    const targetRef: SelectionRef = { librarySlug: item.librarySlug, itemUuid: item.uuid };
+    const targetKey = selectionKey(item.librarySlug, item.uuid);
 
     if (e.shiftKey && anchor) {
       const anchorIdx = items.findIndex(
-        (i) => i.workspaceSlug === anchor.workspaceSlug && i.uuid === anchor.itemUuid,
+        (i) => i.librarySlug === anchor.librarySlug && i.uuid === anchor.itemUuid,
       );
       const targetIdx = items.findIndex(
-        (i) => i.workspaceSlug === item.workspaceSlug && i.uuid === item.uuid,
+        (i) => i.librarySlug === item.librarySlug && i.uuid === item.uuid,
       );
       if (anchorIdx !== -1 && targetIdx !== -1) {
         const [from, to] = anchorIdx <= targetIdx
@@ -387,12 +481,12 @@ function HomeContent() {
           : [targetIdx, anchorIdx];
         const rangeRefs: SelectionRef[] = items
           .slice(from, to + 1)
-          .map((i) => ({ workspaceSlug: i.workspaceSlug, itemUuid: i.uuid }));
+          .map((i) => ({ librarySlug: i.librarySlug, itemUuid: i.uuid }));
         const existing = new Set(
-          selection.map((s) => selectionKey(s.workspaceSlug, s.itemUuid)),
+          selection.map((s) => selectionKey(s.librarySlug, s.itemUuid)),
         );
         const additions = rangeRefs.filter(
-          (r) => !existing.has(selectionKey(r.workspaceSlug, r.itemUuid)),
+          (r) => !existing.has(selectionKey(r.librarySlug, r.itemUuid)),
         );
         if (additions.length > 0) setSelection([...selection, ...additions]);
         return;
@@ -400,7 +494,7 @@ function HomeContent() {
     }
 
     if (selectedKeys.has(targetKey)) {
-      setSelection(selection.filter((s) => selectionKey(s.workspaceSlug, s.itemUuid) !== targetKey));
+      setSelection(selection.filter((s) => selectionKey(s.librarySlug, s.itemUuid) !== targetKey));
     } else {
       setSelection([...selection, targetRef]);
     }
@@ -468,12 +562,12 @@ function HomeContent() {
   };
 
   const handlePlaylistSelect = (uuid: string | null) => {
+    // view:null clears slideshow (it's derived from view) along with the viewer.
     url.set({
       playlist: uuid, similar: null, query: '', person: null,
       item: null, view: null,
     });
     setSelection([]);
-    setSlideshow(false);
   };
 
   const handlePersonSelect = (uuid: string | null) => {
@@ -482,7 +576,6 @@ function HomeContent() {
       item: null, view: null,
     });
     setSelection([]);
-    setSlideshow(false);
   };
 
   // Person rename mutation. Invalidates the people list (sidebar) and the
@@ -605,7 +698,7 @@ function HomeContent() {
     setRotationMutation.mutate({
       uuid: item.uuid,
       rotation: nextRotation,
-      workspaceSlug: item.workspaceSlug,
+      librarySlug: item.librarySlug,
     });
   };
 
@@ -613,17 +706,23 @@ function HomeContent() {
     await setLikeMutation.mutateAsync({
       uuid: item.uuid,
       count,
-      workspaceSlug: item.workspaceSlug,
+      librarySlug: item.librarySlug,
     });
   };
 
+  // Tailwind class fragment applied to top-level page chrome so they all
+  // breathe with the same fade when quiet mode flips on/off.
+  const chromeQuietClass = quietMode
+    ? 'opacity-30 pointer-events-none transition-opacity duration-500'
+    : 'opacity-100 transition-opacity duration-500';
+
   return (
     <main className="min-h-screen">
-      <header className="sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900">
+      <header className={`sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-4">
-          <h1 className="text-xl font-semibold tracking-tight shrink-0">
-            <span className="text-zinc-100">ken</span>
-            <span className="text-zinc-400">nook</span>
+          <h1 className="shrink-0">
+            <KenNookLogo height={26} />
+            <span className="sr-only">KenNook</span>
           </h1>
           <div className="flex-1">
             <SearchBar initial={url.query} onSubmit={handleSearchSubmit} />
@@ -658,14 +757,14 @@ function HomeContent() {
             ?
           </button>
           <AdminLinkButton />
-          <WorkspaceSwitcher />
+          <LibrarySwitcher />
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-6 flex gap-8">
         <aside
-          className="hidden md:block w-56 shrink-0 sticky top-20 self-start
-                     max-h-[calc(100vh-6rem)] overflow-y-auto pr-2"
+          className={`hidden md:block w-56 shrink-0 sticky top-20 self-start
+                     max-h-[calc(100vh-6rem)] overflow-y-auto pr-2 ${chromeQuietClass}`}
         >
           <PlaylistsSection
             activePlaylistUuid={url.playlist}
@@ -689,6 +788,8 @@ function HomeContent() {
               onYearChange={(v) => url.set({ year: v })}
               tags={url.tags}
               onTagsChange={(v) => url.set({ tags: v })}
+              mentioned={url.mentioned}
+              onMentionedChange={(v) => url.set({ mentioned: v })}
               minLikes={url.minLikes}
               onMinLikesChange={(v) => url.set({ minLikes: v })}
               watched={url.watched}
@@ -708,13 +809,13 @@ function HomeContent() {
             onRemovedFromPlaylist={clearSelection}
             currentPersonUuid={url.person}
             onReassignSelection={() => {
-              // Resolve the selection (which is workspaceSlug + uuid only) to
+              // Resolve the selection (which is librarySlug + uuid only) to
               // full MediaItemDtos from the currently visible items[]. Items
               // not in items[] (selected on a different page before
               // navigation) are dropped — they'll need to be reselected.
               const refs = selection
                 .map((s) => items.find((it) =>
-                  it.workspaceSlug === s.workspaceSlug && it.uuid === s.itemUuid,
+                  it.librarySlug === s.librarySlug && it.uuid === s.itemUuid,
                 ))
                 .filter((it): it is MediaItemDto => !!it);
               if (refs.length === 0) return;
@@ -914,7 +1015,8 @@ function HomeContent() {
         onSetLikes={handleSetLikes}
         position={selected ? { index: selectedIndex, total: items.length } : undefined}
         slideshow={slideshow}
-        onSlideshowExit={() => setSlideshow(false)}
+        // Exit slideshow but stay fullscreen — drop view 'slideshow' → 'full'.
+        onSlideshowExit={() => url.set({ view: 'full' })}
         currentPersonUuid={url.person}
         onReassignPerson={(it) => setReassignItems([it])}
         onRotate={handleRotate}
@@ -922,6 +1024,8 @@ function HomeContent() {
         reelHasMore={hasMore}
         onSelectItem={(it) => setSelectedUuid(it.uuid)}
         onAddToPlaylist={(it) => setAddToPlaylistItem(it)}
+        quiet={quietMode}
+        initialTimeMs={url.tMs}
       />
 
       {addToPlaylistItem && (

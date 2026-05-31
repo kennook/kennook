@@ -38,9 +38,14 @@ export interface ProgressPayload {
    *  When `currentItemKind === 'uuid'`, the UI shows a thumbnail. */
   currentItem?: string;
   currentItemKind?: 'uuid' | 'path';
-  /** Workspace this item belongs to — needed for thumbnail URLs
-   *  since they're per-workspace. */
-  currentItemWorkspace?: string;
+  /** Library this item belongs to — needed for thumbnail URLs
+   *  since they're per-library. */
+  currentItemLibrary?: string;
+  /** Live extracted text from the current item — an OCR'd frame's text,
+   *  a transcript segment, etc. Rendered as a running text log beside the
+   *  thumbnail so the user sees *what* is being recognized, not just that
+   *  something is. Keep it short (one chunk); the UI keeps its own history. */
+  detail?: string;
 }
 
 /**
@@ -53,7 +58,7 @@ export interface ProgressPayload {
 export interface RecentItem {
   item: string;
   kind: 'uuid' | 'path';
-  workspace?: string;
+  library?: string;
   /** Optional caption — usually the step's label at the time it was
    *  processed, e.g. "captioning + OCR + tagging". */
   label?: string;

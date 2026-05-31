@@ -1,6 +1,10 @@
 'use client';
 
 import type { MediaItemDto } from './MediaGrid';
+import { VIEWER_THUMB_H, REEL_TILE_ASPECT } from '@/lib/viewer-thumb';
+
+const TILE_W = VIEWER_THUMB_H * REEL_TILE_ASPECT;
+const TILE_STYLE = { width: TILE_W, height: VIEWER_THUMB_H } as const;
 
 interface Props {
   /** The currently visible page of items (parent supplies this). */
@@ -51,7 +55,8 @@ export function ViewerReel({ items, currentIndex, hasMore, onSelect }: Props) {
       <div
         role="listitem"
         title={`Now — ${current.filename}`}
-        className="relative w-20 h-14 rounded-md overflow-hidden bg-zinc-900
+        style={TILE_STYLE}
+        className="relative rounded-md overflow-hidden bg-zinc-900
                    ring-2 ring-emerald-400 shadow-lg"
       >
         <img
@@ -77,11 +82,12 @@ export function ViewerReel({ items, currentIndex, hasMore, onSelect }: Props) {
 
       {upcoming.map((item) => (
         <button
-          key={`${item.workspaceSlug}:${item.uuid}`}
+          key={`${item.librarySlug}:${item.uuid}`}
           onClick={() => onSelect(item)}
           title={item.filename}
           role="listitem"
-          className="pointer-events-auto group relative w-20 h-14 rounded-md overflow-hidden
+          style={TILE_STYLE}
+          className="pointer-events-auto group relative rounded-md overflow-hidden
                      bg-zinc-900 ring-1 ring-white/10 hover:ring-2 hover:ring-emerald-400
                      transition-all shadow-lg"
         >
@@ -107,7 +113,8 @@ export function ViewerReel({ items, currentIndex, hasMore, onSelect }: Props) {
         <div
           role="listitem"
           title="More items are loading on the next page"
-          className="w-20 h-14 rounded-md border border-dashed border-zinc-500/60
+          style={TILE_STYLE}
+          className="rounded-md border border-dashed border-zinc-500/60
                      bg-zinc-900/40 flex items-center justify-center
                      text-[10px] text-zinc-400 font-medium shadow-lg"
         >

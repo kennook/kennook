@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { isSensitive } from '@/lib/sensitive-thresholds';
+import { likeFillColor } from '@/lib/like-colors';
 import { SparkleBurst } from './SparkleBurst';
+import type { TextMatch } from './MediaGrid';
 
 // Suppress repeat sparkle bursts within this window — leading-edge so the
 // first click in a rate-up gesture fires the visual, the rest don't stack.
@@ -12,6 +14,8 @@ export const MAX_LIKES = 5;
 
 interface MediaCardProps {
   id: number;
+  uuid: string;
+  librarySlug: string;
   thumbnailUrl: string;
   kind: 'photo' | 'video';
   filename: string;
@@ -24,12 +28,20 @@ interface MediaCardProps {
   rotation?: number;
   nsfwScore?: number;
   violenceScore?: number;
-  onOpen: () => void;
+  /** Search hit text occurrences. When present and the first match has a
+   *  timestamp, the tile swaps to the frame-at-timestamp thumbnail and
+   *  surfaces a "0:45" badge. */
+  matches?: TextMatch[];
+  /** Receives the first timestamped match when the tile was opened from a
+   *  search hit, so the parent can deep-link the viewer to that time. */
+  onOpen: (match?: TextMatch) => void;
   onToggleSelection?: (e: React.MouseEvent) => void;
   onSetLikes?: (count: number) => Promise<void> | void;
 }
 
 export function MediaCard({
+  uuid,
+  librarySlug,
   thumbnailUrl,
   kind,
   filename,
@@ -41,10 +53,18 @@ export function MediaCard({
   rotation = 0,
   nsfwScore = 0,
   violenceScore = 0,
+  matches,
   onOpen,
   onToggleSelection,
   onSetLikes,
 }: MediaCardProps) {
+  // Find the first timestamped match — that's the one we swap the
+  // thumbnail to and badge. Photo OCR matches have tStartMs=null and
+  // get badged as "text match" without a timestamp.
+  const firstTsMatch = matches?.find((m) => m.tStartMs !== null);
+  const tileThumb = firstTsMatch && firstTsMatch.source === 'ocr'
+    ? `/api/text-frame/${uuid}?t=${firstTsMatch.tStartMs}&lib=${encodeURIComponent(librarySlug)}`
+    : thumbnailUrl;
   // Optimistic local override for the heart so clicks feel instant. Clears
   // when the prop (server truth) catches up to it.
   const [optimisticCount, setOptimisticCount] = useState<number | null>(null);
@@ -64,7 +84,7 @@ export function MediaCard({
   const handleCardClick = (e: React.MouseEvent) => {
     if (selectionMode && onToggleSelection) onToggleSelection(e);
     else if ((e.metaKey || e.ctrlKey || e.shiftKey) && onToggleSelection) onToggleSelection(e);
-    else onOpen();
+    else onOpen(firstTsMatch);
   };
 
   const handleHeartClick = async (e: React.MouseEvent) => {
@@ -99,14 +119,25 @@ export function MediaCard({
         className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-zinc-500 rounded-lg"
       >
         <img
-          src={thumbnailUrl}
+          src={tileThumb}
           alt={filename}
           loading="lazy"
           className={`absolute inset-0 h-full w-full object-cover transition
                       ${selected ? 'scale-95 brightness-75' : 'group-hover:scale-[1.02]'}`}
           style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
+          // If the frame-at-timestamp 256px JPEG isn't on disk (e.g. legacy
+          // occurrences from before enrich-video-text shipped), fall back
+          // to the item's main thumbnail.
+          onError={(e) => {
+            const img = e.currentTarget;
+            if (img.src !== thumbnailUrl) img.src = thumbnailUrl;
+          }}
         />
       </button>
+
+      {matches && matches.length > 0 && (
+        <TextMatchBadge matches={matches} />
+      )}
 
       {onToggleSelection && (
         <button
@@ -143,11 +174,14 @@ export function MediaCard({
                       ${heartVisible}`}
         >
           <span className="relative inline-flex items-center justify-center">
-            <Heart filled={displayCount > 0} />
+            <Heart count={displayCount} />
             {sparkleKey > 0 && <SparkleBurst key={sparkleKey} />}
           </span>
           {displayCount > 0 && (
-            <span className="text-[10px] font-semibold text-rose-400 tabular-nums">
+            <span
+              className="text-[10px] font-semibold tabular-nums"
+              style={{ color: likeFillColor(displayCount) ?? undefined }}
+            >
               {displayCount}
             </span>
           )}
@@ -204,14 +238,15 @@ function WarningIcon() {
   );
 }
 
-function Heart({ filled }: { filled: boolean }) {
+function Heart({ count }: { count: number }) {
+  const color = likeFillColor(count);
   return (
     <svg
       width="13"
       height="13"
       viewBox="0 0 16 16"
-      fill={filled ? '#f43f5e' : 'none'}
-      stroke={filled ? '#f43f5e' : 'rgba(255,255,255,0.85)'}
+      fill={color ?? 'none'}
+      stroke={color ?? 'rgba(255,255,255,0.85)'}
       strokeWidth="1.6"
       strokeLinejoin="round"
     >
@@ -225,4 +260,42 @@ function formatDuration(ms: number): string {
   const min = Math.floor(total / 60);
   const sec = total % 60;
   return `${min}:${sec.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Search-result badge: surfaces "match at 0:45" + an extra-matches counter.
+ * Tooltip carries the matched text so the user can preview without clicking.
+ * OCR matches show in amber; transcript matches in sky-blue.
+ */
+function TextMatchBadge({ matches }: { matches: TextMatch[] }) {
+  const first = matches[0];
+  const extra = matches.length - 1;
+  const tone = first.source === 'ocr'
+    ? 'bg-amber-500/85 text-zinc-950'
+    : 'bg-sky-500/85 text-zinc-950';
+  const label = first.tStartMs !== null
+    ? formatDuration(first.tStartMs)
+    : first.source === 'ocr'
+      ? 'text'
+      : 'said';
+  const tooltip = matches
+    .map((m) => `${m.tStartMs !== null ? formatDuration(m.tStartMs) : '—'}: ${m.text}`)
+    .join('\n');
+
+  return (
+    <div
+      className="absolute top-2 left-2 z-10 flex items-center gap-1 pointer-events-none"
+      title={tooltip}
+    >
+      <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono leading-none ${tone}`}>
+        {label}
+      </span>
+      {extra > 0 && (
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono leading-none
+                         bg-zinc-900/80 text-zinc-200 ring-1 ring-zinc-700">
+          +{extra}
+        </span>
+      )}
+    </div>
+  );
 }

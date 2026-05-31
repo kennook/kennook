@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { router, publicProcedure } from '@/server/trpc';
 import { getUserSqlite } from '@/db/user-client';
 import { getRawSqlite, type Statement } from '@/db/client';
-import { listWorkspaces } from '@/server/workspaces';
+import { listLibraries } from '@/server/libraries';
 import { LIKE_COUNT_EXPR } from './media';
 
 interface PersonRow {
@@ -10,7 +10,7 @@ interface PersonRow {
   uuid: string;
   name: string | null;
   cover_face_id: number | null;
-  cover_workspace_slug: string | null;
+  cover_library_slug: string | null;
   face_count: number;
   created_at: number;
   updated_at: number;
@@ -36,8 +36,8 @@ interface MediaItemRow {
   violence_score: number;
 }
 
-function rowToDto(row: MediaItemRow, workspaceSlug: string) {
-  const qs = `?ws=${workspaceSlug}`;
+function rowToDto(row: MediaItemRow, librarySlug: string) {
+  const qs = `?lib=${librarySlug}`;
   return {
     id: row.id,
     uuid: row.uuid,
@@ -55,7 +55,7 @@ function rowToDto(row: MediaItemRow, workspaceSlug: string) {
     rotation: row.rotation ?? 0,
     nsfwScore: row.nsfw_score ?? 0,
     violenceScore: row.violence_score ?? 0,
-    workspaceSlug,
+    librarySlug,
     thumbnailUrl: `/api/thumbnails/${row.uuid}${qs}`,
     previewUrl: `/api/preview/${row.uuid}${qs}`,
     mediaUrl: `/api/media/${row.uuid}${qs}`,
@@ -65,23 +65,23 @@ function rowToDto(row: MediaItemRow, workspaceSlug: string) {
 /**
  * Resolve a cover thumbnail URL for a person. The cover row lives in
  * `people` (user.db) but its `cover_face_id` points at a row in a
- * specific workspace's `media_faces` table — so we look up the parent
+ * specific library's `media_faces` table — so we look up the parent
  * media item there to get the uuid that the thumbnail route serves.
  */
 function coverThumbnailUrl(
   coverFaceId: number | null,
-  coverWorkspaceSlug: string | null,
+  coverLibrarySlug: string | null,
 ): string | null {
-  if (!coverFaceId || !coverWorkspaceSlug) return null;
+  if (!coverFaceId || !coverLibrarySlug) return null;
   try {
-    const sqlite = getRawSqlite(coverWorkspaceSlug);
+    const sqlite = getRawSqlite(coverLibrarySlug);
     const row = sqlite.prepare(`
       SELECT m.uuid FROM media_faces mf
       JOIN media_items m ON m.id = mf.media_item_id
       WHERE mf.id = ? AND m.deleted_at IS NULL
     `).get(coverFaceId) as { uuid: string } | undefined;
     if (!row) return null;
-    return `/api/thumbnails/${row.uuid}?ws=${coverWorkspaceSlug}`;
+    return `/api/thumbnails/${row.uuid}?lib=${coverLibrarySlug}`;
   } catch {
     return null;
   }
@@ -94,34 +94,76 @@ export const peopleRouter = router({
   // unnamed (alphabetical), with updated_at as a final tiebreaker. We
   // skip orphans (face_count = 0) which shouldn't exist after clustering
   // but we tolerate. ────────────────────────────────────────────────
-  list: publicProcedure.query(({ ctx }) => {
-    const db = getUserSqlite();
-    const rows = db.prepare(`
-      SELECT id, uuid, name, cover_face_id, cover_workspace_slug, face_count,
-             created_at, updated_at
-      FROM people
-      WHERE user_id = ? AND face_count > 0
-      ORDER BY face_count DESC,
-               CASE WHEN name IS NULL THEN 1 ELSE 0 END,
-               name COLLATE NOCASE ASC,
-               updated_at DESC
-    `).all(ctx.userId) as unknown as PersonRow[];
+  // `scope`:
+  //   'library' (default) — only people with faces in the ACTIVE library, with
+  //     a library-scoped count. Used by the People sidebar so it never lists a
+  //     person who'd return "no results" (people are global in user.db, but the
+  //     gallery's person filter only matches the current library's media_faces).
+  //   'all' — every clustered person across libraries. Used by the reassign
+  //     picker, which must be able to assign a face to someone not yet present
+  //     in this library.
+  list: publicProcedure
+    .input(z.object({ scope: z.enum(['library', 'all']).default('library') }).nullish())
+    .query(({ input, ctx }) => {
+      const db = getUserSqlite();
+      const rows = db.prepare(`
+        SELECT id, uuid, name, cover_face_id, cover_library_slug, face_count,
+               created_at, updated_at
+        FROM people
+        WHERE user_id = ? AND face_count > 0
+      `).all(ctx.userId) as unknown as PersonRow[];
 
-    return rows.map((p) => ({
-      uuid: p.uuid,
-      name: p.name,
-      faceCount: p.face_count,
-      coverThumbnailUrl: coverThumbnailUrl(p.cover_face_id, p.cover_workspace_slug),
-      createdAt: p.created_at,
-      updatedAt: p.updated_at,
-    }));
-  }),
+      const toDto = (p: PersonRow, faceCount: number) => ({
+        uuid: p.uuid,
+        name: p.name,
+        faceCount,
+        coverThumbnailUrl: coverThumbnailUrl(p.cover_face_id, p.cover_library_slug),
+        createdAt: p.created_at,
+        updatedAt: p.updated_at,
+      });
+      // count desc → named before unnamed → name → recency.
+      const byProminence = (
+        a: { faceCount: number; name: string | null; updatedAt: number },
+        b: { faceCount: number; name: string | null; updatedAt: number },
+      ) =>
+        b.faceCount - a.faceCount
+        || (a.name ? 0 : 1) - (b.name ? 0 : 1)
+        || (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' })
+        || b.updatedAt - a.updatedAt;
 
-  // ── Fetch one person + their photos (cross-workspace, paginated).
-  // We aggregate across workspaces in memory then sort + slice. Fine for
+      if (input?.scope === 'all') {
+        return rows.map((p) => toDto(p, p.face_count)).sort(byProminence);
+      }
+
+      // Library scope: count this library's (non-deleted) faces per person and
+      // keep only those present, using that library-scoped count for display.
+      let localCounts = new Map<number, number>();
+      try {
+        const lib = getRawSqlite(ctx.library.slug);
+        const counts = lib.prepare(`
+          SELECT mf.person_id AS pid, COUNT(DISTINCT mf.media_item_id) AS cnt
+          FROM media_faces mf
+          JOIN media_items m ON m.id = mf.media_item_id
+          WHERE mf.person_id IS NOT NULL AND m.deleted_at IS NULL
+          GROUP BY mf.person_id
+        `).all() as unknown as Array<{ pid: number; cnt: number }>;
+        localCounts = new Map(counts.map((c) => [c.pid, c.cnt]));
+      } catch {
+        // No media_faces yet (faces never enriched here) — show no people
+        // rather than a stale cross-library list.
+      }
+
+      return rows
+        .filter((p) => localCounts.has(p.id))
+        .map((p) => toDto(p, localCounts.get(p.id) ?? 0))
+        .sort(byProminence);
+    }),
+
+  // ── Fetch one person + their photos (cross-library, paginated).
+  // We aggregate across libraries in memory then sort + slice. Fine for
   // the typical face-count distribution; if any single person ever has
   // > ~10k photos we'd want to push the sort/pagination into SQL using
-  // an UNION across attached workspace DBs. ─────────────────────────
+  // an UNION across attached library DBs. ─────────────────────────
   get: publicProcedure
     .input(z.object({
       uuid: z.string(),
@@ -132,7 +174,7 @@ export const peopleRouter = router({
     .query(({ input, ctx }) => {
       const db = getUserSqlite();
       const person = db.prepare(`
-        SELECT id, uuid, name, cover_face_id, cover_workspace_slug, face_count,
+        SELECT id, uuid, name, cover_face_id, cover_library_slug, face_count,
                created_at, updated_at
         FROM people WHERE uuid = ? AND user_id = ?
       `).get(input.uuid, ctx.userId) as unknown as PersonRow | undefined;
@@ -143,7 +185,7 @@ export const peopleRouter = router({
         sortKey: number;
       }> = [];
 
-      for (const ws of listWorkspaces()) {
+      for (const ws of listLibraries()) {
         try {
           const sqlite = getRawSqlite(ws.slug);
           // DISTINCT in case a single image has multiple faces of this
@@ -166,7 +208,7 @@ export const peopleRouter = router({
             });
           }
         } catch {
-          // Workspace gone or unreadable — skip it.
+          // Library gone or unreadable — skip it.
         }
       }
 
@@ -183,7 +225,7 @@ export const peopleRouter = router({
           faceCount: person.face_count,
           coverThumbnailUrl: coverThumbnailUrl(
             person.cover_face_id,
-            person.cover_workspace_slug,
+            person.cover_library_slug,
           ),
         },
         items: slice.map((s) => s.item),
@@ -210,7 +252,7 @@ export const peopleRouter = router({
     }),
 
   // ── Merge `src` into `dst`. All faces previously assigned to src get
-  // reassigned to dst across every workspace; src is deleted. Used to
+  // reassigned to dst across every library; src is deleted. Used to
   // fix split clusters (the same person showing up under two ids
   // because their photos didn't all link via the distance threshold).
   merge: publicProcedure
@@ -230,7 +272,7 @@ export const peopleRouter = router({
       if (!src || !dst) throw new Error('Person not found');
 
       let moved = 0;
-      for (const ws of listWorkspaces()) {
+      for (const ws of listLibraries()) {
         const res = getRawSqlite(ws.slug).prepare(
           'UPDATE media_faces SET person_id = ? WHERE person_id = ?',
         ).run(dst.id, src.id);
@@ -239,7 +281,7 @@ export const peopleRouter = router({
 
       // Recompute face_count for the destination.
       let total = 0;
-      for (const ws of listWorkspaces()) {
+      for (const ws of listLibraries()) {
         const c = getRawSqlite(ws.slug).prepare(
           'SELECT COUNT(*) AS n FROM media_faces WHERE person_id = ?',
         ).get(dst.id) as { n: number };
@@ -267,7 +309,7 @@ export const peopleRouter = router({
   reassignFaces: publicProcedure
     .input(z.object({
       items: z.array(z.object({
-        workspaceSlug: z.string(),
+        librarySlug: z.string(),
         itemUuid: z.string(),
       })).min(1).max(500),
       fromPersonUuid: z.string(),
@@ -295,15 +337,15 @@ export const peopleRouter = router({
 
       // Walk every item, collecting faces to reassign.
       type Pending = {
-        workspaceSlug: string;
+        librarySlug: string;
         faces: Array<{ id: number; confidence: number }>;
       };
       const pending: Pending[] = [];
-      let firstCover: { faceId: number; workspaceSlug: string } | null = null;
+      let firstCover: { faceId: number; librarySlug: string } | null = null;
 
       for (const item of input.items) {
         try {
-          const ws = getRawSqlite(item.workspaceSlug);
+          const ws = getRawSqlite(item.librarySlug);
           const row = ws.prepare(
             'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
           ).get(item.itemUuid) as { id: number } | undefined;
@@ -314,12 +356,12 @@ export const peopleRouter = router({
             ORDER BY confidence DESC
           `).all(row.id, from.id) as Array<{ id: number; confidence: number }>;
           if (faces.length === 0) continue;
-          pending.push({ workspaceSlug: item.workspaceSlug, faces });
+          pending.push({ librarySlug: item.librarySlug, faces });
           if (!firstCover) {
-            firstCover = { faceId: faces[0].id, workspaceSlug: item.workspaceSlug };
+            firstCover = { faceId: faces[0].id, librarySlug: item.librarySlug };
           }
         } catch {
-          // Workspace gone or unreadable — skip this item.
+          // Library gone or unreadable — skip this item.
         }
       }
 
@@ -333,12 +375,12 @@ export const peopleRouter = router({
       } else if (input.to.kind === 'new') {
         const newUuid = crypto.randomUUID();
         const res = userDb.prepare(`
-          INSERT INTO people (uuid, user_id, face_count, cover_face_id, cover_workspace_slug)
+          INSERT INTO people (uuid, user_id, face_count, cover_face_id, cover_library_slug)
           VALUES (?, ?, 0, ?, ?)
           RETURNING id
         `).get(
           newUuid, ctx.userId,
-          firstCover!.faceId, firstCover!.workspaceSlug,
+          firstCover!.faceId, firstCover!.librarySlug,
         ) as { id: number };
         toPersonId = res.id;
         createdPersonUuid = newUuid;
@@ -353,7 +395,7 @@ export const peopleRouter = router({
         toPersonId = to.id;
       }
 
-      // Reassign. Cached statement per workspace so big batches don't
+      // Reassign. Cached statement per library so big batches don't
       // pay the prepare cost N times.
       const updateStmts = new Map<string, Statement>();
       const getUpd = (slug: string): Statement => {
@@ -367,23 +409,23 @@ export const peopleRouter = router({
       };
       let moved = 0;
       for (const p of pending) {
-        const upd = getUpd(p.workspaceSlug);
+        const upd = getUpd(p.librarySlug);
         for (const f of p.faces) {
           upd.run(toPersonId, f.id);
           moved++;
         }
       }
 
-      // Recompute face_count for source + target. Cross-workspace sum.
+      // Recompute face_count for source + target. Cross-library sum.
       const countFor = (pid: number): number => {
         let total = 0;
-        for (const w of listWorkspaces()) {
+        for (const w of listLibraries()) {
           try {
             const c = getRawSqlite(w.slug).prepare(
               'SELECT COUNT(*) AS n FROM media_faces WHERE person_id = ?',
             ).get(pid) as { n: number };
             total += c.n;
-          } catch { /* skip unreadable workspace */ }
+          } catch { /* skip unreadable library */ }
         }
         return total;
       };
@@ -433,7 +475,7 @@ export const peopleRouter = router({
       ).get(input.uuid, ctx.userId) as { id: number } | undefined;
       if (!p) throw new Error('Person not found');
 
-      for (const ws of listWorkspaces()) {
+      for (const ws of listLibraries()) {
         getRawSqlite(ws.slug).prepare(
           'UPDATE media_faces SET person_id = NULL WHERE person_id = ?',
         ).run(p.id);

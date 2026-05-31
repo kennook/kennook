@@ -5,7 +5,7 @@ import { trpc } from '@/lib/trpc-client';
 
 interface ItemRef {
   uuid: string;
-  workspaceSlug: string;
+  librarySlug: string;
   filename?: string;
 }
 
@@ -45,7 +45,9 @@ export function ReassignPersonDialog({
 }: Props) {
   const [search, setSearch] = useState('');
   const utils = trpc.useUtils();
-  const people = trpc.people.list.useQuery();
+  // 'all' — reassigning a face must be able to target any clustered person,
+  // including one not yet present in the current library.
+  const people = trpc.people.list.useQuery({ scope: 'all' });
 
   const reassign = trpc.people.reassignFaces.useMutation({
     onSuccess: (result) => {
@@ -63,7 +65,7 @@ export function ReassignPersonDialog({
   });
 
   const batchPayload = items.map((it) => ({
-    workspaceSlug: it.workspaceSlug,
+    librarySlug: it.librarySlug,
     itemUuid: it.uuid,
   }));
 

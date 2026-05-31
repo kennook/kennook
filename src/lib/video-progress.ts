@@ -3,7 +3,7 @@
 /**
  * Per-video playback-position memory, persisted to localStorage.
  *
- * Each entry is keyed by "<workspace_slug>:<item_uuid>" — globally unique
+ * Each entry is keyed by "<library_slug>:<item_uuid>" — globally unique
  * across all videos in the user's library. The map is capped at MAX_ENTRIES
  * and evicted LRU-style by `updatedAt` when full, so it never bloats no
  * matter how many videos the user passes through.

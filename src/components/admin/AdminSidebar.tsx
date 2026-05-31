@@ -8,6 +8,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { LibrarySwitcher } from '@/components/LibrarySwitcher';
+import { KenNookLogo } from '@/components/KenNookLogo';
 
 interface NavItem {
   label: string;
@@ -16,7 +18,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Indexing',      href: '/admin/indexing' },
+  { label: 'Storage',       href: '/admin/storage' },
   { label: 'Feature flags', href: '/admin/flags' },
   { label: 'Settings',      href: '/admin/settings' },
   { label: 'Users',         href: '/admin/users' },
@@ -30,12 +32,17 @@ export function AdminSidebar() {
     <aside className="w-56 shrink-0 border-r border-zinc-900 bg-zinc-950
                       sticky top-0 self-start h-screen flex flex-col">
       <div className="px-5 py-5 border-b border-zinc-900">
-        <div className="text-[10px] uppercase tracking-wider text-zinc-500">
-          Kennook
-        </div>
-        <div className="text-base font-medium text-zinc-100 mt-0.5">
+        <KenNookLogo height={22} />
+        <div className="text-[11px] uppercase tracking-wider text-zinc-500 mt-2">
           Admin
         </div>
+      </div>
+
+      <div className="px-3 py-3 border-b border-zinc-900">
+        <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1.5 px-2">
+          Library
+        </div>
+        <LibrarySwitcher align="left" />
       </div>
 
       <nav className="flex-1 px-2 py-3 space-y-0.5">
@@ -65,7 +72,7 @@ export function AdminSidebar() {
           className="block px-3 py-2 rounded text-sm text-zinc-500
                      hover:bg-zinc-900 hover:text-zinc-200 transition"
         >
-          ← Back to Kennook
+          ← Back to KenNook
         </Link>
       </div>
     </aside>

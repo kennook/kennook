@@ -21,9 +21,9 @@ export type SyncEvent =
    *  it (modulo the manifest size) to pick which screensaver video to
    *  show, so each open window in a session draws a different one. */
   | { type: 'screensaver.assignment'; index: number }
-  | { type: 'item.like'; workspaceSlug: string; uuid: string; count: number }
-  | { type: 'item.tag.changed'; workspaceSlug: string; uuid: string }
-  | { type: 'item.rotation'; workspaceSlug: string; uuid: string; rotation: number }
+  | { type: 'item.like'; librarySlug: string; uuid: string; count: number }
+  | { type: 'item.tag.changed'; librarySlug: string; uuid: string }
+  | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
   | { type: 'playlist.changed' };
 
 interface Envelope {

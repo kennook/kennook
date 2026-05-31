@@ -27,6 +27,9 @@ import {
   setProgress,
   markFinished,
   cancelQueuedJob,
+  requeueJob,
+  isQueuePaused,
+  setQueuePaused,
   getJob,
   reapOrphanedRunningJobs,
   type AdminJobRow,
@@ -37,6 +40,8 @@ import {
   type ProgressPayload,
   type RecentItem,
 } from './progress-protocol';
+import { getRawSqlite } from '@/db/client';
+import { buildStorageRouter, markStorageIndexed } from '@/server/storage';
 
 // How many recently-processed items to keep in the rolling buffer per
 // job. Sized for the UI's strip (8 visible + a small overscan).
@@ -59,6 +64,8 @@ interface RunnerGlobals {
   events: Map<number, JobEvents>;
   recentBuffers: Map<number, RecentItem[]>;
   cancelSignalFor: Set<number>;
+  /** Jobs being gracefully stopped by a pause — requeued (not finished) on exit. */
+  pauseSignalFor: Set<number>;
   runningJobId: number | null;
   runningChild: RunnerChild | null;
   workerStarted: boolean;
@@ -72,6 +79,7 @@ const state: RunnerGlobals = G.__kennookAdminRunner ?? (G.__kennookAdminRunner =
   events: new Map(),
   recentBuffers: new Map(),
   cancelSignalFor: new Set(),
+  pauseSignalFor: new Set(),
   runningJobId: null,
   runningChild: null,
   workerStarted: false,
@@ -108,8 +116,8 @@ const POLL_INTERVAL_MS = 1500;
 /**
  * Build the argv passed to the child process from a job definition + args.
  *
- *   For script-based jobs:  ['tsx', '<script>', '--workspace', 'foo', '--limit', '50']
- *   For compose aggregates: ['pnpm', '<id>',    '--workspace', 'foo']
+ *   For script-based jobs:  ['tsx', '<script>', '--library', 'foo', '--limit', '50']
+ *   For compose aggregates: ['pnpm', '<id>',    '--library', 'foo']
  */
 function buildSpawnArgs(job: AdminJobRow): { cmd: string; argv: string[] } {
   const def = getJobDefinition(job.command);
@@ -136,10 +144,12 @@ function buildSpawnArgs(job: AdminJobRow): { cmd: string; argv: string[] } {
   const allArgs = [...flagArgs, ...positionalArgs];
 
   if (def.compose) {
-    // pnpm forwards everything after `--` to the script. We use the
-    // pnpm script name (which equals the job id) for compose entries
-    // so the package.json's `&&`-chained command runs intact.
-    return { cmd: 'pnpm', argv: [def.id, ...(allArgs.length ? ['--', ...allArgs] : [])] };
+    // pnpm 9+ forwards `--` as a literal token rather than stripping it,
+    // so we DON'T add a `--` separator here — the script's parseArgs
+    // would otherwise see a bare `--` in argv and reject it. Args are
+    // forwarded as plain positional arguments; pnpm passes them through
+    // to the underlying script verbatim.
+    return { cmd: 'pnpm', argv: [def.id, ...allArgs] };
   }
   if (!def.script) throw new Error(`Job ${def.id} has neither script nor compose set`);
   return { cmd: 'pnpm', argv: ['exec', 'tsx', def.script, ...allArgs] };
@@ -152,6 +162,12 @@ function startWorkerLoop(): void {
     if (state.runningJobId !== null) {
       // Worker is busy — re-check after current job finishes (handled
       // by the child's 'close' event scheduling the next tick).
+      return;
+    }
+    // Honor the global pause flag — don't advance the queue while paused.
+    // Keep polling so resume is picked up promptly.
+    if (isQueuePaused()) {
+      state.pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
       return;
     }
     const next = nextQueuedJob();
@@ -172,6 +188,7 @@ function scheduleTickNow(): void {
   state.pollTimer = setTimeout(() => {
     state.pollTimer = null;
     if (state.runningJobId !== null) return;
+    if (isQueuePaused()) { startWorkerLoop(); return; }
     const next = nextQueuedJob();
     if (next) {
       startJob(next);
@@ -182,23 +199,31 @@ function scheduleTickNow(): void {
 }
 
 function startJob(job: AdminJobRow): void {
+  // Atomically claim the job FIRST. If another process (or a racing tick in
+  // this one) already moved it out of 'queued', we lost — bail without
+  // spawning so we don't run the job twice. Claiming before buildSpawnArgs
+  // means a bad-definition failure is still attributed to the job we own.
+  if (!markRunning(job.id)) {
+    scheduleTickNow();
+    return;
+  }
+  state.runningJobId = job.id;
+
   let cmd: string; let argv: string[];
   try {
     ({ cmd, argv } = buildSpawnArgs(job));
   } catch (err) {
-    markRunning(job.id);
     const msg = err instanceof Error ? err.message : String(err);
     appendOutput(job.id, `[runner error] ${msg}\n`);
     markFinished({ id: job.id, status: 'failed', exitCode: -1 });
     const e = eventsFor(job.id);
     e.emit('output', `[runner error] ${msg}\n`);
     e.emit('finished', { status: 'failed', exitCode: -1 });
+    state.runningJobId = null;
     scheduleTickNow();
     return;
   }
 
-  markRunning(job.id);
-  state.runningJobId = job.id;
   const ev = eventsFor(job.id);
 
   // Emit banner BEFORE spawn so even synchronous spawn errors surface
@@ -246,11 +271,35 @@ function startJob(job: AdminJobRow): void {
   // the rolling buffer.
   let lineBuf = '';
   let prevProgress: ProgressPayload | null = null;
+  // Display-side line builder: collapses `\r`-overwrite sequences (the
+  // indexer's `\r✓ N indexed…` pattern, which is a TTY trick that renders
+  // as blank lines in a browser) and drops the structured `@@kennook-progress:`
+  // emissions (they're already shown by the ProgressStrip card). Only the
+  // *committed* (newline-terminated) lines get stored / streamed for display.
+  let liveLine = '';
   const onChunk = (data: Buffer) => {
     const text = data.toString('utf8');
-    appendOutput(job.id, text);
-    ev.emit('output', text);
 
+    // Build the cleaned chunk for the log + live stream.
+    let cleaned = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '\n') {
+        if (!liveLine.startsWith('@@kennook-progress:')) cleaned += liveLine + '\n';
+        liveLine = '';
+      } else if (ch === '\r') {
+        liveLine = ''; // carriage return → next chars overwrite from start
+      } else {
+        liveLine += ch;
+      }
+    }
+    if (cleaned) {
+      appendOutput(job.id, cleaned);
+      ev.emit('output', cleaned);
+    }
+
+    // Progress detection still runs against the raw (unfiltered) text so
+    // `@@kennook-progress:` lines are still parsed for the ProgressStrip.
     lineBuf += text;
     let nl;
     while ((nl = lineBuf.indexOf('\n')) !== -1) {
@@ -271,7 +320,7 @@ function startJob(job: AdminJobRow): void {
         buf.unshift({
           item: prevProgress.currentItem,
           kind: prevProgress.currentItemKind ?? 'path',
-          workspace: prevProgress.currentItemWorkspace,
+          library: prevProgress.currentItemLibrary,
           label: prevProgress.label,
           at: Date.now(),
         });
@@ -303,6 +352,20 @@ function startJob(job: AdminJobRow): void {
     // which is correct (the job is no longer scanning anything).
     state.recentBuffers.delete(job.id);
 
+    // Paused: the job was gracefully stopped to free the queue. Put it back
+    // as 'queued' (done items already persisted; resume re-runs + skips them)
+    // and do NOT emit 'finished' — it isn't finished, just parked.
+    if (state.pauseSignalFor.has(job.id)) {
+      state.pauseSignalFor.delete(job.id);
+      const pausedLine = `\n[paused] stopped to free the queue — finished work saved; will resume here.\n`;
+      appendOutput(job.id, pausedLine);
+      ev.emit('output', pausedLine);
+      requeueJob(job.id);
+      ev.emit('finished', { status: 'paused', exitCode: null });
+      scheduleTickNow();
+      return;
+    }
+
     // Always log a final exit line so the operator sees SOMETHING even
     // when the script itself produced no output.
     const exitLine = `\n[exit] code=${code ?? 'null'} signal=${signal ?? 'null'}\n`;
@@ -323,6 +386,25 @@ function startJob(job: AdminJobRow): void {
     }
     const exitCode = code ?? (signal ? -2 : -1);
     markFinished({ id: job.id, status, exitCode });
+
+    // Bump the matching storage's last_indexed_at when an indexer run finishes
+    // cleanly. Failure to do this isn't fatal — it just means the storage row
+    // won't surface a fresh "Last indexed" timestamp in the admin UI.
+    if (status === 'completed' && job.command === 'indexer' && job.librarySlug) {
+      try {
+        const targetPath = typeof job.args.path === 'string' ? job.args.path : null;
+        if (targetPath) {
+          const sqlite = getRawSqlite(job.librarySlug);
+          const router = buildStorageRouter(sqlite);
+          const match = router.findFor(targetPath);
+          if (match) markStorageIndexed(sqlite, match.id);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendOutput(job.id, `\n[runner] failed to bump last_indexed_at: ${msg}\n`);
+      }
+    }
+
     ev.emit('finished', { status, exitCode });
     scheduleTickNow();
   });
@@ -345,13 +427,51 @@ export function ensureRunnerStarted(): void {
 export function enqueue(input: {
   command: string;
   args: Record<string, string | number | boolean>;
-  workspaceSlug: string | null;
+  librarySlug: string | null;
   userId: number;
 }): AdminJobRow {
   ensureRunnerStarted();
   const job = storeEnqueue(input);
   scheduleTickNow();
   return job;
+}
+
+/** Pause the queue: stop advancing, and gracefully stop the running job
+ *  (it requeues itself, preserving finished work). Persisted in user.db so
+ *  it survives page refresh + app restart. */
+export function pauseQueue(): { ok: true; running: number | null } {
+  ensureRunnerStarted();
+  setQueuePaused(true);
+  // Gracefully stop the in-flight job so I/O frees up. The script's SIGTERM
+  // handler finishes the current item then exits; the close handler sees
+  // pauseSignalFor and requeues rather than marking finished.
+  const runningId = state.runningJobId;
+  if (runningId !== null && state.runningChild) {
+    state.pauseSignalFor.add(runningId);
+    state.runningChild.kill('SIGTERM');
+    const child = state.runningChild;
+    // Escalate if the script ignores the cooperative stop. Still safe —
+    // a hard-killed item just reruns on resume.
+    setTimeout(() => {
+      if (state.runningJobId === runningId && !child.killed) {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }
+    }, 8000);
+  }
+  return { ok: true, running: runningId };
+}
+
+/** Resume the queue — clears the flag and kicks the worker. */
+export function resumeQueue(): { ok: true } {
+  ensureRunnerStarted();
+  setQueuePaused(false);
+  scheduleTickNow();
+  return { ok: true };
+}
+
+/** Current paused state — read straight from the persisted flag. */
+export function isPaused(): boolean {
+  return isQueuePaused();
 }
 
 export function cancel(jobId: number): { ok: boolean; reason?: string } {

@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { trpc } from '@/lib/trpc-client';
 
 interface SelectionRef {
-  workspaceSlug: string;
+  librarySlug: string;
   itemUuid: string;
 }
 
@@ -107,7 +107,7 @@ function ActionsMenu({
       utils.playlist.list.invalidate();
       addItems.mutate({
         playlistUuid: playlist.uuid,
-        items: selection.map((s) => ({ workspaceSlug: s.workspaceSlug, itemUuid: s.itemUuid })),
+        items: selection.map((s) => ({ librarySlug: s.librarySlug, itemUuid: s.itemUuid })),
       });
       setCreating(false);
       setNewName('');
@@ -142,7 +142,7 @@ function ActionsMenu({
     if (!currentPlaylistUuid) return;
     removeFromCurrent.mutate({
       playlistUuid: currentPlaylistUuid,
-      items: selection.map((s) => ({ workspaceSlug: s.workspaceSlug, itemUuid: s.itemUuid })),
+      items: selection.map((s) => ({ librarySlug: s.librarySlug, itemUuid: s.itemUuid })),
     });
   };
 
@@ -227,7 +227,7 @@ function ActionsMenu({
               onClick={() => addItems.mutate({
                 playlistUuid: p.uuid,
                 items: selection.map((s) => ({
-                  workspaceSlug: s.workspaceSlug,
+                  librarySlug: s.librarySlug,
                   itemUuid: s.itemUuid,
                 })),
               })}

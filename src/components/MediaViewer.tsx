@@ -6,6 +6,7 @@ import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
 import { getMediaView, setMediaView } from '@/lib/media-pan';
 import { isSensitive } from '@/lib/sensitive-thresholds';
+import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
 import { ViewerReel } from './ViewerReel';
 import { SparkleBurst } from './SparkleBurst';
@@ -77,6 +78,13 @@ interface Props {
    *  falls back to internal `useState` for backward compatibility. */
   maxed?: boolean;
   onMaxedChange?: (maxed: boolean) => void;
+  /** "Post-screensaver quiet": fade chrome to a low-opacity state regardless
+   *  of mode. The parent clears it on the first user input. */
+  quiet?: boolean;
+  /** Initial seek position in ms for video playback. Forwarded to
+   *  VideoPlayer; takes precedence over saved progress on first paint.
+   *  Set by search-result clicks on a timestamped text match. */
+  initialTimeMs?: number | null;
 }
 
 /**
@@ -96,6 +104,8 @@ export function MediaViewer({
   onAddToPlaylist,
   maxed: controlledMaxed,
   onMaxedChange,
+  quiet = false,
+  initialTimeMs,
 }: Props) {
   // Maxed can be controlled by the parent (preferred — typically synced
   // to the URL) or self-managed via useState (back-compat). Controlled
@@ -223,7 +233,7 @@ export function MediaViewer({
     }
     if (lastPanUuidRef.current === item.uuid) return;
     lastPanUuidRef.current = item.uuid;
-    const saved = getMediaView(`${item.workspaceSlug}:${item.uuid}`);
+    const saved = getMediaView(`${item.librarySlug}:${item.uuid}`);
     if (!saved) {
       setPan({ x: 0, y: 0 });
       setZoom(1);
@@ -284,7 +294,7 @@ export function MediaViewer({
   // viewing the slideshow) don't overwrite the item's saved view.
   const persistZoom = useCallback((newZoom: number) => {
     if (!item || slideshow) return;
-    setMediaView(`${item.workspaceSlug}:${item.uuid}`, {
+    setMediaView(`${item.librarySlug}:${item.uuid}`, {
       x: panRef.current.x,
       y: panRef.current.y,
       zoom: newZoom,
@@ -308,10 +318,14 @@ export function MediaViewer({
 
   // ── Slideshow effects ───────────────────────────────────────────────
   //
-  // 1) Force fullscreen whenever slideshow turns on.
+  // 1) Slideshow → un-pause auto-advance. Fullscreen is owned by the caller
+  //    (page-level startSlideshow sets `view=full` in the same url.set call
+  //    that opens the item). Calling setMaxed(true) here used to race the
+  //    parent's url.set: this effect fires on the first commit when the
+  //    parent's URL transition hasn't propagated yet, so url.set runs with
+  //    a stale searchParams base and wipes the just-written item param.
   useEffect(() => {
     if (slideshow) {
-      setMaxed(true);
       setPaused(false);
     }
   }, [slideshow]);
@@ -443,7 +457,7 @@ export function MediaViewer({
   const handleMinimapCommit = useCallback((final: { x: number; y: number }) => {
     setPanDragging(false);
     if (item) {
-      setMediaView(`${item.workspaceSlug}:${item.uuid}`, { ...final, zoom });
+      setMediaView(`${item.librarySlug}:${item.uuid}`, { ...final, zoom });
     }
   }, [item, zoom]);
 
@@ -593,11 +607,11 @@ export function MediaViewer({
   const viewedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!item) return;
-    const key = `${item.workspaceSlug}:${item.uuid}`;
+    const key = `${item.librarySlug}:${item.uuid}`;
     if (viewedRef.current.has(key)) return;
     viewedRef.current.add(key);
-    markViewedMutate({ uuid: item.uuid, workspaceSlug: item.workspaceSlug });
-  }, [item?.uuid, item?.workspaceSlug, markViewedMutate]);
+    markViewedMutate({ uuid: item.uuid, librarySlug: item.librarySlug });
+  }, [item?.uuid, item?.librarySlug, markViewedMutate]);
 
   // Maxed-mode voice tagger. Separate instance from the sidebar
   // VoiceTagButton's hook — the two are never both interacted with at
@@ -608,7 +622,7 @@ export function MediaViewer({
   const utils = trpc.useUtils();
   const maxedVoiceTagger = useVoiceTagger({
     uuid: item?.uuid ?? '',
-    workspaceSlug: item?.workspaceSlug ?? '',
+    librarySlug: item?.librarySlug ?? '',
     onCommitted: (tags) => {
       if (tags.length > 0) {
         utils.media.getDetails.invalidate();
@@ -675,12 +689,20 @@ export function MediaViewer({
     ? `translate(${panTransX}px, ${panTransY}px) `
     : '';
 
-  // Class fragment applied to every chrome element in maxed mode. Outside
-  // maxed mode it's a no-op (chrome is always visible) so the same prop
-  // can be passed unconditionally.
-  const chromeFadeClass = maxed
-    ? `transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`
-    : '';
+  // Class fragment applied to every chrome element. Three states:
+  //   • quiet (post-screensaver): fade to ~30% in both modes; non-interactive
+  //     until the parent clears the flag on first user input.
+  //   • maxed: fade in/out via the existing idle timer.
+  //   • else: always visible.
+  // `will-change-[opacity]` pre-promotes each chrome element to its own GPU
+  // layer so the opacity transitions are cheap composite operations instead of
+  // CPU paints — the biggest perf lever on slower hardware. Pure CSS hint, no
+  // layout cost when chrome is at rest.
+  const chromeFadeClass = quiet
+    ? 'transition-opacity duration-500 opacity-30 pointer-events-none will-change-[opacity]'
+    : maxed
+      ? `transition-opacity duration-300 will-change-[opacity] ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`
+      : '';
 
   return (
     <div
@@ -766,7 +788,8 @@ export function MediaViewer({
           ) : (
             <VideoPlayer
               src={item.mediaUrl}
-              progressKey={`${item.workspaceSlug}:${item.uuid}`}
+              progressKey={`${item.librarySlug}:${item.uuid}`}
+              initialTimeMs={initialTimeMs}
               className={maxed
                 ? 'w-full h-full overflow-hidden'
                 : 'max-h-full max-w-full rounded overflow-hidden bg-black'}
@@ -787,6 +810,9 @@ export function MediaViewer({
               // Pause respects: if user paused the slideshow during a
               // video, end-of-video does NOT auto-advance to next.
               onEnded={slideshow && !paused ? onNext : undefined}
+              // Scale the bottom controls bar on large displays, but only
+              // in maxed mode — the preview-modal video stays compact.
+              scaled={maxed}
             />
           )}
 
@@ -820,7 +846,7 @@ export function MediaViewer({
             <div
               key={speedNotice.key}
               className="absolute top-16 left-1/2 z-30 pointer-events-none
-                         bg-black/80 backdrop-blur text-zinc-100 text-sm font-medium
+                         bg-black/90 text-zinc-100 text-sm font-medium
                          rounded-full px-4 py-2 ring-1 ring-zinc-700 kn-speed-notice"
             >
               Slideshow: {(speedNotice.ms / 1000).toFixed(0)} s / photo
@@ -834,73 +860,69 @@ export function MediaViewer({
           {maxed && (
             <div
               {...chromeHoverHandlers}
-              className={`absolute left-3 z-20 ${chromeFadeClass}
-                          ${item.kind === 'video' ? 'bottom-16' : 'bottom-3'}
+              // Right-side column. Shares the reel/toolbar baseline now that
+              // toolbar moved to the left — they're three pieces of one
+              // horizontal row instead of a stacked column.
+              className={`absolute right-[var(--kn-chrome-pad)] z-20 ${chromeFadeClass}
+                          ${item.kind === 'video' ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-3'}
                           flex flex-col gap-1.5 items-center`}
             >
-              {/* Zoom controls are hidden during slideshow — the Ken
-                  Burns animation owns the transform, so zoom inputs
-                  wouldn't apply. Fit/Cover stays visible because it
-                  DOES affect slideshow rendering via `${fitClass}`. */}
-              <div className="flex items-center gap-1 bg-black/60 backdrop-blur
-                              rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs">
-                {!slideshow && (
-                  <>
-                    <button
-                      onClick={zoomOut}
-                      disabled={zoom <= MIN_ZOOM + 0.001}
-                      title="Zoom out (−)"
-                      aria-label="Zoom out"
-                      className="px-2 py-1.5 hover:bg-white/10 rounded-l-md transition
-                                 disabled:opacity-40 disabled:cursor-not-allowed
-                                 disabled:hover:bg-transparent"
-                    >
-                      <ZoomOutIcon />
-                    </button>
-                    <div className="px-1 min-w-[3rem] text-center tabular-nums select-none">
-                      {Math.round(zoom * 100)}%
-                    </div>
-                    <button
-                      onClick={zoomIn}
-                      disabled={zoom >= MAX_ZOOM - 0.001}
-                      title="Zoom in (+)"
-                      aria-label="Zoom in"
-                      className="px-2 py-1.5 hover:bg-white/10 transition
-                                 disabled:opacity-40 disabled:cursor-not-allowed
-                                 disabled:hover:bg-transparent"
-                    >
-                      <ZoomInIcon />
-                    </button>
-                  </>
-                )}
-                {/* Fit/Cover toggle — left-divider only when paired
-                    with the zoom controls; standalone (rounded both
-                    sides) during slideshow. */}
-                <button
-                  onClick={() => {
-                    setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
-                    setZoom(1);
-                    persistZoom(1);
-                  }}
-                  title={fit === 'cover' ? 'Fit (no crop) — C' : 'Fill (crop edges) — C'}
-                  aria-label={fit === 'cover' ? 'Fit' : 'Fill'}
-                  className={`px-2 py-1.5 hover:bg-white/10 transition
-                              ${slideshow
-                                ? 'rounded-md'
-                                : 'rounded-r-md border-l border-zinc-700/60'}`}
-                >
-                  {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
-                </button>
-              </div>
+              {/* Zoom + fit/cover pill — hidden entirely during slideshow.
+                  Zoom doesn't apply (Ken Burns owns the transform) and the
+                  fit/cover toggle migrates to the top-right toolbar so it
+                  isn't floating alone in the bottom corner. */}
+              {!slideshow && (
+                <div className="flex items-center gap-1 bg-black/80
+                                rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs
+                                kn-chrome-scaled">
+                  <button
+                    onClick={zoomOut}
+                    disabled={zoom <= MIN_ZOOM + 0.001}
+                    title="Zoom out (−)"
+                    aria-label="Zoom out"
+                    className="px-2 py-1.5 hover:bg-white/10 rounded-l-md transition
+                               disabled:opacity-40 disabled:cursor-not-allowed
+                               disabled:hover:bg-transparent"
+                  >
+                    <ZoomOutIcon />
+                  </button>
+                  <div className="px-1 min-w-[3rem] text-center tabular-nums select-none">
+                    {Math.round(zoom * 100)}%
+                  </div>
+                  <button
+                    onClick={zoomIn}
+                    disabled={zoom >= MAX_ZOOM - 0.001}
+                    title="Zoom in (+)"
+                    aria-label="Zoom in"
+                    className="px-2 py-1.5 hover:bg-white/10 transition
+                               disabled:opacity-40 disabled:cursor-not-allowed
+                               disabled:hover:bg-transparent"
+                  >
+                    <ZoomInIcon />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
+                      setZoom(1);
+                      persistZoom(1);
+                    }}
+                    title={fit === 'cover' ? 'Fit (no crop) — C' : 'Fill (crop edges) — C'}
+                    aria-label={fit === 'cover' ? 'Fit' : 'Fill'}
+                    className="px-2 py-1.5 hover:bg-white/10 transition
+                               rounded-r-md border-l border-zinc-700/60"
+                  >
+                    {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
+                  </button>
+                </div>
+              )}
 
-              {/* Slideshow controls — pause/play (always shown during
-                  slideshow) + speed slider (photo items only, since the
-                  per-photo dwell timer doesn't apply to videos which
-                  auto-advance via `onEnded`). Slider updates live as the
-                  user drags; the brief pop-up notice fires only for
-                  keyboard adjustments to avoid redundancy. */}
-              {slideshow && (
-                <div className="flex items-center gap-2 bg-black/60 backdrop-blur
+              {/* Slideshow controls — pause/play + speed slider. Photo-only:
+                  on a video, the video player owns playback (its own pause
+                  button is the right control), and the slideshow "paused"
+                  state only suppresses auto-advance-after-end, which has no
+                  visible effect during the video. Esc still exits slideshow. */}
+              {slideshow && item.kind === 'photo' && (
+                <div className="flex items-center gap-2 bg-black/80
                                 rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs
                                 px-2 py-1.5">
                   <button
@@ -912,25 +934,21 @@ export function MediaViewer({
                   >
                     {paused ? <SlideshowPlayIcon /> : <SlideshowPauseIcon />}
                   </button>
-                  {item.kind === 'photo' && (
-                    <>
-                      <span className="select-none text-zinc-400 pl-1">Speed</span>
-                      <input
-                        type="range"
-                        min={SLIDESHOW_MIN_MS}
-                        max={SLIDESHOW_MAX_MS}
-                        step={SLIDESHOW_STEP_MS}
-                        value={slideshowPhotoMs}
-                        onChange={(e) => setSlideshowPhotoMs(Number(e.target.value))}
-                        aria-label="Slideshow speed"
-                        title="Time per photo · , slower · . faster"
-                        className="w-24 accent-emerald-400 cursor-pointer"
-                      />
-                      <span className="tabular-nums select-none min-w-[2.25rem] text-right pr-1">
-                        {(slideshowPhotoMs / 1000).toFixed(0)}s
-                      </span>
-                    </>
-                  )}
+                  <span className="select-none text-zinc-400 pl-1">Speed</span>
+                  <input
+                    type="range"
+                    min={SLIDESHOW_MIN_MS}
+                    max={SLIDESHOW_MAX_MS}
+                    step={SLIDESHOW_STEP_MS}
+                    value={slideshowPhotoMs}
+                    onChange={(e) => setSlideshowPhotoMs(Number(e.target.value))}
+                    aria-label="Slideshow speed"
+                    title="Time per photo · , slower · . faster"
+                    className="w-24 accent-emerald-400 cursor-pointer"
+                  />
+                  <span className="tabular-nums select-none min-w-[2.25rem] text-right pr-1">
+                    {(slideshowPhotoMs / 1000).toFixed(0)}s
+                  </span>
                 </div>
               )}
 
@@ -976,7 +994,7 @@ export function MediaViewer({
             <div
               data-component="viewer-reel-wrapper"
               className={`absolute inset-x-0 z-20 ${chromeFadeClass}
-                          ${item.kind === 'video' ? 'bottom-16' : 'bottom-3'}
+                          ${item.kind === 'video' ? (maxed ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-24') : 'bottom-3'}
                           px-3 flex justify-center pointer-events-none`}
             >
               <div className="pointer-events-auto" {...chromeHoverHandlers}>
@@ -1121,8 +1139,23 @@ export function MediaViewer({
       <div
         {...chromeHoverHandlers}
         onClick={(e) => e.stopPropagation()}
-        className={`absolute top-4 right-4 flex gap-2 z-10 ${chromeFadeClass}`}
+        // In maxed mode the toolbar docks at the bottom-left, sharing a
+        // baseline with the reel (bottom-center) and the pan/zoom widget
+        // (right) — one row of chrome instead of stacked y-positions. Non-
+        // maxed (preview modal) keeps the toolbar at top-right since the
+        // sidebar takes the right and the bottom is unavailable.
+        //
+        // Positioning is on this OUTER wrapper, zoom is on the INNER row —
+        // CSS `zoom` multiplies position offsets too, so combining `bottom-...`
+        // and `kn-chrome-scaled` on the same element makes the toolbar's
+        // effective y drift with the chrome-scale steps. Split layers keep
+        // its bottom locked at --kn-controls-clearance regardless of scale.
+        className={`absolute z-10 ${chromeFadeClass}
+                    ${maxed
+                      ? `left-[var(--kn-chrome-pad)] ${item.kind === 'video' ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-3'}`
+                      : 'right-4 top-4'}`}
       >
+        <div className={`flex gap-2 ${maxed ? 'kn-chrome-scaled' : ''}`}>
         {/* Like control shown only in maxed mode — the preview sidebar
             has its own LikeControl, so duplicating it here would be
             redundant (and the floating one used to close the modal
@@ -1177,6 +1210,21 @@ export function MediaViewer({
                 <RotateIcon />
               </ToolbarButton>
             )}
+            {/* Fit/cover migrates here during slideshow — its usual home in
+                the bottom-left pill is hidden then (no zoom controls or
+                minimap to keep it company). */}
+            {slideshow && (
+              <ToolbarButton
+                onClick={() => {
+                  setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
+                  setZoom(1);
+                  persistZoom(1);
+                }}
+                title={fit === 'cover' ? 'Fit (no crop) — C' : 'Fill (crop edges) — C'}
+              >
+                {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
+              </ToolbarButton>
+            )}
             <ToolbarButton onClick={() => setMaxed(false)} title="Restore — F or Esc">
               <MinimizeIcon />
             </ToolbarButton>
@@ -1190,28 +1238,33 @@ export function MediaViewer({
         >
           <CloseIcon />
         </ToolbarButton>
+        </div>
       </div>
 
       {/* ── Nav arrows ──────────────────────────────────────────────── */}
       <div {...chromeHoverHandlers} className={chromeFadeClass}>
-        <NavButton side="left"  onClick={onPrev} disabled={!onPrev} />
-        <NavButton side="right" onClick={onNext} disabled={!onNext} />
+        <NavButton side="left"  onClick={onPrev} disabled={!onPrev} scaled={maxed} {...chromeHoverHandlers} />
+        <NavButton side="right" onClick={onNext} disabled={!onNext} scaled={maxed} {...chromeHoverHandlers} />
       </div>
 
 
       {position && (
-        <div {...chromeHoverHandlers} className={`absolute top-4 left-4 z-10 flex items-center gap-2 ${chromeFadeClass}`}>
-          <div className={`${maxed ? 'bg-black/60 backdrop-blur' : 'bg-black/40'}
-                          text-zinc-200 text-sm rounded-md px-3 py-1.5`}>
-            {position.index + 1} / {position.total}
+        // Positioning outside, zoom inside — see toolbar comment above for the
+        // reason `top-4` and `kn-chrome-scaled` can't share an element.
+        <div {...chromeHoverHandlers} className={`absolute top-4 left-4 z-10 ${chromeFadeClass}`}>
+          <div className={`flex items-center gap-2 ${maxed ? 'kn-chrome-scaled' : ''}`}>
+            <div className={`${maxed ? 'bg-black/80' : 'bg-black/40'}
+                            text-zinc-200 text-sm rounded-md px-3 py-1.5`}>
+              {position.index + 1} / {position.total}
+            </div>
+            {isSensitive(item.nsfwScore, item.violenceScore) && (
+              <SensitiveBadge
+                nsfwScore={item.nsfwScore}
+                violenceScore={item.violenceScore}
+                floating
+              />
+            )}
           </div>
-          {isSensitive(item.nsfwScore, item.violenceScore) && (
-            <SensitiveBadge
-              nsfwScore={item.nsfwScore}
-              violenceScore={item.violenceScore}
-              floating
-            />
-          )}
         </div>
       )}
 
@@ -1225,7 +1278,7 @@ export function MediaViewer({
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 pointer-events-none
                         flex flex-col items-center gap-1">
           {maxedVoiceTagger.status.kind === 'recording' && (
-            <div className="bg-red-950/80 backdrop-blur text-red-200 text-xs
+            <div className="bg-red-950/90 text-red-200 text-xs
                             rounded-full px-3 py-1.5 ring-1 ring-red-700/60
                             flex items-center gap-2 animate-pulse">
               <MicIcon recording />
@@ -1233,13 +1286,13 @@ export function MediaViewer({
             </div>
           )}
           {maxedVoiceTagger.status.kind === 'processing' && (
-            <div className="bg-zinc-900/80 backdrop-blur text-zinc-300 text-xs
+            <div className="bg-zinc-900/90 text-zinc-300 text-xs
                             rounded-full px-3 py-1.5 ring-1 ring-zinc-700">
               Transcribing…
             </div>
           )}
           {(maxedVoiceTagger.status.kind === 'done' || maxedVoiceTagger.status.kind === 'error') && (
-            <div className="bg-black/80 backdrop-blur text-xs rounded-md px-3 py-1.5
+            <div className="bg-black/90 text-xs rounded-md px-3 py-1.5
                             ring-1 ring-zinc-800 max-w-md text-center">
               <VoiceTagStatusLine status={maxedVoiceTagger.status} />
             </div>
@@ -1285,11 +1338,11 @@ function LikeControl({
                    bg-zinc-800 hover:bg-zinc-700 transition shrink-0"
       >
         <span className="relative inline-flex items-center justify-center">
-          <Heart filled={count > 0} size={14} />
+          <Heart count={count} size={14} />
           {sparkles}
         </span>
         {count > 0 && (
-          <span className="text-xs font-semibold text-rose-400 tabular-nums">{count}</span>
+          <span className="text-xs font-semibold tabular-nums" style={{ color: likeFillColor(count) ?? undefined }}>{count}</span>
         )}
       </button>
     );
@@ -1300,28 +1353,29 @@ function LikeControl({
       onClick={onBump}
       title={tooltip}
       aria-label={tooltip}
-      className="bg-black/60 hover:bg-black/80 backdrop-blur text-zinc-100
+      className="bg-black/80 hover:bg-black/95 text-zinc-100
                  rounded-md h-9 px-2.5 flex items-center gap-1.5 transition"
     >
       <span className="relative inline-flex items-center justify-center">
-        <Heart filled={count > 0} size={16} />
+        <Heart count={count} size={16} />
         {sparkles}
       </span>
       {count > 0 && (
-        <span className="text-sm font-semibold text-rose-400 tabular-nums">{count}</span>
+        <span className="text-sm font-semibold tabular-nums" style={{ color: likeFillColor(count) ?? undefined }}>{count}</span>
       )}
     </button>
   );
 }
 
-function Heart({ filled, size = 14 }: { filled: boolean; size?: number }) {
+function Heart({ count, size = 14 }: { count: number; size?: number }) {
+  const color = likeFillColor(count);
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 16 16"
-      fill={filled ? '#f43f5e' : 'none'}
-      stroke={filled ? '#f43f5e' : 'currentColor'}
+      fill={color ?? 'none'}
+      stroke={color ?? 'currentColor'}
       strokeWidth="1.6"
       strokeLinejoin="round"
     >
@@ -1349,7 +1403,7 @@ function SensitiveBadge({
       className={`inline-flex items-center gap-1 text-amber-300
                   text-[11px] font-medium px-2 py-0.5 rounded-full
                   border border-amber-700/50
-                  ${floating ? 'bg-amber-950/85 backdrop-blur' : 'bg-amber-950/60'}`}
+                  ${floating ? 'bg-amber-950/90' : 'bg-amber-950/60'}`}
     >
       <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -1367,24 +1421,45 @@ function NavButton({
   side,
   onClick,
   disabled,
+  scaled = false,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   side: 'left' | 'right';
   onClick?: () => void;
   disabled?: boolean;
+  /** Grow on large displays (maxed mode). The zoom lives on the inner button,
+   *  not this positioned wrapper, so the top-1/2 centering stays exact. */
+  scaled?: boolean;
+  /** Forwarded to the positioned wrapper so hovering an arrow holds the chrome
+   *  idle timer open. They can't be spread on the chrome group wrapper because
+   *  it's zero-size (children are absolutely positioned to the viewer root). */
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   if (disabled) return null;
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onClick?.(); }}
-      title={side === 'left' ? 'Previous — ←' : 'Next — →'}
-      aria-label={side === 'left' ? 'Previous' : 'Next'}
+    <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       className={`absolute top-1/2 -translate-y-1/2 z-10
-                  ${side === 'left' ? 'left-4' : 'right-4'}
-                  w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur
-                  text-zinc-100 flex items-center justify-center transition shadow-lg`}
+                  ${side === 'left' ? 'left-4' : 'right-4'}`}
     >
-      {side === 'left' ? <ChevronLeftIcon /> : <ChevronRightIcon />}
-    </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+        // Rapid double-clicks on the nav arrows raise a native `dblclick`
+        // event; swallow it here so it can't reach the media element below
+        // (which has its own click-to-toggle-play behavior on videos).
+        onDoubleClick={(e) => e.stopPropagation()}
+        title={side === 'left' ? 'Previous — ←' : 'Next — →'}
+        aria-label={side === 'left' ? 'Previous' : 'Next'}
+        className={`w-11 h-11 rounded-full bg-black/80 hover:bg-black/95
+                    text-zinc-100 flex items-center justify-center transition shadow-lg
+                    ${scaled ? 'kn-chrome-scaled' : ''}`}
+      >
+        {side === 'left' ? <ChevronLeftIcon /> : <ChevronRightIcon />}
+      </button>
+    </div>
   );
 }
 
@@ -1407,7 +1482,7 @@ function ToolbarButton({
       title={title}
       aria-label={title}
       disabled={disabled}
-      className={`bg-black/60 hover:bg-black/80 backdrop-blur text-zinc-100
+      className={`bg-black/80 hover:bg-black/95 text-zinc-100
                   rounded-md w-9 h-9 flex items-center justify-center transition
                   disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-black/60
                   ${className}`}
@@ -1433,7 +1508,7 @@ function DetailsSection({ item }: { item: MediaItemDto }) {
 
   const utils = trpc.useUtils();
   const details = trpc.media.getDetails.useQuery(
-    { uuid: item.uuid, workspaceSlug: item.workspaceSlug },
+    { uuid: item.uuid, librarySlug: item.librarySlug },
     { enabled: !!item },
   );
 
@@ -1468,7 +1543,7 @@ function DetailsSection({ item }: { item: MediaItemDto }) {
       try {
         await addTag.mutateAsync({
           uuid: item.uuid,
-          workspaceSlug: item.workspaceSlug,
+          librarySlug: item.librarySlug,
           name,
         });
       } catch {
@@ -1558,7 +1633,7 @@ function DetailsSection({ item }: { item: MediaItemDto }) {
                           <button
                             onClick={() => removeTag.mutate({
                               uuid: item.uuid,
-                              workspaceSlug: item.workspaceSlug,
+                              librarySlug: item.librarySlug,
                               name: t.name,
                             })}
                             disabled={removeTag.isPending}
@@ -1603,7 +1678,7 @@ function DetailsSection({ item }: { item: MediaItemDto }) {
                 {FEATURES.voiceTagging && (
                   <VoiceTagButton
                     uuid={item.uuid}
-                    workspaceSlug={item.workspaceSlug}
+                    librarySlug={item.librarySlug}
                     onCommitted={(tags) => {
                       if (tags.length > 0) {
                         utils.media.getDetails.invalidate();
@@ -1617,7 +1692,7 @@ function DetailsSection({ item }: { item: MediaItemDto }) {
               <div className="pt-2 mt-2 border-t border-zinc-800/60 space-y-0.5
                               text-[10px] font-mono text-zinc-600">
                 <DebugId label="uuid" value={d.uuid} />
-                <DebugId label="ws"   value={d.workspaceSlug} />
+                <DebugId label="lib"  value={d.librarySlug} />
                 {d.sha256 && (
                   <DebugId label="sha" value={d.sha256.slice(0, 12) + '…'} />
                 )}

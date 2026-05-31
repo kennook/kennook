@@ -1,5 +1,7 @@
 'use client';
 
+import { likeFillColor } from '@/lib/like-colors';
+
 const MAX = 5;
 
 /**
@@ -20,6 +22,9 @@ const MAX = 5;
  */
 export function RatingFlash({ count }: { count: number }) {
   const unrated = count === 0;
+  // Filled hearts take the rating's intensity shade (pale@1 → vivid@5) so the
+  // chip's color alone signals how strong the rating is.
+  const ratingColor = likeFillColor(count);
   const heartStroke = unrated ? 'rgba(161,161,170,0.7)' : 'rgba(244,63,94,0.45)';
   return (
     <div className={unrated ? 'opacity-50' : ''}>
@@ -40,8 +45,8 @@ export function RatingFlash({ count }: { count: number }) {
                 width="14"
                 height="14"
                 viewBox="0 0 16 16"
-                fill={filled ? '#f43f5e' : 'transparent'}
-                stroke={filled ? '#f43f5e' : heartStroke}
+                fill={filled ? (ratingColor ?? '#f43f5e') : 'transparent'}
+                stroke={filled ? (ratingColor ?? '#f43f5e') : heartStroke}
                 strokeWidth="1.6"
                 strokeLinejoin="round"
               >
@@ -51,8 +56,8 @@ export function RatingFlash({ count }: { count: number }) {
           })}
         </div>
         <span
-          className={`text-xs font-semibold tabular-nums
-                      ${unrated ? 'text-zinc-400' : 'text-rose-300'}`}
+          className={`text-xs font-semibold tabular-nums ${unrated ? 'text-zinc-400' : ''}`}
+          style={unrated ? undefined : { color: ratingColor ?? undefined }}
         >
           {count} / {MAX}
         </span>

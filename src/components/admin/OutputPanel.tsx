@@ -179,7 +179,11 @@ export function OutputPanel({
       )}
       {progress && (
         <div className="px-3 py-3 border-b border-zinc-800">
-          <ProgressStrip progress={progress} recent={recent} />
+          <ProgressStrip
+            progress={progress}
+            recent={recent}
+            isRunning={statusInfo?.status === 'running'}
+          />
         </div>
       )}
       <pre

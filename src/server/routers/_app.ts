@@ -1,14 +1,16 @@
 import { router } from '@/server/trpc';
 import { mediaRouter } from './media';
-import { workspaceRouter } from './workspace';
+import { libraryRouter } from './library';
 import { playlistRouter } from './playlist';
 import { peopleRouter } from './people';
+import { storageRouter } from './storage';
 
 export const appRouter = router({
   media: mediaRouter,
-  workspace: workspaceRouter,
+  library: libraryRouter,
   playlist: playlistRouter,
   people: peopleRouter,
+  storage: storageRouter,
 });
 
 export type AppRouter = typeof appRouter;

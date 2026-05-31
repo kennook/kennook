@@ -1,7 +1,7 @@
-// Shared user-level SQLite database — distinct from per-workspace DBs.
+// Shared user-level SQLite database — distinct from per-library DBs.
 //
-// What lives here: anything that spans workspaces (playlists, eventually
-// global settings, search history, favorites). Each workspace has its own
+// What lives here: anything that spans libraries (playlists, eventually
+// global settings, search history, favorites). Each library has its own
 // kennook.db; this one is `data/user.db`.
 
 import path from 'node:path';
@@ -30,7 +30,7 @@ export function getUserSqlite(): DatabaseSync {
   return db;
 }
 
-const LATEST_USER_SCHEMA_VERSION = 7;
+const LATEST_USER_SCHEMA_VERSION = 9;
 
 function initUserSchema(db: DatabaseSync) {
   // Base tables (idempotent — IF NOT EXISTS). For new DBs the column set is
@@ -45,7 +45,7 @@ function initUserSchema(db: DatabaseSync) {
       user_id         INTEGER NOT NULL DEFAULT 1,
       name            TEXT NOT NULL,
       description     TEXT,
-      cover_workspace TEXT,
+      cover_library TEXT,
       cover_item_uuid TEXT,
       created_at      INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
       updated_at      INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
@@ -53,11 +53,11 @@ function initUserSchema(db: DatabaseSync) {
 
     CREATE TABLE IF NOT EXISTS playlist_items (
       playlist_id    INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
-      workspace_slug TEXT NOT NULL,
+      library_slug TEXT NOT NULL,
       item_uuid      TEXT NOT NULL,
       position       INTEGER NOT NULL,
       added_at       INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
-      PRIMARY KEY (playlist_id, workspace_slug, item_uuid)
+      PRIMARY KEY (playlist_id, library_slug, item_uuid)
     );
     CREATE INDEX IF NOT EXISTS playlist_items_pos_idx
       ON playlist_items(playlist_id, position);
@@ -91,9 +91,9 @@ function initUserSchema(db: DatabaseSync) {
     version = 3;
   }
 
-  // v3 → v4: people. Cross-workspace because the same person can appear in
-  // multiple workspaces; clustering happens here and writes person_id back
-  // to each workspace's media_faces. cover_face_id / cover_workspace_slug
+  // v3 → v4: people. Cross-library because the same person can appear in
+  // multiple libraries; clustering happens here and writes person_id back
+  // to each library's media_faces. cover_face_id / cover_library_slug
   // point at the face that represents this person in the UI (selected by
   // highest detection confidence at cluster time). `name` stays NULL until
   // the user labels them.
@@ -105,7 +105,7 @@ function initUserSchema(db: DatabaseSync) {
         user_id              INTEGER NOT NULL DEFAULT 1,
         name                 TEXT,
         cover_face_id        INTEGER,
-        cover_workspace_slug TEXT,
+        cover_library_slug TEXT,
         face_count           INTEGER NOT NULL DEFAULT 0,
         created_at           INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
         updated_at           INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
@@ -148,7 +148,7 @@ function initUserSchema(db: DatabaseSync) {
         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
         command             TEXT NOT NULL,
         args_json           TEXT NOT NULL DEFAULT '{}',
-        workspace_slug      TEXT,
+        library_slug      TEXT,
         status              TEXT NOT NULL CHECK(status IN
                               ('queued','running','completed','failed','canceled')),
         output              TEXT NOT NULL DEFAULT '',
@@ -171,6 +171,26 @@ function initUserSchema(db: DatabaseSync) {
   if (version < 7) {
     try { db.exec(`ALTER TABLE admin_jobs ADD COLUMN progress_json TEXT`); } catch {}
     version = 7;
+  }
+
+  // v7 → v8: rename admin_jobs.workspace_slug → library_slug to align with
+  // the workspace→library rename. SQLite's RENAME COLUMN is in-place and
+  // doesn't touch row contents. Try/catch in case the column was already
+  // renamed by an earlier partial run.
+  if (version < 8) {
+    try { db.exec(`ALTER TABLE admin_jobs RENAME COLUMN workspace_slug TO library_slug`); } catch {}
+    version = 8;
+  }
+
+  // v8 → v9: finish the workspace→library column rename across user.db.
+  // The v8 bump only covered admin_jobs; people, playlists, and playlist_items
+  // still had their pre-rename column names, breaking cluster-faces + playlist
+  // reads on existing DBs. RENAME COLUMN is in-place and PK-safe.
+  if (version < 9) {
+    try { db.exec(`ALTER TABLE people         RENAME COLUMN cover_workspace_slug TO cover_library_slug`); } catch {}
+    try { db.exec(`ALTER TABLE playlists      RENAME COLUMN cover_workspace      TO cover_library`); } catch {}
+    try { db.exec(`ALTER TABLE playlist_items RENAME COLUMN workspace_slug       TO library_slug`); } catch {}
+    version = 9;
   }
 
   if (version !== LATEST_USER_SCHEMA_VERSION) {

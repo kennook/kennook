@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { likeFillColor } from '@/lib/like-colors';
 
 export type Orientation = 'portrait' | 'landscape' | 'square';
 export type Kind = 'photo' | 'video';
@@ -13,6 +14,7 @@ export interface FacetCounts {
   cameras: Array<{ value: string; count: number }>;
   years: Array<{ value: number; count: number }>;
   tags: Array<{ value: string; count: number }>;
+  mentioned: Array<{ value: string; count: number }>;
 }
 
 interface Props {
@@ -33,6 +35,9 @@ interface Props {
 
   tags: string[];
   onTagsChange: (v: string[]) => void;
+
+  mentioned: string[];
+  onMentionedChange: (v: string[]) => void;
 
   minLikes: number | null;
   onMinLikesChange: (v: number | null) => void;
@@ -58,6 +63,7 @@ export function FilterSidebar({
   cameraMake, onCameraChange,
   year, onYearChange,
   tags, onTagsChange,
+  mentioned, onMentionedChange,
   minLikes, onMinLikesChange,
   watched, onWatchedChange,
   sensitive, onSensitiveChange,
@@ -68,6 +74,7 @@ export function FilterSidebar({
     cameraMake !== null ||
     year !== null ||
     tags.length > 0 ||
+    mentioned.length > 0 ||
     minLikes !== null ||
     watched !== null ||
     sensitive !== null;
@@ -78,6 +85,7 @@ export function FilterSidebar({
     onCameraChange(null);
     onYearChange(null);
     onTagsChange([]);
+    onMentionedChange([]);
     onMinLikesChange(null);
     onWatchedChange(null);
     onSensitiveChange(null);
@@ -86,6 +94,11 @@ export function FilterSidebar({
   const toggleTag = (t: string) => {
     if (tags.includes(t)) onTagsChange(tags.filter((x) => x !== t));
     else onTagsChange([...tags, t]);
+  };
+
+  const toggleMentioned = (t: string) => {
+    if (mentioned.includes(t)) onMentionedChange(mentioned.filter((x) => x !== t));
+    else onMentionedChange([...mentioned, t]);
   };
 
   return (
@@ -117,21 +130,29 @@ export function FilterSidebar({
       </FilterSection>
 
       <FilterSection title="Watched">
-        <FilterRow active={watched === null} onClick={() => onWatchedChange(null)}>
-          All
-        </FilterRow>
-        <FilterRow
-          active={watched === 'unwatched'}
-          onClick={() => onWatchedChange('unwatched')}
-        >
-          Unwatched only
-        </FilterRow>
-        <FilterRow
-          active={watched === 'watched'}
-          onClick={() => onWatchedChange('watched')}
-        >
-          Watched only
-        </FilterRow>
+        <div className="px-3">
+          <div className="flex rounded-lg ring-1 ring-zinc-800 overflow-hidden">
+            <WatchedSeg
+              active={watched === null}
+              onClick={() => onWatchedChange(null)}
+              label="All"
+            />
+            <WatchedSeg
+              active={watched === 'unwatched'}
+              onClick={() => onWatchedChange('unwatched')}
+              label="Unwatched"
+              icon={<EyeOffIcon />}
+              tone="amber"
+            />
+            <WatchedSeg
+              active={watched === 'watched'}
+              onClick={() => onWatchedChange('watched')}
+              label="Watched"
+              icon={<EyeIcon />}
+              tone="emerald"
+            />
+          </div>
+        </div>
       </FilterSection>
 
       <FilterSection title="Sensitive">
@@ -201,9 +222,21 @@ export function FilterSidebar({
       />
 
       <TagFilterSection
+        title="Tags"
         options={facets?.tags ?? []}
         selected={tags}
         onToggle={toggleTag}
+        loading={loading}
+      />
+
+      <TagFilterSection
+        title="Mentioned"
+        hint="Heard in the audio"
+        accent="sky"
+        rowIcon={<SpeechIcon />}
+        options={facets?.mentioned ?? []}
+        selected={mentioned}
+        onToggle={toggleMentioned}
         loading={loading}
       />
 
@@ -221,11 +254,14 @@ export function FilterSidebar({
 
 // ─── Sections ───────────────────────────────────────────────────────────
 
-function FilterSection({ title, children }: { title: string; children: React.ReactNode }) {
+function FilterSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section className="mb-5">
       <h3 className="text-[10px] uppercase tracking-wider text-zinc-500 px-3 mb-1.5">
         {title}
+        {hint && (
+          <span className="ml-1.5 normal-case tracking-normal text-zinc-600">· {hint}</span>
+        )}
       </h3>
       <div className="flex flex-col">{children}</div>
     </section>
@@ -290,11 +326,20 @@ function DynamicFilterSection<T>({
 }
 
 function TagFilterSection({
+  title,
+  hint,
+  accent = 'emerald',
+  rowIcon,
   options,
   selected,
   onToggle,
   loading,
 }: {
+  title: string;
+  hint?: string;
+  accent?: 'emerald' | 'sky';
+  /** Optional glyph rendered on each row — e.g. a speech bubble for "said". */
+  rowIcon?: React.ReactNode;
   options: Array<{ value: string; count: number }>;
   selected: string[];
   onToggle: (t: string) => void;
@@ -317,12 +362,14 @@ function TagFilterSection({
   const remaining = all.length - visible.length;
 
   return (
-    <FilterSection title="Tags">
+    <FilterSection title={title} hint={hint}>
       {visible.map(({ value, count }) => (
         <FilterCheckRow
           key={value}
           checked={selectedSet.has(value)}
           count={count}
+          accent={accent}
+          icon={rowIcon}
           onChange={() => onToggle(value)}
         >
           {value}
@@ -333,7 +380,7 @@ function TagFilterSection({
           onClick={() => setExpanded(true)}
           className="text-xs text-zinc-500 hover:text-zinc-300 px-3 py-1 mt-0.5 text-left"
         >
-          + {remaining} more tags
+          + {remaining} more
         </button>
       )}
     </FilterSection>
@@ -382,12 +429,20 @@ function FilterCheckRow({
   count,
   onChange,
   children,
+  accent = 'emerald',
+  icon,
 }: {
   checked: boolean;
   count?: number;
   onChange: () => void;
   children: React.ReactNode;
+  accent?: 'emerald' | 'sky';
+  icon?: React.ReactNode;
 }) {
+  const checkedBox = accent === 'sky'
+    ? 'bg-sky-400 border-sky-400'
+    : 'bg-emerald-400 border-emerald-400';
+  const iconTint = accent === 'sky' ? 'text-sky-400/80' : 'text-zinc-500';
   return (
     <button
       onClick={onChange}
@@ -400,9 +455,7 @@ function FilterCheckRow({
       <span
         className={`w-3 h-3 rounded border shrink-0 flex items-center justify-center
                     transition-colors
-                    ${checked
-                      ? 'bg-emerald-400 border-emerald-400'
-                      : 'border-zinc-600 bg-transparent'}`}
+                    ${checked ? checkedBox : 'border-zinc-600 bg-transparent'}`}
       >
         {checked && (
           <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="black" strokeWidth="2">
@@ -410,6 +463,7 @@ function FilterCheckRow({
           </svg>
         )}
       </span>
+      {icon && <span className={`shrink-0 ${iconTint}`}>{icon}</span>}
       <span className="flex-1 truncate">{children}</span>
       {typeof count === 'number' && count > 0 && (
         <span className="text-xs text-zinc-500 tabular-nums shrink-0">{count}</span>
@@ -446,9 +500,71 @@ function ClearIcon() {
   );
 }
 
-function HeartChip({ filled = true, size = 11 }: { filled?: boolean; size?: number }) {
-  const color = filled ? '#f43f5e' : 'transparent';
-  const stroke = filled ? '#f43f5e' : 'rgba(255,255,255,0.35)';
+// Speech bubble — marks "Mentioned" (said-in-audio) tags, echoing the sky-blue
+// "said" badge on search-result cards.
+function SpeechIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M2 4a1.5 1.5 0 0 1 1.5-1.5h9A1.5 1.5 0 0 1 14 4v6a1.5 1.5 0 0 1-1.5 1.5H6l-3 2.5v-2.5H3.5A1.5 1.5 0 0 1 2 10z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Segmented control for the Watched filter — All / Unwatched / Watched, each
+// with an icon so the active facet is unmistakable at a glance.
+function WatchedSeg({
+  active, onClick, label, icon, tone = 'zinc',
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon?: React.ReactNode;
+  tone?: 'zinc' | 'amber' | 'emerald';
+}) {
+  const activeBg =
+    tone === 'amber' ? 'bg-amber-600 text-amber-50'
+    : tone === 'emerald' ? 'bg-emerald-600 text-emerald-50'
+    : 'bg-zinc-700 text-zinc-100';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={`${label}${label === 'All' ? '' : ' only'}`}
+      className={`flex-1 min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5
+                  text-[11px] leading-none transition border-r border-zinc-800 last:border-r-0
+                  ${active ? activeBg : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" className="shrink-0">
+      <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z" />
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" className="shrink-0">
+      <path d="M6.3 3.3A6.8 6.8 0 0 1 8 3.5c4.5 0 7 4.5 7 4.5a12 12 0 0 1-2 2.5M3.6 4.6A12 12 0 0 0 1 8s2.5 4.5 7 4.5a6.6 6.6 0 0 0 2.4-.45" strokeLinecap="round" />
+      <path d="M2 2l12 12" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function HeartChip({ count = 1, filled = true, size = 11 }: { count?: number; filled?: boolean; size?: number }) {
+  // Per-position shade so the filling row reads pale→vivid — doubles as a
+  // legend for the rating colors used on cards + in the viewer.
+  const c = filled ? likeFillColor(count) : null;
+  const color = c ?? 'transparent';
+  const stroke = c ?? 'rgba(255,255,255,0.35)';
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill={color} stroke={stroke} strokeWidth="1.3" strokeLinejoin="round">
       <path d="M8 14s-5-3.5-5-7a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 7-5 7z" />
@@ -486,7 +602,7 @@ function LikeSlider({
         </span>
         <div className="flex gap-0.5">
           {Array.from({ length: MAX }).map((_, i) => (
-            <HeartChip key={i} filled={i < sliderValue} size={10} />
+            <HeartChip key={i} count={i + 1} filled={i < sliderValue} size={10} />
           ))}
         </div>
       </div>

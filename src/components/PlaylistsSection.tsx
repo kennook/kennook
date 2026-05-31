@@ -8,8 +8,8 @@ interface Props {
 }
 
 /**
- * Sidebar section listing all playlists. Cross-workspace — same list shown
- * regardless of which workspace is active.
+ * Sidebar section listing all playlists. Cross-library — same list shown
+ * regardless of which library is active.
  */
 export function PlaylistsSection({ activePlaylistUuid, onSelectPlaylist }: Props) {
   const playlists = trpc.playlist.list.useQuery();

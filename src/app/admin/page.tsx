@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 
-// /admin lands on /admin/indexing (the operational "what does my Kennook
-// need next" view). Subsections are reachable from the sidebar.
+// /admin lands on /admin/storage — the consolidated "where are my files
+// and what's happening with them" view. Indexing/backfill/enrich actions
+// live on each storage row; the job queue is rendered below the table.
 export default function AdminIndexPage() {
-  redirect('/admin/indexing');
+  redirect('/admin/storage');
 }

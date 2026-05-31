@@ -19,7 +19,7 @@ export interface AdminJobRow {
   id: number;
   command: string;
   args: Record<string, string | number | boolean>;
-  workspaceSlug: string | null;
+  librarySlug: string | null;
   status: JobStatus;
   output: string;
   exitCode: number | null;
@@ -36,7 +36,7 @@ interface DbRow {
   id: number;
   command: string;
   args_json: string;
-  workspace_slug: string | null;
+  library_slug: string | null;
   status: JobStatus;
   output: string;
   exit_code: number | null;
@@ -58,7 +58,7 @@ function rowToJob(r: DbRow): AdminJobRow {
     id: r.id,
     command: r.command,
     args,
-    workspaceSlug: r.workspace_slug,
+    librarySlug: r.library_slug,
     status: r.status,
     output: r.output,
     exitCode: r.exit_code,
@@ -75,20 +75,20 @@ const OUTPUT_MAX_BYTES = 256 * 1024; // 256 KB cap per job
 export function enqueueJob(input: {
   command: string;
   args: Record<string, string | number | boolean>;
-  workspaceSlug: string | null;
+  librarySlug: string | null;
   userId: number;
 }): AdminJobRow {
   const db = getUserSqlite();
   const now = Date.now();
   const res = db.prepare(`
     INSERT INTO admin_jobs (
-      command, args_json, workspace_slug, status,
+      command, args_json, library_slug, status,
       enqueued_by_user_id, enqueued_at
     ) VALUES (?, ?, ?, 'queued', ?, ?)
   `).run(
     input.command,
     JSON.stringify(input.args),
-    input.workspaceSlug,
+    input.librarySlug,
     input.userId,
     now,
   );
@@ -114,21 +114,67 @@ export function listJobs(limit = 50): AdminJobRow[] {
 
 export function nextQueuedJob(): AdminJobRow | null {
   const db = getUserSqlite();
+  // id is the tiebreaker so a batch enqueued in the same millisecond still
+  // runs in insertion order (indexer → backfill → enrich).
   const row = db.prepare(`
     SELECT * FROM admin_jobs
     WHERE status = 'queued'
-    ORDER BY enqueued_at ASC
+    ORDER BY enqueued_at ASC, id ASC
     LIMIT 1
   `).get() as DbRow | undefined;
   return row ? rowToJob(row) : null;
 }
 
-export function markRunning(id: number): void {
+/**
+ * Atomically claim a queued job. Returns true only if THIS call flipped the
+ * row queued→running. With two server processes both draining the queue
+ * (dev :3000 + prod :3001), the loser of the race gets false and must NOT
+ * spawn a duplicate child — the WHERE guard makes the transition single-winner.
+ */
+export function markRunning(id: number): boolean {
   const db = getUserSqlite();
-  db.prepare(`
+  const res = db.prepare(`
     UPDATE admin_jobs SET status = 'running', started_at = ?
     WHERE id = ? AND status = 'queued'
   `).run(Date.now(), id);
+  return Number(res.changes) > 0;
+}
+
+/**
+ * Put a running job back in the queue — used when a pause gracefully stops
+ * the job. The script's per-item status flags mean already-finished work is
+ * preserved; on resume the same job re-runs and skips done items. We avoid a
+ * dedicated 'paused' status (which would need a CHECK-constraint migration);
+ * a paused pipeline is simply "queue flag set + steps queued".
+ */
+export function requeueJob(id: number): void {
+  const db = getUserSqlite();
+  db.prepare(`
+    UPDATE admin_jobs SET status = 'queued', started_at = NULL
+    WHERE id = ? AND status = 'running'
+  `).run(id);
+}
+
+// ─── Global queue pause flag (persisted in user_settings) ────────────────────
+// Single-user v0.1 → user_id = 1. Survives page refresh AND app restart
+// because it lives in user.db, so the runner stays paused across boots.
+const QUEUE_PAUSED_KEY = 'admin_queue_paused';
+
+export function isQueuePaused(): boolean {
+  const db = getUserSqlite();
+  const row = db.prepare(
+    `SELECT value FROM user_settings WHERE user_id = 1 AND key = ?`,
+  ).get(QUEUE_PAUSED_KEY) as { value: string | null } | undefined;
+  return row?.value === '1';
+}
+
+export function setQueuePaused(paused: boolean): void {
+  const db = getUserSqlite();
+  db.prepare(`
+    INSERT INTO user_settings (user_id, key, value, updated_at)
+    VALUES (1, ?, ?, ?)
+    ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(QUEUE_PAUSED_KEY, paused ? '1' : '0', Date.now());
 }
 
 export function appendOutput(id: number, chunk: string): void {

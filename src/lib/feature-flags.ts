@@ -5,12 +5,12 @@
  * current build. Values are hardcoded for now; the planned evolution
  * is in two stages:
  *
- *   1. Embedded admin UI in Kennook itself (planned). The admin will
+ *   1. Embedded admin UI in KenNook itself (planned). The admin will
  *      be able to flip flags for THIS instance via a settings page.
  *      Flag values move from this file to a config table in the
  *      user DB, with this file holding only the defaults / shape.
  *
- *   2. If Kennook ever becomes a hosted service, swap the backing
+ *   2. If KenNook ever becomes a hosted service, swap the backing
  *      store for a real flag provider — most likely GrowthBook
  *      (open-source, self-hostable, distribution-friendly: rules can
  *      be bundled with releases so installs don't need network calls

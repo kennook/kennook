@@ -15,6 +15,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { KenNookLogo } from '@/components/KenNookLogo';
 
 interface User {
   id: number;
@@ -64,7 +65,10 @@ function LoginContent() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-zinc-900/60 backdrop-blur ring-1 ring-zinc-800
                       rounded-xl p-6 shadow-2xl">
-        <h1 className="text-xl font-medium mb-1">Sign in to Kennook</h1>
+        <div className="mb-4">
+          <KenNookLogo height={28} />
+        </div>
+        <h1 className="text-xl font-medium mb-1">Sign in</h1>
         <p className="text-sm text-zinc-400 mb-5">Pick an account to continue.</p>
 
         {!users && !error && (

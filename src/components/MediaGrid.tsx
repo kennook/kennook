@@ -2,6 +2,16 @@
 
 import { MediaCard } from './MediaCard';
 
+/** Per-item text occurrence match returned by the search router. Drives
+ *  the "match at 0:45" tile + viewer auto-seek. Photos with OCR text have
+ *  tStartMs=null (no timeline). */
+export interface TextMatch {
+  source: 'ocr' | 'transcript';
+  tStartMs: number | null;
+  tEndMs: number | null;
+  text: string;
+}
+
 export interface MediaItemDto {
   id: number;
   uuid: string;
@@ -23,20 +33,26 @@ export interface MediaItemDto {
    *  to show a badge. */
   nsfwScore: number;
   violenceScore: number;
-  workspaceSlug: string;
+  librarySlug: string;
   thumbnailUrl: string;
   previewUrl: string;
   mediaUrl: string;
   scores?: { vector: number; fts: number | null; final: number };
+  /** Search-only: top-N occurrence matches for the current query. Empty
+   *  when not in a search context. */
+  matches?: TextMatch[];
 }
 
-export function selectionKey(workspaceSlug: string, itemUuid: string): string {
-  return `${workspaceSlug}::${itemUuid}`;
+export function selectionKey(librarySlug: string, itemUuid: string): string {
+  return `${librarySlug}::${itemUuid}`;
 }
 
 interface Props {
   items: MediaItemDto[];
-  onSelect: (item: MediaItemDto) => void;
+  /** Called when a tile is opened. `match` is set when the tile was a
+   *  search hit with a timestamped match, so the parent can seek the
+   *  viewer to that point. */
+  onSelect: (item: MediaItemDto, match?: TextMatch) => void;
   onToggleSelection?: (item: MediaItemDto, e: React.MouseEvent) => void;
   selectedKeys?: Set<string>;
   selectionMode?: boolean;
@@ -72,18 +88,21 @@ export function MediaGrid({
         <MediaCard
           key={item.id}
           id={item.id}
+          uuid={item.uuid}
+          librarySlug={item.librarySlug}
           thumbnailUrl={item.thumbnailUrl}
           kind={item.kind}
           filename={item.filename}
           durationMs={item.durationMs}
           score={item.scores?.final}
-          selected={selectedKeys?.has(selectionKey(item.workspaceSlug, item.uuid)) ?? false}
+          selected={selectedKeys?.has(selectionKey(item.librarySlug, item.uuid)) ?? false}
           selectionMode={selectionMode}
           likeCount={item.likeCount}
           rotation={item.rotation}
           nsfwScore={item.nsfwScore}
           violenceScore={item.violenceScore}
-          onOpen={() => onSelect(item)}
+          matches={item.matches}
+          onOpen={(match) => onSelect(item, match)}
           onToggleSelection={onToggleSelection ? (e) => onToggleSelection(item, e) : undefined}
           onSetLikes={onSetLikes ? (count) => onSetLikes(item, count) : undefined}
         />

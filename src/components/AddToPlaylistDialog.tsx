@@ -5,7 +5,7 @@ import { trpc } from '@/lib/trpc-client';
 
 interface ItemRef {
   uuid: string;
-  workspaceSlug: string;
+  librarySlug: string;
   filename?: string;
 }
 
@@ -57,7 +57,7 @@ export function AddToPlaylistDialog({ item, onClose, onAdded }: Props) {
       utils.playlist.list.invalidate();
       addItems.mutate({
         playlistUuid: playlist.uuid,
-        items: [{ workspaceSlug: item.workspaceSlug, itemUuid: item.uuid }],
+        items: [{ librarySlug: item.librarySlug, itemUuid: item.uuid }],
       });
       setCreating(false);
       setNewName('');
@@ -69,7 +69,7 @@ export function AddToPlaylistDialog({ item, onClose, onAdded }: Props) {
   const addTo = (playlistUuid: string) => {
     addItems.mutate({
       playlistUuid,
-      items: [{ workspaceSlug: item.workspaceSlug, itemUuid: item.uuid }],
+      items: [{ librarySlug: item.librarySlug, itemUuid: item.uuid }],
     });
   };
 

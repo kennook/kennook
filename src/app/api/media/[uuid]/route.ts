@@ -2,7 +2,8 @@ import { NextRequest } from 'next/server';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getRawSqlite } from '@/db/client';
-import { parseWorkspaceCookie } from '@/server/workspaces';
+import { parseLibraryCookie } from '@/server/libraries';
+import { parseRootPath, resolveMediaPath } from '@/server/storage';
 
 const MIME: Record<string, string> = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -15,21 +16,25 @@ const MIME: Record<string, string> = {
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ uuid: string }> }) {
   const { uuid } = await ctx.params;
-  const wsParam = req.nextUrl.searchParams.get('ws');
-  const workspace = wsParam ?? parseWorkspaceCookie(req.headers.get('cookie'));
-  const sqlite = getRawSqlite(workspace);
+  const wsParam = req.nextUrl.searchParams.get('lib') ?? req.nextUrl.searchParams.get('ws');
+  const library = wsParam ?? parseLibraryCookie(req.headers.get('cookie'));
+  const sqlite = getRawSqlite(library);
 
   const row = sqlite.prepare(
-    'SELECT path, mime_type FROM media_items WHERE uuid = ?',
-  ).get(uuid) as { path: string; mime_type: string | null } | undefined;
+    `SELECT m.path AS rel_path, m.mime_type, sl.config AS storage_config
+     FROM media_items m
+     JOIN storage_locations sl ON sl.id = m.storage_location_id
+     WHERE m.uuid = ?`,
+  ).get(uuid) as { rel_path: string; mime_type: string | null; storage_config: string } | undefined;
 
-  if (!row || !fs.existsSync(row.path)) {
-    return new Response('Not found', { status: 404 });
-  }
+  if (!row) return new Response('Not found', { status: 404 });
 
-  const ext = path.extname(row.path).toLowerCase();
+  const absPath = resolveMediaPath(parseRootPath(row.storage_config), row.rel_path);
+  if (!fs.existsSync(absPath)) return new Response('Not found', { status: 404 });
+
+  const ext = path.extname(absPath).toLowerCase();
   const contentType = row.mime_type ?? MIME[ext] ?? 'application/octet-stream';
-  const stat = await fs.promises.stat(row.path);
+  const stat = await fs.promises.stat(absPath);
   const total = stat.size;
 
   const range = req.headers.get('range');
@@ -39,7 +44,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ uuid: strin
       const start = parseInt(match[1], 10);
       const end = match[2] ? parseInt(match[2], 10) : total - 1;
       const chunkSize = end - start + 1;
-      const stream = fs.createReadStream(row.path, { start, end });
+      const stream = fs.createReadStream(absPath, { start, end });
       return new Response(stream as unknown as ReadableStream, {
         status: 206,
         headers: {
@@ -52,7 +57,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ uuid: strin
     }
   }
 
-  const stream = fs.createReadStream(row.path);
+  const stream = fs.createReadStream(absPath);
   return new Response(stream as unknown as ReadableStream, {
     headers: {
       'content-type': contentType,

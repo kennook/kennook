@@ -32,7 +32,7 @@ export const MAX_LIKES = 5;
 // SQL fragment that computes the current user's like count for a given row.
 // The single `?` placeholder is the user_id at bind time. Use whenever a
 // query selects from media_items aliased as `m`. Exported so the playlist
-// router (which reads cross-workspace items) can include the same field.
+// router (which reads cross-library items) can include the same field.
 export const LIKE_COUNT_EXPR =
   'COALESCE((SELECT count FROM media_likes WHERE media_item_id = m.id AND user_id = ?), 0) AS like_count';
 
@@ -43,6 +43,15 @@ interface SearchRow extends MediaRow {
 }
 
 type SqlParam = string | number | null;
+
+// Asset-ID search: a search query that is a bare UUID resolves directly to
+// that single item instead of running semantic/FTS search. This is what makes
+// a deep link (`?q=<uuid>`) load exactly one asset into the results so the
+// viewer can open it — e.g. the admin "open in KenNook" link off a scanned tile.
+const ASSET_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isAssetId(query: string): boolean {
+  return ASSET_ID_RE.test(query.trim());
+}
 
 const orientationSchema = z.enum(['portrait', 'landscape', 'square']).optional();
 const watchedSchema = z.enum(['watched', 'unwatched']).optional();
@@ -55,6 +64,10 @@ const filterShape = z.object({
   cameraMake: z.string().optional(),
   year: z.number().int().min(1900).max(2100).optional(),
   tags: z.array(z.string()).optional(),
+  /** "Mentioned" tags — derived from the spoken transcript (media_tags
+   *  source='transcript'). A separate axis from visual `tags` so users can
+   *  filter by what's SAID vs what's SEEN. */
+  mentioned: z.array(z.string()).optional(),
   minLikes: z.number().int().min(1).max(MAX_LIKES).optional(),
   watched: watchedSchema,
   /** UUID of a person (from `people`) — limits results to items where at
@@ -86,11 +99,11 @@ function markViewed(
 // Exported so the playlist router can mark items viewed when they're added
 // to a playlist (which counts as an interaction).
 export function markItemViewedByUuid(
-  workspaceSlug: string,
+  librarySlug: string,
   userId: number,
   uuid: string,
 ) {
-  const sqlite = getRawSqlite(workspaceSlug);
+  const sqlite = getRawSqlite(librarySlug);
   const item = sqlite.prepare(
     'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
   ).get(uuid) as { id: number } | undefined;
@@ -133,13 +146,25 @@ function buildFilterClauses(filters: MediaFilters, ctx: Context): FilterClauses 
   if (filters.tags && filters.tags.length > 0) {
     // Within-facet semantics: OR (user wants items with ANY of the selected
     // tags). Across-facet semantics: AND (other filters apply too).
+    // Scoped to SEEN tags (visual 'auto' + manual 'user') — transcript-derived
+    // tags have their own `mentioned` axis below.
     const placeholders = filters.tags.map(() => '?').join(',');
     where.push(`m.id IN (
       SELECT DISTINCT mt.media_item_id FROM media_tags mt
       JOIN tags t ON t.id = mt.tag_id
-      WHERE t.name IN (${placeholders})
+      WHERE mt.source IN ('auto', 'user') AND t.name IN (${placeholders})
     )`);
     for (const t of filters.tags) params.push(t);
+  }
+  if (filters.mentioned && filters.mentioned.length > 0) {
+    // SAID tags — items whose transcript mentioned ANY of the selected terms.
+    const placeholders = filters.mentioned.map(() => '?').join(',');
+    where.push(`m.id IN (
+      SELECT DISTINCT mt.media_item_id FROM media_tags mt
+      JOIN tags t ON t.id = mt.tag_id
+      WHERE mt.source = 'transcript' AND t.name IN (${placeholders})
+    )`);
+    for (const t of filters.mentioned) params.push(t);
   }
 
   if (filters.minLikes != null) {
@@ -169,7 +194,7 @@ function buildFilterClauses(filters: MediaFilters, ctx: Context): FilterClauses 
   }
 
   if (filters.person) {
-    // people lives in user.db, media_faces in workspace.db — so we
+    // people lives in user.db, media_faces in library.db — so we
     // resolve the uuid → numeric id here (small lookup, one row) and
     // then constrain media_items via EXISTS on the local media_faces.
     const userDb = getUserSqlite();
@@ -213,6 +238,8 @@ export interface FacetCounts {
   cameras: Array<{ value: string; count: number }>;
   years: Array<{ value: number; count: number }>;
   tags: Array<{ value: string; count: number }>;
+  /** Transcript-derived tags (source='transcript') — the "Mentioned" axis. */
+  mentioned: Array<{ value: string; count: number }>;
 }
 
 interface FacetContext {
@@ -238,6 +265,13 @@ async function getCandidateIds(
   opts: FacetContext,
 ): Promise<number[] | null> {
   if (opts.query) {
+    // Asset-ID query → facets reflect just that one item (no embedding work).
+    if (isAssetId(opts.query)) {
+      const row = sqlite.prepare(
+        'SELECT id FROM media_items WHERE uuid = ? AND user_id = ? AND deleted_at IS NULL',
+      ).get(opts.query.trim(), ctx.userId) as { id: number } | undefined;
+      return row ? [row.id] : [];
+    }
     const queryEmbed = await embedText(opts.query);
     const queryBuf = floatArrayToBuffer(queryEmbed);
     const rows = sqlite.prepare(`
@@ -273,13 +307,13 @@ async function computeFacets(
   ctx: Context,
   facetCtx: FacetContext,
 ): Promise<FacetCounts> {
-  const sqlite = getRawSqlite(ctx.workspace.slug);
+  const sqlite = getRawSqlite(ctx.library.slug);
 
   // Candidate set narrows facet aggregation to "what's relevant right now".
   // null = no narrowing (recent mode); empty array = no matches at all.
   const candidateIds = await getCandidateIds(sqlite, ctx, facetCtx);
 
-  const empty: FacetCounts = { kinds: [], orientations: [], cameras: [], years: [], tags: [] };
+  const empty: FacetCounts = { kinds: [], orientations: [], cameras: [], years: [], tags: [], mentioned: [] };
   if (candidateIds !== null && candidateIds.length === 0) return empty;
 
   // Build a candidate-membership clause + parameter array (or pass-through
@@ -349,13 +383,25 @@ async function computeFacets(
     FROM media_items m
     JOIN media_tags mt ON mt.media_item_id = m.id
     JOIN tags t ON t.id = mt.tag_id
-    WHERE ${tf.where} ${candidateClause}
+    WHERE ${tf.where} AND mt.source IN ('auto', 'user') ${candidateClause}
     GROUP BY t.id
     ORDER BY count DESC, value ASC
     LIMIT 30
   `).all(...tf.params) as unknown as FacetCounts['tags'];
 
-  return { kinds, orientations, cameras, years, tags };
+  const mf = facet('mentioned');
+  const mentioned = sqlite.prepare(`
+    SELECT t.name AS value, COUNT(DISTINCT m.id) AS count
+    FROM media_items m
+    JOIN media_tags mt ON mt.media_item_id = m.id
+    JOIN tags t ON t.id = mt.tag_id
+    WHERE ${mf.where} AND mt.source = 'transcript' ${candidateClause}
+    GROUP BY t.id
+    ORDER BY count DESC, value ASC
+    LIMIT 30
+  `).all(...mf.params) as unknown as FacetCounts['mentioned'];
+
+  return { kinds, orientations, cameras, years, tags, mentioned };
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────
@@ -372,7 +418,7 @@ export const mediaRouter = router({
       ...filterShape.shape,
     }))
     .query(({ input, ctx }) => {
-      const sqlite = getRawSqlite(ctx.workspace.slug);
+      const sqlite = getRawSqlite(ctx.library.slug);
       const { where, params } = buildFilterClauses(input, ctx);
       const effectiveOffset = input.cursor ?? input.offset;
       // Fetch limit+1 to detect a next page without a separate COUNT(*).
@@ -388,7 +434,7 @@ export const mediaRouter = router({
       `).all(ctx.userId, ...params, input.limit + 1, effectiveOffset) as unknown as MediaRow[];
       const hasMore = rows.length > input.limit;
       return {
-        items: rows.slice(0, input.limit).map((r) => rowToDto(r, ctx.workspace.slug)),
+        items: rows.slice(0, input.limit).map((r) => rowToDto(r, ctx.library.slug)),
         hasMore,
         nextCursor: hasMore ? effectiveOffset + input.limit : undefined,
       };
@@ -397,7 +443,7 @@ export const mediaRouter = router({
   get: publicProcedure
     .input(z.object({ id: z.number() }))
     .query(({ input, ctx }) => {
-      const sqlite = getRawSqlite(ctx.workspace.slug);
+      const sqlite = getRawSqlite(ctx.library.slug);
       const row = sqlite.prepare(`
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
@@ -407,20 +453,20 @@ export const mediaRouter = router({
         WHERE m.id = ? AND m.user_id = ? AND m.deleted_at IS NULL
       `).get(ctx.userId, input.id, ctx.userId) as unknown as MediaRow | undefined;
       if (!row) throw new Error('Not found');
-      return rowToDto(row, ctx.workspace.slug);
+      return rowToDto(row, ctx.library.slug);
     }),
 
   // Lazy-fetched item details — caption, OCR, tags, transcript, statuses.
   // Used by the viewer to surface AI-extracted metadata + debug fields for
-  // verifying search relevance. Cross-workspace aware: pass workspaceSlug
-  // explicitly (e.g. for items shown in a multi-workspace playlist).
+  // verifying search relevance. Cross-library aware: pass librarySlug
+  // explicitly (e.g. for items shown in a multi-library playlist).
   getDetails: publicProcedure
     .input(z.object({
       uuid: z.string(),
-      workspaceSlug: z.string().optional(),
+      librarySlug: z.string().optional(),
     }))
     .query(({ input, ctx }) => {
-      const slug = input.workspaceSlug ?? ctx.workspace.slug;
+      const slug = input.librarySlug ?? ctx.library.slug;
       const sqlite = getRawSqlite(slug);
       const row = sqlite.prepare(`
         SELECT id, uuid, sha256, ai_caption, ai_summary, ocr_text, transcript,
@@ -450,7 +496,7 @@ export const mediaRouter = router({
 
       return {
         uuid: row.uuid,
-        workspaceSlug: slug,
+        librarySlug: slug,
         sha256: row.sha256,
         aiCaption: row.ai_caption,
         aiSummary: row.ai_summary,
@@ -471,7 +517,7 @@ export const mediaRouter = router({
       ...filterShape.shape,
     }))
     .query(({ input, ctx }) => {
-      const sqlite = getRawSqlite(ctx.workspace.slug);
+      const sqlite = getRawSqlite(ctx.library.slug);
 
       const source = sqlite.prepare(`
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
@@ -489,7 +535,7 @@ export const mediaRouter = router({
       ).get(BigInt(source.id)) as { embedding: Uint8Array } | undefined;
 
       if (!embRow) return {
-        source: rowToDto(source, ctx.workspace.slug),
+        source: rowToDto(source, ctx.library.slug),
         items: [],
         hasMore: false,
       };
@@ -537,9 +583,9 @@ export const mediaRouter = router({
 
       const hasMore = rows.length > input.limit;
       return {
-        source: rowToDto(source, ctx.workspace.slug),
+        source: rowToDto(source, ctx.library.slug),
         items: rows.slice(0, input.limit).map((r) => ({
-          ...rowToDto(r, ctx.workspace.slug),
+          ...rowToDto(r, ctx.library.slug),
           scores: { vector: r.vec_similarity, fts: r.fts_score, final: r.final_score },
         })),
         hasMore,
@@ -556,7 +602,39 @@ export const mediaRouter = router({
       ...filterShape.shape,
     }))
     .query(async ({ input, ctx }) => {
-      const sqlite = getRawSqlite(ctx.workspace.slug);
+      const sqlite = getRawSqlite(ctx.library.slug);
+
+      // Asset-ID search: a bare UUID resolves to exactly that item, skipping
+      // the embedding + FTS work entirely. Filters are intentionally ignored —
+      // an explicit ID lookup should always find its target regardless of the
+      // active facet filters (otherwise a deep link could "fail" just because
+      // a leftover filter excludes the item).
+      if (isAssetId(input.query)) {
+        const row = sqlite.prepare(`
+          SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
+                 m.captured_at, m.captured_place, m.camera_make, m.camera_model,
+                 m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+                 ${LIKE_COUNT_EXPR}
+          FROM media_items m
+          WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
+        `).get(ctx.userId, input.query.trim(), ctx.userId) as unknown as MediaRow | undefined;
+        type SearchMatch = { source: 'ocr' | 'transcript'; tStartMs: number | null; tEndMs: number | null; text: string };
+        return {
+          items: row
+            ? [{
+                ...rowToDto(row, ctx.library.slug),
+                // Exact ID match — report a full-confidence score so the item
+                // shape matches the semantic-search branch (no union for
+                // consumers) and any score badge reads as a 100% hit.
+                scores: { vector: 1, fts: null as number | null, final: 1 },
+                matches: [] as SearchMatch[],
+              }]
+            : [],
+          hasMore: false,
+          nextCursor: undefined as number | undefined,
+        };
+      }
+
       const queryEmbed = await embedText(input.query);
       const queryBuf = floatArrayToBuffer(queryEmbed);
       const ftsQuery = toFtsQuery(input.query);
@@ -609,10 +687,64 @@ export const mediaRouter = router({
       ) as unknown as SearchRow[];
 
       const hasMore = rows.length > input.limit;
+      const visible = rows.slice(0, input.limit);
+
+      // Per-item text occurrence matches — drives "match at 0:45" UX. One
+      // batch query for all visible items keeps this off the N+1 hot path.
+      const tokens = input.query
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 2);
+      const matchesByItem = new Map<number, Array<{
+        source: 'ocr' | 'transcript';
+        tStartMs: number | null;
+        tEndMs: number | null;
+        text: string;
+      }>>();
+
+      if (tokens.length > 0 && visible.length > 0) {
+        const itemPlaceholders = visible.map(() => '?').join(',');
+        const likeClause = tokens.map(() => 'LOWER(text) LIKE ?').join(' OR ');
+        const occRows = sqlite.prepare(`
+          SELECT media_item_id, source, t_start_ms, t_end_ms, text
+          FROM media_text_occurrences
+          WHERE media_item_id IN (${itemPlaceholders})
+            AND (${likeClause})
+          ORDER BY media_item_id,
+                   /* NULL timestamps (photo OCR) come last; otherwise ascending */
+                   t_start_ms IS NULL, t_start_ms
+        `).all(
+          ...visible.map((r) => r.id),
+          ...tokens.map((t) => `%${t}%`),
+        ) as Array<{
+          media_item_id: number;
+          source: 'ocr' | 'transcript';
+          t_start_ms: number | null;
+          t_end_ms: number | null;
+          text: string;
+        }>;
+
+        // Cap at 3 per item — enough to communicate match count without bloat.
+        for (const o of occRows) {
+          const arr = matchesByItem.get(o.media_item_id) ?? [];
+          if (arr.length < 3) {
+            arr.push({
+              source: o.source,
+              tStartMs: o.t_start_ms,
+              tEndMs: o.t_end_ms,
+              text: o.text,
+            });
+            matchesByItem.set(o.media_item_id, arr);
+          }
+        }
+      }
+
       return {
-        items: rows.slice(0, input.limit).map((r) => ({
-          ...rowToDto(r, ctx.workspace.slug),
+        items: visible.map((r) => ({
+          ...rowToDto(r, ctx.library.slug),
           scores: { vector: r.vec_similarity, fts: r.fts_score, final: r.final_score },
+          matches: matchesByItem.get(r.id) ?? [],
         })),
         hasMore,
         nextCursor: hasMore ? effectiveOffset + input.limit : undefined,
@@ -626,10 +758,10 @@ export const mediaRouter = router({
   markViewed: publicProcedure
     .input(z.object({
       uuid: z.string(),
-      workspaceSlug: z.string().optional(),
+      librarySlug: z.string().optional(),
     }))
     .mutation(({ input, ctx }) => {
-      const slug = input.workspaceSlug ?? ctx.workspace.slug;
+      const slug = input.librarySlug ?? ctx.library.slug;
       const sqlite = getRawSqlite(slug);
       const item = sqlite.prepare(
         'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
@@ -639,17 +771,39 @@ export const mediaRouter = router({
       return { uuid: input.uuid };
     }),
 
+  // Batch mark-viewed — used by the one-time client backfill that bridges
+  // saved play positions (localStorage, per-device) into media_views. Items
+  // can span libraries (each carries its own slug). Missing items are
+  // skipped silently so a stale localStorage key can't fail the whole run.
+  markViewedBatch: publicProcedure
+    .input(z.object({
+      items: z.array(z.object({
+        librarySlug: z.string().min(1),
+        uuid: z.string().min(1),
+      })).max(2000),
+    }))
+    .mutation(({ input, ctx }) => {
+      let marked = 0;
+      for (const it of input.items) {
+        try {
+          markItemViewedByUuid(it.librarySlug, ctx.userId, it.uuid);
+          marked++;
+        } catch { /* unknown library / item — skip */ }
+      }
+      return { marked };
+    }),
+
   // Set the like count on an item. The client passes the desired count (the
   // increment-then-wrap logic lives in the UI so the heart button feels
-  // instant). Cross-workspace aware via optional workspaceSlug.
+  // instant). Cross-library aware via optional librarySlug.
   setLike: publicProcedure
     .input(z.object({
       uuid: z.string(),
       count: z.number().int().min(0).max(MAX_LIKES),
-      workspaceSlug: z.string().optional(),
+      librarySlug: z.string().optional(),
     }))
     .mutation(({ input, ctx }) => {
-      const slug = input.workspaceSlug ?? ctx.workspace.slug;
+      const slug = input.librarySlug ?? ctx.library.slug;
       const sqlite = getRawSqlite(slug);
 
       const item = sqlite.prepare(
@@ -679,7 +833,7 @@ export const mediaRouter = router({
         sessionId: ctx.sessionId,
         event: {
           type: 'item.like',
-          workspaceSlug: slug,
+          librarySlug: slug,
           uuid: input.uuid,
           count: input.count,
         },
@@ -697,10 +851,10 @@ export const mediaRouter = router({
     .input(z.object({
       uuid: z.string(),
       rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
-      workspaceSlug: z.string().optional(),
+      librarySlug: z.string().optional(),
     }))
     .mutation(({ input, ctx }) => {
-      const slug = input.workspaceSlug ?? ctx.workspace.slug;
+      const slug = input.librarySlug ?? ctx.library.slug;
       const sqlite = getRawSqlite(slug);
       const item = sqlite.prepare(
         'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
@@ -716,7 +870,7 @@ export const mediaRouter = router({
         sessionId: ctx.sessionId,
         event: {
           type: 'item.rotation',
-          workspaceSlug: slug,
+          librarySlug: slug,
           uuid: input.uuid,
           rotation: input.rotation,
         },
@@ -726,16 +880,16 @@ export const mediaRouter = router({
 
   // Add a user-typed tag to a media item. Tag name is normalized to lowercase
   // + trimmed so "Beach", "beach ", "BEACH" all canonicalize. Reuses an
-  // existing tag row if name already exists in this workspace; the link is
+  // existing tag row if name already exists in this library; the link is
   // marked source='user' so re-enrichment doesn't replace it.
   addUserTag: publicProcedure
     .input(z.object({
       uuid: z.string(),
       name: z.string().min(1).max(60),
-      workspaceSlug: z.string().optional(),
+      librarySlug: z.string().optional(),
     }))
     .mutation(({ input, ctx }) => {
-      const slug = input.workspaceSlug ?? ctx.workspace.slug;
+      const slug = input.librarySlug ?? ctx.library.slug;
       const sqlite = getRawSqlite(slug);
 
       const normalized = input.name.trim().toLowerCase();
@@ -766,7 +920,7 @@ export const mediaRouter = router({
 
       publishToUser(ctx.userId, {
         sessionId: ctx.sessionId,
-        event: { type: 'item.tag.changed', workspaceSlug: slug, uuid: input.uuid },
+        event: { type: 'item.tag.changed', librarySlug: slug, uuid: input.uuid },
       });
 
       return { uuid: input.uuid, tag: normalized };
@@ -779,10 +933,10 @@ export const mediaRouter = router({
     .input(z.object({
       uuid: z.string(),
       name: z.string(),
-      workspaceSlug: z.string().optional(),
+      librarySlug: z.string().optional(),
     }))
     .mutation(({ input, ctx }) => {
-      const slug = input.workspaceSlug ?? ctx.workspace.slug;
+      const slug = input.librarySlug ?? ctx.library.slug;
       const sqlite = getRawSqlite(slug);
       const normalized = input.name.trim().toLowerCase();
 
@@ -795,7 +949,7 @@ export const mediaRouter = router({
 
       publishToUser(ctx.userId, {
         sessionId: ctx.sessionId,
-        event: { type: 'item.tag.changed', workspaceSlug: slug, uuid: input.uuid },
+        event: { type: 'item.tag.changed', librarySlug: slug, uuid: input.uuid },
       });
 
       return { uuid: input.uuid, tag: normalized };
@@ -804,7 +958,7 @@ export const mediaRouter = router({
   // Drill-down facet aggregation for the current view + filter state.
   //
   // - Recent mode (no query/similarToUuid): aggregates over the filtered
-  //   library — counts reflect the whole workspace's items matching filters.
+  //   library — counts reflect the whole library's items matching filters.
   // - Search mode (query set): aggregates over the top-500 vector matches —
   //   counts reflect "what's similar to your query."
   // - Similar mode (similarToUuid set): aggregates over the top-500 nearest
@@ -825,10 +979,10 @@ export const mediaRouter = router({
     }),
 });
 
-// Includes the workspace slug + bakes it into media URLs so cross-workspace
+// Includes the library slug + bakes it into media URLs so cross-library
 // rendering (e.g. playlists) works without depending on the active cookie.
-function rowToDto(row: MediaRow, workspaceSlug: string) {
-  const qs = `?ws=${workspaceSlug}`;
+function rowToDto(row: MediaRow, librarySlug: string) {
+  const qs = `?lib=${librarySlug}`;
   return {
     id: row.id,
     uuid: row.uuid,
@@ -846,7 +1000,7 @@ function rowToDto(row: MediaRow, workspaceSlug: string) {
     rotation: row.rotation,
     nsfwScore: row.nsfw_score,
     violenceScore: row.violence_score,
-    workspaceSlug,
+    librarySlug,
     thumbnailUrl: `/api/thumbnails/${row.uuid}${qs}`,
     previewUrl: `/api/preview/${row.uuid}${qs}`,
     mediaUrl: `/api/media/${row.uuid}${qs}`,

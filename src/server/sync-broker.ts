@@ -6,7 +6,7 @@
  * client-side (the `/api/sync/publish` endpoint forwarding browser-only
  * events like screensaver state).
  *
- * Single-process assumption — works for Kennook's self-hosted footprint.
+ * Single-process assumption — works for KenNook's self-hosted footprint.
  * If we ever cluster the web tier, swap the Set for a Redis pubsub channel
  * (or equivalent) and keep the function shape identical.
  */

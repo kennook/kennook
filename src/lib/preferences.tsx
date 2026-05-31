@@ -41,7 +41,11 @@ export interface Preferences {
 }
 
 const DEFAULTS: Preferences = {
-  videoMuted: false,
+  // Default to muted: video preferences don't currently persist across page
+  // reloads, and a fresh tab popping out at full volume is jarring. The user
+  // can unmute (and that state holds for the session); next reload starts
+  // muted again. Flip back to false once persistence lands.
+  videoMuted: true,
   videoVolume: 1.0,
   videoPlaybackRate: 1.0,
   defaultFit: 'cover',

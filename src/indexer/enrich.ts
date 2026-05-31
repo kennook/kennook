@@ -8,8 +8,8 @@
 // items where enrichment_status != 'done'.
 //
 // Usage:
-//   pnpm enrich:text                         # personal workspace
-//   pnpm enrich:text --workspace work        # named workspace
+//   pnpm enrich:text                         # personal library
+//   pnpm enrich:text --library work        # named library
 //   pnpm enrich:text --limit 100             # cap items per run (testing)
 //   pnpm enrich:text --force                 # re-enrich items already done
 
@@ -18,9 +18,11 @@ import { getRawSqlite } from '@/db/client';
 import { enrichImage } from '@/ai/vlm';
 import { emitProgress } from './progress';
 import {
-  DEFAULT_WORKSPACE_SLUG,
-  resolveWorkspace,
-} from '@/server/workspaces';
+  DEFAULT_LIBRARY_SLUG,
+  resolveLibrary,
+} from '@/server/libraries';
+import { replaceOccurrences } from '@/server/text-occurrences';
+import { installGracefulStop, shouldStop } from './graceful-stop';
 
 interface PendingRow {
   id: number;
@@ -31,24 +33,28 @@ interface PendingRow {
 }
 
 interface CliArgs {
-  workspaceSlug: string;
+  librarySlug: string;
   limit: number | null;
   force: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  let workspaceSlug = DEFAULT_WORKSPACE_SLUG;
+  let librarySlug = DEFAULT_LIBRARY_SLUG;
   let limit: number | null = null;
   let force = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
+    // pnpm 9+ sometimes leaves a bare `--` separator in argv when scripts
+    // chain through `pnpm <script> -- args`. Treat it as a no-op so a
+    // version bump in the package manager can't crash us.
+    if (a === '--') continue;
+    if (a === '--library' || a === '-w') {
       const v = argv[++i];
-      if (!v) throw new Error('--workspace requires a value');
-      workspaceSlug = v;
-    } else if (a.startsWith('--workspace=')) {
-      workspaceSlug = a.split('=')[1];
+      if (!v) throw new Error('--library requires a value');
+      librarySlug = v;
+    } else if (a.startsWith('--library=')) {
+      librarySlug = a.split('=')[1];
     } else if (a === '--limit') {
       const v = argv[++i];
       if (!v) throw new Error('--limit requires a value');
@@ -61,15 +67,16 @@ function parseArgs(argv: string[]): CliArgs {
       throw new Error(`Unknown argument: ${a}`);
     }
   }
-  return { workspaceSlug, limit, force };
+  return { librarySlug, limit, force };
 }
 
 async function main() {
-  const { workspaceSlug, limit, force } = parseArgs(process.argv.slice(2));
-  const workspace = resolveWorkspace(workspaceSlug);
-  const sqlite = getRawSqlite(workspace.slug);
+  installGracefulStop();
+  const { librarySlug, limit, force } = parseArgs(process.argv.slice(2));
+  const library = resolveLibrary(librarySlug);
+  const sqlite = getRawSqlite(library.slug);
 
-  console.log(`Enriching workspace "${workspace.name}" (${workspace.slug}) with Florence-2`);
+  console.log(`Enriching library "${library.name}" (${library.slug}) with Florence-2`);
   console.log('First run will download ~250MB of model weights. Subsequent runs are cached.');
 
   // Pick up items needing enrichment. We use preview_path when available
@@ -95,9 +102,11 @@ async function main() {
 
   console.log(`${pending.length} item(s) pending.`);
 
+  // ocr_text isn't set here — `replaceOccurrences` below handles both the
+  // per-frame occurrence row AND the rollup column FTS5 reads from.
   const updateItem = sqlite.prepare(`
     UPDATE media_items
-    SET ai_caption = ?, ocr_text = ?, enrichment_status = 'done', updated_at = ?
+    SET ai_caption = ?, enrichment_status = 'done', updated_at = ?
     WHERE id = ?
   `);
   const markFailed = sqlite.prepare(`
@@ -123,6 +132,7 @@ async function main() {
   const start = Date.now();
 
   for (let i = 0; i < pending.length; i++) {
+    if (shouldStop()) { console.log('\n[paused] stopping after current batch — progress saved.'); break; }
     const row = pending[i];
     // Pre-process emit so the UI shows what's about to be processed
     // (useful when Florence-2 takes seconds per image).
@@ -133,7 +143,7 @@ async function main() {
       label: 'captioning + OCR + tagging',
       currentItem: row.uuid,
       currentItemKind: 'uuid',
-      currentItemWorkspace: workspace.slug,
+      currentItemLibrary: library.slug,
     });
 
     const imgPath = row.preview_path && fs.existsSync(row.preview_path)
@@ -156,7 +166,13 @@ async function main() {
       // Replace auto-tags atomically: clear existing auto-tags for this item,
       // then add the new set. Manual tags (source='user') are untouched.
       clearOldTags.run(row.id);
-      updateItem.run(caption || null, ocrText || null, Date.now(), row.id);
+      updateItem.run(caption || null, Date.now(), row.id);
+
+      // Write the OCR result as a single timestamp-less occurrence — photos
+      // have no timeline. replaceOccurrences also updates ocr_text for FTS.
+      replaceOccurrences(sqlite, row.id, 'ocr',
+        ocrText ? [{ source: 'ocr', tStartMs: null, tEndMs: null, text: ocrText }] : [],
+      );
 
       for (const tagName of tags) {
         const tagRow = findOrCreateTag.get(tagName) as { id: number } | undefined;

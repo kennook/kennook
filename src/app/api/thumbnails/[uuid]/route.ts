@@ -1,16 +1,16 @@
 import { NextRequest } from 'next/server';
 import fs from 'node:fs';
 import { getRawSqlite } from '@/db/client';
-import { parseWorkspaceCookie } from '@/server/workspaces';
+import { parseLibraryCookie } from '@/server/libraries';
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ uuid: string }> }) {
   const { uuid } = await ctx.params;
-  // Cross-workspace items (e.g. playlists) pass ?ws=<slug>; everything else
-  // falls back to the active workspace cookie.
-  const wsParam = req.nextUrl.searchParams.get('ws');
-  const workspace = wsParam ?? parseWorkspaceCookie(req.headers.get('cookie'));
+  // Cross-library items (e.g. playlists) pass ?lib=<slug> (legacy ?ws= still
+  // honored); everything else falls back to the active library cookie.
+  const wsParam = req.nextUrl.searchParams.get('lib') ?? req.nextUrl.searchParams.get('ws');
+  const library = wsParam ?? parseLibraryCookie(req.headers.get('cookie'));
 
-  const sqlite = getRawSqlite(workspace);
+  const sqlite = getRawSqlite(library);
   const row = sqlite.prepare(
     'SELECT thumbnail_path FROM media_items WHERE uuid = ?',
   ).get(uuid) as { thumbnail_path: string | null } | undefined;

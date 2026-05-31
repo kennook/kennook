@@ -7,34 +7,36 @@
 // concrete need.
 //
 // Run with:
-//   pnpm enrich:faces                    # default workspace
-//   pnpm enrich:faces --workspace work   # named workspace
+//   pnpm enrich:faces                    # default library
+//   pnpm enrich:faces --library work   # named library
 //   pnpm enrich:faces --reset            # re-process items previously marked done
 //   pnpm enrich:faces --limit 100        # cap how many to process (testing)
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { DEFAULT_WORKSPACE_SLUG, resolveWorkspace } from '@/server/workspaces';
+import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 import { getRawSqlite } from '@/db/client';
+import { parseRootPath, resolveMediaPath } from '@/server/storage';
 import { detectFaces, faceEmbeddingToBuffer } from '@/ai/face';
 import { emitProgress } from './progress';
+import { installGracefulStop, shouldStop } from './graceful-stop';
 
 interface Args {
-  workspaceSlug: string;
+  librarySlug: string;
   reset: boolean;
   limit: number | null;
 }
 
 function parseArgs(argv: string[]): Args {
-  let workspaceSlug = DEFAULT_WORKSPACE_SLUG;
+  let librarySlug = DEFAULT_LIBRARY_SLUG;
   let reset = false;
   let limit: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
-      const v = argv[++i]; if (v) workspaceSlug = v;
-    } else if (a.startsWith('--workspace=')) {
-      workspaceSlug = a.split('=')[1];
+    if (a === '--library' || a === '-w') {
+      const v = argv[++i]; if (v) librarySlug = v;
+    } else if (a.startsWith('--library=')) {
+      librarySlug = a.split('=')[1];
     } else if (a === '--reset') {
       reset = true;
     } else if (a === '--limit') {
@@ -43,20 +45,22 @@ function parseArgs(argv: string[]): Args {
       limit = parseInt(a.split('=')[1], 10);
     }
   }
-  return { workspaceSlug, reset, limit };
+  return { librarySlug, reset, limit };
 }
 
 interface PendingRow {
   id: number;
   uuid: string;
   filename: string;
-  path: string;
+  rel_path: string;
+  storage_config: string;
 }
 
 async function main() {
+  installGracefulStop();
   const args = parseArgs(process.argv.slice(2));
-  const workspace = resolveWorkspace(args.workspaceSlug);
-  const sqlite = getRawSqlite(workspace.slug);
+  const library = resolveLibrary(args.librarySlug);
+  const sqlite = getRawSqlite(library.slug);
 
   if (args.reset) {
     sqlite.exec(`UPDATE media_items SET face_status = 'pending' WHERE kind = 'photo'`);
@@ -67,17 +71,18 @@ async function main() {
 
   const limitClause = args.limit ? `LIMIT ${args.limit}` : '';
   const pending = sqlite.prepare(`
-    SELECT id, uuid, filename, path
-    FROM media_items
-    WHERE kind = 'photo'
-      AND face_status = 'pending'
-      AND deleted_at IS NULL
-    ORDER BY id
+    SELECT m.id, m.uuid, m.filename, m.path AS rel_path, sl.config AS storage_config
+    FROM media_items m
+    JOIN storage_locations sl ON sl.id = m.storage_location_id
+    WHERE m.kind = 'photo'
+      AND m.face_status = 'pending'
+      AND m.deleted_at IS NULL
+    ORDER BY m.id
     ${limitClause}
   `).all() as unknown as PendingRow[];
 
   console.log(
-    `Face enrichment in workspace "${workspace.name}" (${workspace.slug}): ` +
+    `Face enrichment in library "${library.name}" (${library.slug}): ` +
     `${pending.length} photo(s) to process.`,
   );
   if (pending.length === 0) return;
@@ -102,6 +107,7 @@ async function main() {
   const t0 = Date.now();
 
   for (const row of pending) {
+    if (shouldStop()) { console.log('\n[paused] stopping after current batch — progress saved.'); break; }
     emitProgress({
       step: 'Enrich: faces',
       current: done + failed,
@@ -109,11 +115,12 @@ async function main() {
       label: 'detecting faces + embeddings',
       currentItem: row.uuid,
       currentItemKind: 'uuid',
-      currentItemWorkspace: workspace.slug,
+      currentItemLibrary: library.slug,
     });
     process.stdout.write(`[${done + 1}/${pending.length}] ${row.filename} … `);
+    const absPath = resolveMediaPath(parseRootPath(row.storage_config), row.rel_path);
     try {
-      await fs.access(row.path);
+      await fs.access(absPath);
     } catch {
       markStatus.run('failed', row.id);
       failed++;
@@ -121,7 +128,7 @@ async function main() {
       continue;
     }
     try {
-      const detected = await detectFaces(row.path);
+      const detected = await detectFaces(absPath);
       // INSERT face rows + their embeddings inside a transaction so a
       // crash mid-write doesn't leave the item half-enriched.
       sqlite.exec('BEGIN');

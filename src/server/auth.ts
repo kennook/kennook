@@ -4,7 +4,7 @@
  * The session is a plain `kennook_user` cookie holding a user id. No
  * password, no signing, no expiry. Anyone who can edit cookies can
  * pose as any user — fine for local-network single-machine use, NOT
- * fine once Kennook is distributed beyond the operator's own LAN.
+ * fine once KenNook is distributed beyond the operator's own LAN.
  *
  * When distribution lands (per the kennook.net infra plan), replace
  * this whole module with the OAuth flow used for `<name>.app.kennook.net`

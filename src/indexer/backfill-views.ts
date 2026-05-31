@@ -6,39 +6,39 @@
 //   1. A row in media_likes for this user                    (liked)
 //   2. A row in media_tags with source = 'user'              (user-tagged)
 //   3. The item's uuid appears in playlist_items, scoped to  (added to a
-//      this workspace via user.db's playlist_items.workspace_slug    playlist)
+//      this library via user.db's playlist_items.library_slug    playlist)
 //
 // Items that were merely *opened* in the viewer pre-feature can't be
 // recovered (we never recorded that). Run again any time — INSERT OR
 // IGNORE keeps it idempotent.
 //
 // Run with:
-//   pnpm backfill:views                  # all workspaces
-//   pnpm backfill:views --workspace work # one workspace
+//   pnpm backfill:views                  # all libraries
+//   pnpm backfill:views --library work # one library
 
 import { getRawSqlite } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
-import { listWorkspaces, resolveWorkspace } from '@/server/workspaces';
+import { listLibraries, resolveLibrary } from '@/server/libraries';
 
 const USER_ID = 1;
 // Chunk size for the IN-clause used in step 3. SQLite's default
 // SQLITE_MAX_VARIABLE_NUMBER is 999; 500 leaves comfortable headroom.
 const IN_CLAUSE_CHUNK = 500;
 
-function parseWorkspace(argv: string[]): string | null {
+function parseLibrary(argv: string[]): string | null {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
+    if (a === '--library' || a === '-w') {
       const v = argv[++i];
       if (v) return v;
-    } else if (a.startsWith('--workspace=')) {
+    } else if (a.startsWith('--library=')) {
       return a.split('=')[1];
     }
   }
   return null;
 }
 
-interface WorkspaceResult {
+interface LibraryResult {
   slug: string;
   before: number;
   added: number;
@@ -53,7 +53,7 @@ function countViews(sqlite: ReturnType<typeof getRawSqlite>): number {
     .get(USER_ID) as { n: number }).n;
 }
 
-function backfillWorkspace(slug: string): WorkspaceResult {
+function backfillLibrary(slug: string): LibraryResult {
   const sqlite = getRawSqlite(slug);
   const userDb = getUserSqlite();
   const before = countViews(sqlite);
@@ -74,14 +74,14 @@ function backfillWorkspace(slug: string): WorkspaceResult {
     WHERE source = 'user'
   `).run(USER_ID);
 
-  // 3) Items in any playlist that owns them for this workspace.
+  // 3) Items in any playlist that owns them for this library.
   // playlist_items lives in user.db; we have to look up the uuids there,
   // then translate to local media_item ids here.
   const playlistRows = userDb.prepare(`
     SELECT DISTINCT pi.item_uuid
     FROM playlist_items pi
     JOIN playlists p ON p.id = pi.playlist_id
-    WHERE pi.workspace_slug = ? AND p.user_id = ?
+    WHERE pi.library_slug = ? AND p.user_id = ?
   `).all(slug, USER_ID) as Array<{ item_uuid: string }>;
 
   let byPlaylist = 0;
@@ -110,14 +110,14 @@ function backfillWorkspace(slug: string): WorkspaceResult {
 }
 
 async function main() {
-  const onlyOne = parseWorkspace(process.argv.slice(2));
-  const targets = onlyOne ? [resolveWorkspace(onlyOne)] : listWorkspaces();
+  const onlyOne = parseLibrary(process.argv.slice(2));
+  const targets = onlyOne ? [resolveLibrary(onlyOne)] : listLibraries();
 
-  console.log(`Backfilling media_views for user_id=${USER_ID} across ${targets.length} workspace(s)…\n`);
+  console.log(`Backfilling media_views for user_id=${USER_ID} across ${targets.length} library(s)…\n`);
 
   let totalAdded = 0;
   for (const ws of targets) {
-    const r = backfillWorkspace(ws.slug);
+    const r = backfillLibrary(ws.slug);
     totalAdded += r.added;
     // Per-source counts may sum to more than `added` because the same item
     // can hit multiple sources (e.g. liked AND in a playlist); INSERT OR

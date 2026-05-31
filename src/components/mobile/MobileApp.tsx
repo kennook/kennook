@@ -5,7 +5,8 @@ import { trpc } from '@/lib/trpc-client';
 import { usePageState } from '@/lib/url-state';
 import { useSyncEvent } from '@/lib/sync';
 import type { MediaItemDto } from '@/components/MediaGrid';
-import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
+import { LibrarySwitcher } from '@/components/LibrarySwitcher';
+import { KenNookLogo } from '@/components/KenNookLogo';
 import { MobileViewer } from './MobileViewer';
 
 const PAGE_SIZE = 60;
@@ -143,7 +144,7 @@ export function MobileApp() {
     await setLikeMutation.mutateAsync({
       uuid: item.uuid,
       count,
-      workspaceSlug: item.workspaceSlug,
+      librarySlug: item.librarySlug,
     });
   };
 
@@ -162,7 +163,7 @@ export function MobileApp() {
     setRotationMutation.mutate({
       uuid: item.uuid,
       rotation,
-      workspaceSlug: item.workspaceSlug,
+      librarySlug: item.librarySlug,
     });
   };
 
@@ -173,11 +174,11 @@ export function MobileApp() {
   const viewedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!selected) return;
-    const key = `${selected.workspaceSlug}:${selected.uuid}`;
+    const key = `${selected.librarySlug}:${selected.uuid}`;
     if (viewedRef.current.has(key)) return;
     viewedRef.current.add(key);
-    markViewedMutate({ uuid: selected.uuid, workspaceSlug: selected.workspaceSlug });
-  }, [selected?.uuid, selected?.workspaceSlug, markViewedMutate]);
+    markViewedMutate({ uuid: selected.uuid, librarySlug: selected.librarySlug });
+  }, [selected?.uuid, selected?.librarySlug, markViewedMutate]);
 
   // Cross-device sync: a like on another device, or a playlist mutation
   // from desktop, should be reflected here without a manual refresh.
@@ -234,9 +235,9 @@ export function MobileApp() {
               <ChevronLeftIcon />
             </button>
           ) : (
-            <h1 className="text-base font-semibold tracking-tight shrink-0">
-              <span className="text-zinc-100">ken</span>
-              <span className="text-zinc-400">nook</span>
+            <h1 className="shrink-0">
+              <KenNookLogo height={22} />
+              <span className="sr-only">KenNook</span>
             </h1>
           )}
 
@@ -271,7 +272,7 @@ export function MobileApp() {
             </div>
           )}
 
-          <WorkspaceSwitcher />
+          <LibrarySwitcher />
         </div>
       </header>
 
@@ -384,7 +385,7 @@ function Grid({
     <div className="grid grid-cols-2 gap-1 p-1">
       {items.map((item) => (
         <button
-          key={`${item.workspaceSlug}:${item.uuid}`}
+          key={`${item.librarySlug}:${item.uuid}`}
           onClick={() => onTap(item)}
           className="relative aspect-square overflow-hidden bg-zinc-900
                      active:opacity-80 transition-opacity"

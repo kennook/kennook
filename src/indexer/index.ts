@@ -6,14 +6,15 @@ import exifr from 'exifr';
 import { getRawSqlite } from '@/db/client';
 import { embedImage, floatArrayToBuffer } from '@/ai/embeddings';
 import {
-  DEFAULT_WORKSPACE_SLUG,
-  resolveWorkspace,
-  workspaceRoot,
-  workspaceThumbnailsDir,
-  type Workspace,
-} from '@/server/workspaces';
+  DEFAULT_LIBRARY_SLUG,
+  resolveLibrary,
+  libraryRoot,
+  libraryThumbnailsDir,
+  type Library,
+} from '@/server/libraries';
 import { ensureFfmpegAvailable, extractFrame, probeVideo } from './ffmpeg';
 import { emitProgress } from './progress';
+import { buildStorageRouter, relativeMediaPath, type StorageRouter } from '@/server/storage';
 
 const IMAGE_EXTS = new Set([
   '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.avif',
@@ -23,7 +24,6 @@ const VIDEO_EXTS = new Set([
 ]);
 
 const DEFAULT_USER_ID = 1;
-const DEFAULT_STORAGE_LOCATION_ID = 1;
 
 interface PipelineCtx {
   filepath: string;
@@ -34,24 +34,24 @@ interface PipelineCtx {
 }
 
 interface CliArgs {
-  workspaceSlug: string;
+  librarySlug: string;
   targetPath: string | null;
   retry: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  let workspaceSlug = DEFAULT_WORKSPACE_SLUG;
+  let librarySlug = DEFAULT_LIBRARY_SLUG;
   let targetPath: string | null = null;
   let retry = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
+    if (a === '--library' || a === '-w') {
       const v = argv[++i];
-      if (!v) throw new Error('--workspace requires a value');
-      workspaceSlug = v;
-    } else if (a.startsWith('--workspace=')) {
-      workspaceSlug = a.split('=')[1];
+      if (!v) throw new Error('--library requires a value');
+      librarySlug = v;
+    } else if (a.startsWith('--library=')) {
+      librarySlug = a.split('=')[1];
     } else if (a === '--retry') {
       retry = true;
     } else if (a === '--help' || a === '-h') {
@@ -68,13 +68,13 @@ function parseArgs(argv: string[]): CliArgs {
     printHelp();
     process.exit(1);
   }
-  return { workspaceSlug, targetPath, retry };
+  return { librarySlug, targetPath, retry };
 }
 
 function printHelp() {
   console.log(`Usage:
-  pnpm indexer [--workspace <slug>] <path>     Index a folder
-  pnpm indexer --retry [--workspace <slug>]    Retry files that failed in a prior run
+  pnpm indexer [--library <slug>] <path>     Index a folder
+  pnpm indexer --retry [--library <slug>]    Retry files that failed in a prior run
 
 Failures are persisted to data/<slug>/failed-files.json after each run.
 `);
@@ -135,7 +135,7 @@ interface FailedFile {
 }
 
 function failedFilesPath(slug: string): string {
-  return path.join(workspaceRoot(slug), 'failed-files.json');
+  return path.join(libraryRoot(slug), 'failed-files.json');
 }
 
 function readFailedFiles(slug: string): FailedFile[] {
@@ -229,8 +229,19 @@ async function generateVideoThumbnail(srcPath: string, dstPath: string) {
 }
 
 // ─── Core processing pipeline ─────────────────────────────────────────────
-async function processOne(ctx: PipelineCtx, workspaceSlug: string) {
-  const sqlite = getRawSqlite(workspaceSlug);
+async function processOne(ctx: PipelineCtx, librarySlug: string, router: StorageRouter) {
+  const sqlite = getRawSqlite(librarySlug);
+
+  // Route this file to the storage_location whose root_path is the longest
+  // matching prefix. The seeded default storage at root_path="/" acts as a
+  // catch-all so any abs path matches at least it.
+  const storage = router.findFor(ctx.filepath);
+  if (!storage) {
+    throw new Error(
+      `no storage location configured for path "${ctx.filepath}" — ` +
+      `add one via the Storage admin or seed a catch-all at root_path="/"`,
+    );
+  }
 
   const hash = await sha256OfFile(ctx.filepath);
 
@@ -241,8 +252,8 @@ async function processOne(ctx: PipelineCtx, workspaceSlug: string) {
   if (existing) return { status: 'skip-duplicate' as const, id: existing.id };
 
   const uuid = crypto.randomUUID();
-  const thumbDir = workspaceThumbnailsDir(workspaceSlug);
-  const previewDir = path.join(workspaceRoot(workspaceSlug), 'previews');
+  const thumbDir = libraryThumbnailsDir(librarySlug);
+  const previewDir = path.join(libraryRoot(librarySlug), 'previews');
   await ensureDir(thumbDir);
 
   const thumbPath = path.join(thumbDir, `${uuid}.jpg`);
@@ -279,6 +290,9 @@ async function processOne(ctx: PipelineCtx, workspaceSlug: string) {
 
   const embedding = await embedImage(thumbPath);
 
+  // media_items.path is stored relative to the storage's root_path.
+  const relPath = relativeMediaPath(storage.root_path, ctx.filepath);
+
   const insert = sqlite.prepare(`
     INSERT INTO media_items (
       uuid, user_id, storage_location_id, path, filename, kind,
@@ -296,8 +310,8 @@ async function processOne(ctx: PipelineCtx, workspaceSlug: string) {
   const result = insert.run(
     uuid,
     DEFAULT_USER_ID,
-    DEFAULT_STORAGE_LOCATION_ID,
-    ctx.filepath,
+    storage.id,
+    relPath,
     ctx.filename,
     ctx.kind,
     ctx.stat.size,
@@ -324,8 +338,11 @@ async function processOne(ctx: PipelineCtx, workspaceSlug: string) {
 }
 
 // ─── Run modes ────────────────────────────────────────────────────────────
-async function runFreshIndex(absTarget: string, workspace: Workspace, ffmpegOk: boolean) {
-  console.log(`Indexing ${absTarget} → workspace "${workspace.name}" (${workspace.slug})`);
+async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: boolean) {
+  console.log(`Indexing ${absTarget} → library "${library.name}" (${library.slug})`);
+
+  const sqlite = getRawSqlite(library.slug);
+  const router = buildStorageRouter(sqlite);
 
   let indexed = 0;
   let skipped = 0;
@@ -346,7 +363,7 @@ async function runFreshIndex(absTarget: string, workspace: Workspace, ffmpegOk: 
       continue;
     }
     try {
-      const result = await processOne(ctx, workspace.slug);
+      const result = await processOne(ctx, library.slug, router);
       if (result.status === 'indexed') {
         indexed++;
         process.stdout.write(`\r✓ ${indexed} indexed, ${skipped} skipped, ${failed} failed   `);
@@ -383,22 +400,25 @@ async function runFreshIndex(absTarget: string, workspace: Workspace, ffmpegOk: 
 
   // Persist (or clear) the failure list.
   if (failures.length > 0) {
-    writeFailedFiles(workspace.slug, failures);
-    console.log(`\n${failures.length} failure(s) saved to ${failedFilesPath(workspace.slug)}`);
-    console.log(`Retry with:  pnpm indexer --retry --workspace ${workspace.slug}`);
+    writeFailedFiles(library.slug, failures);
+    console.log(`\n${failures.length} failure(s) saved to ${failedFilesPath(library.slug)}`);
+    console.log(`Retry with:  pnpm indexer --retry --library ${library.slug}`);
   } else {
-    clearFailedFiles(workspace.slug);
+    clearFailedFiles(library.slug);
   }
 }
 
-async function runRetry(workspace: Workspace, ffmpegOk: boolean) {
-  const failures = readFailedFiles(workspace.slug);
+async function runRetry(library: Library, ffmpegOk: boolean) {
+  const failures = readFailedFiles(library.slug);
   if (failures.length === 0) {
-    console.log(`No failed files to retry for workspace "${workspace.name}" (${workspace.slug}).`);
+    console.log(`No failed files to retry for library "${library.name}" (${library.slug}).`);
     return;
   }
 
-  console.log(`Retrying ${failures.length} failed file(s) in workspace "${workspace.name}"`);
+  console.log(`Retrying ${failures.length} failed file(s) in library "${library.name}"`);
+
+  const sqlite = getRawSqlite(library.slug);
+  const router = buildStorageRouter(sqlite);
 
   const stillFailed: FailedFile[] = [];
   let succeeded = 0;
@@ -440,7 +460,7 @@ async function runRetry(workspace: Workspace, ffmpegOk: boolean) {
     };
 
     try {
-      const result = await processOne(ctx, workspace.slug);
+      const result = await processOne(ctx, library.slug, router);
       if (result.status === 'indexed' || result.status === 'skip-duplicate') {
         succeeded++;
         process.stdout.write(`\r✓ ${succeeded} succeeded, ${stillFailed.length} still failing   `);
@@ -462,18 +482,18 @@ async function runRetry(workspace: Workspace, ffmpegOk: boolean) {
   console.log(`\nRetry done in ${elapsed}s. Succeeded ${succeeded}, vanished ${vanished}, still failing ${stillFailed.length}.`);
 
   if (stillFailed.length === 0) {
-    clearFailedFiles(workspace.slug);
+    clearFailedFiles(library.slug);
     console.log('All failures resolved — failure list cleared.');
   } else {
-    writeFailedFiles(workspace.slug, stillFailed);
-    console.log(`${stillFailed.length} still failing. Re-run \`pnpm indexer --retry --workspace ${workspace.slug}\` to try again.`);
+    writeFailedFiles(library.slug, stillFailed);
+    console.log(`${stillFailed.length} still failing. Re-run \`pnpm indexer --retry --library ${library.slug}\` to try again.`);
   }
 }
 
 // ─── Entry ────────────────────────────────────────────────────────────────
 async function main() {
-  const { workspaceSlug, targetPath, retry } = parseArgs(process.argv.slice(2));
-  const workspace = resolveWorkspace(workspaceSlug);
+  const { librarySlug, targetPath, retry } = parseArgs(process.argv.slice(2));
+  const library = resolveLibrary(librarySlug);
 
   const ffmpegOk = await ensureFfmpegAvailable();
   if (!ffmpegOk) {
@@ -481,7 +501,7 @@ async function main() {
   }
 
   if (retry) {
-    await runRetry(workspace, ffmpegOk);
+    await runRetry(library, ffmpegOk);
     return;
   }
 
@@ -491,7 +511,7 @@ async function main() {
     process.exit(1);
   }
 
-  await runFreshIndex(absTarget, workspace, ffmpegOk);
+  await runFreshIndex(absTarget, library, ffmpegOk);
 }
 
 main().catch((err) => {

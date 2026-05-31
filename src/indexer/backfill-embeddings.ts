@@ -2,13 +2,13 @@
 // media_embeddings, generate a CLIP embedding from the thumbnail and insert it.
 //
 // Run with:
-//   pnpm backfill:vectors                  # personal workspace
-//   pnpm backfill:vectors --workspace work # named workspace
+//   pnpm backfill:vectors                  # personal library
+//   pnpm backfill:vectors --library work # named library
 
 import fs from 'node:fs';
 import { getRawSqlite } from '@/db/client';
 import { embedImage, floatArrayToBuffer } from '@/ai/embeddings';
-import { DEFAULT_WORKSPACE_SLUG, resolveWorkspace } from '@/server/workspaces';
+import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 
 interface Row {
   id: number;
@@ -16,24 +16,24 @@ interface Row {
   thumbnail_path: string | null;
 }
 
-function parseWorkspace(argv: string[]): string {
+function parseLibrary(argv: string[]): string {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--workspace' || a === '-w') {
+    if (a === '--library' || a === '-w') {
       const v = argv[++i];
       if (v) return v;
-    } else if (a.startsWith('--workspace=')) {
+    } else if (a.startsWith('--library=')) {
       return a.split('=')[1];
     }
   }
-  return DEFAULT_WORKSPACE_SLUG;
+  return DEFAULT_LIBRARY_SLUG;
 }
 
 async function main() {
-  const workspace = resolveWorkspace(parseWorkspace(process.argv.slice(2)));
-  const sqlite = getRawSqlite(workspace.slug);
+  const library = resolveLibrary(parseLibrary(process.argv.slice(2)));
+  const sqlite = getRawSqlite(library.slug);
 
-  console.log(`Backfilling embeddings in workspace "${workspace.name}" (${workspace.slug})`);
+  console.log(`Backfilling embeddings in library "${library.name}" (${library.slug})`);
 
   const missing = sqlite
     .prepare(

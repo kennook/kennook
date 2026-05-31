@@ -75,6 +75,49 @@ export async function transcribe(samples: Float32Array): Promise<string> {
   return text.trim();
 }
 
+export interface TranscriptSegment {
+  /** ms into the audio timeline. */
+  startMs: number;
+  /** ms into the audio timeline. */
+  endMs: number;
+  text: string;
+}
+
+/**
+ * Whisper variant that returns per-segment timestamps. Used by the video
+ * transcript enrichment to write per-chunk media_text_occurrences rows
+ * so search can deep-link to "match at 0:45".
+ *
+ * Long audio is chunked internally by transformers.js — we just feed the
+ * whole Float32Array and let it segment.
+ */
+export async function transcribeWithTimestamps(samples: Float32Array): Promise<{
+  text: string;
+  segments: TranscriptSegment[];
+}> {
+  const asr = await getTranscriber();
+  // transformers.js whisper supports `return_timestamps: true` which returns
+  // a `chunks` array of `{ timestamp: [start, end], text }`. The bare types
+  // from the package don't reflect the option, so we widen via `unknown`.
+  const out = (await (asr as unknown as (
+    s: Float32Array,
+    opts: Record<string, unknown>,
+  ) => Promise<{ text: string; chunks?: Array<{ timestamp: [number, number]; text: string }> }>)
+    (samples, { return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 }));
+
+  const text = (out.text ?? '').trim();
+  const segments: TranscriptSegment[] = (out.chunks ?? [])
+    .filter((c) => Array.isArray(c.timestamp) && c.text)
+    .map((c) => ({
+      startMs: Math.round((c.timestamp[0] ?? 0) * 1000),
+      endMs: Math.round((c.timestamp[1] ?? c.timestamp[0] ?? 0) * 1000),
+      text: c.text.trim(),
+    }))
+    .filter((s) => s.text.length > 0);
+
+  return { text, segments };
+}
+
 // Heuristics for what counts as a tag-worthy noun. Compromise sometimes
 // catches sentence filler ("thing", "stuff", "kind", "lot") — strip those.
 const TAG_STOPWORDS = new Set([

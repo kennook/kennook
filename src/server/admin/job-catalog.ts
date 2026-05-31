@@ -11,7 +11,7 @@
  * in the catalog UI.
  */
 
-export type JobOptionType = 'workspace' | 'number' | 'boolean' | 'text';
+export type JobOptionType = 'library' | 'number' | 'boolean' | 'text';
 
 export interface JobOption {
   /** CLI flag name without the `--` prefix (e.g. 'limit', 'reset').
@@ -48,23 +48,31 @@ export interface JobDefinition {
   label: string;
   description: string;
   category: 'index' | 'backfill' | 'enrich' | 'aggregate';
-  /** Options the script accepts. `workspace` always rendered as a
-   *  workspace picker; other types as appropriate inputs. */
+  /** Options the script accepts. `library` always rendered as a
+   *  library picker; other types as appropriate inputs. */
   options: JobOption[];
   /** When `true`, this job tends to be long-running (Florence-2 over
    *  thousands of items, etc.); UI surfaces a warning. */
   longRunning?: boolean;
+  /** Rough throughput class shown in the run menu when a precise estimate
+   *  can't be computed. */
+  speed?: 'fast' | 'medium' | 'slow' | 'very-slow';
+  /** Rough seconds per item on Apple Silicon, for the "~N min for M items"
+   *  estimate. Multiplied by the pending count. Omit for one-shot jobs
+   *  (clustering) or jobs whose item count isn't knowable (indexer). */
+  secPerItem?: number;
 }
 
 export const JOB_CATALOG: JobDefinition[] = [
   {
     id: 'indexer',
+    speed: 'medium',
     script: 'src/indexer/index.ts',
     label: 'Indexer',
-    description: 'Scan a folder for media files, create database rows, generate thumbnails. Provide either a path to index or enable "retry" to re-process previously-failed files for the chosen workspace.',
+    description: 'Scan a folder for media files, create database rows, generate thumbnails. Provide either a path to index or enable "retry" to re-process previously-failed files for the chosen library.',
     category: 'index',
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
       {
         flag: 'path', type: 'text', positional: true, label: 'Folder to index',
         help: 'Absolute path to the folder to scan. Leave empty if using Retry.',
@@ -72,82 +80,133 @@ export const JOB_CATALOG: JobDefinition[] = [
       },
       {
         flag: 'retry', type: 'boolean', label: 'Retry previously-failed files',
-        help: 'Reads data/<workspace>/failed-files.json from the last run.',
+        help: 'Reads data/<library>/failed-files.json from the last run.',
       },
     ],
   },
 
   {
     id: 'backfill:vectors',
+    speed: 'medium', secPerItem: 0.5,
     script: 'src/indexer/backfill-embeddings.ts',
     label: 'Backfill — Vectors',
     description: 'Generate CLIP/SigLIP embeddings for items missing them. Required for visual search.',
     category: 'backfill',
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
     ],
   },
   {
     id: 'backfill:previews',
+    speed: 'medium', secPerItem: 0.3,
     script: 'src/indexer/backfill-previews.ts',
     label: 'Backfill — Previews',
     description: 'Generate 2048px JPEG previews for photos missing them. Required for fullscreen viewing.',
     category: 'backfill',
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
     ],
   },
   {
     id: 'backfill:views',
+    speed: 'fast', secPerItem: 0.02,
     script: 'src/indexer/backfill-views.ts',
     label: 'Backfill — Views',
     description: 'Mark items as viewed for the default user based on past interactions (likes, user tags, playlist adds).',
     category: 'backfill',
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace (omit for all)' },
+      { flag: 'library', type: 'library', label: 'Library (omit for all)' },
     ],
   },
 
   {
     id: 'enrich:text',
+    speed: 'slow', secPerItem: 3,
     script: 'src/indexer/enrich.ts',
     label: 'Enrich — Text (VLM)',
     description: 'Florence-2 over each item: produces ai_caption, ocr_text, and media_tags. Heaviest enrichment pass.',
     category: 'enrich',
     longRunning: true,
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
       { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap items per run (testing)' },
       { flag: 'force', type: 'boolean', label: 'Force re-enrich items already done' },
     ],
   },
   {
+    id: 'enrich:video-text',
+    speed: 'very-slow', secPerItem: 30,
+    script: 'src/indexer/enrich-video-text.ts',
+    label: 'Enrich — Video Text (multi-frame OCR)',
+    description: 'Scene-change extraction + Florence-2 OCR across each video. Produces timestamped media_text_occurrences and 256px frame thumbs for "match at 0:45" search results.',
+    category: 'enrich',
+    longRunning: true,
+    options: [
+      { flag: 'library', type: 'library', label: 'Library' },
+      { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap videos per run (testing)' },
+      { flag: 'reset', type: 'boolean', label: 'Re-process every video (drops existing occurrences)' },
+      { flag: 'threshold', type: 'number', label: 'Scene threshold', help: 'Default 0.3; higher = fewer frames' },
+      { flag: 'max-frames', type: 'number', label: 'Max frames per video', help: 'Default 500; caps very long videos' },
+    ],
+  },
+  {
+    id: 'enrich:transcript',
+    speed: 'very-slow', secPerItem: 20,
+    script: 'src/indexer/enrich-transcript.ts',
+    label: 'Enrich — Transcript (audio)',
+    description: 'Whisper transcription per video with chunk-level timestamps. Writes media_text_occurrences (source=transcript) and a deduped rollup to media_items.transcript.',
+    category: 'enrich',
+    longRunning: true,
+    options: [
+      { flag: 'library', type: 'library', label: 'Library' },
+      { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap videos per run (testing)' },
+      { flag: 'reset', type: 'boolean', label: 'Re-transcribe every video' },
+    ],
+  },
+  {
+    id: 'enrich:transcript-tags',
+    speed: 'very-slow', secPerItem: 6,
+    script: 'src/indexer/enrich-transcript-tags.ts',
+    label: 'Enrich — Transcript Tags (LLM)',
+    description: 'Local LLM derives topical tags from each video transcript (media_items.transcript) and writes them to media_tags with source=transcript. Runs after enrich:transcript; reads stored text, no media access needed.',
+    category: 'enrich',
+    longRunning: true,
+    options: [
+      { flag: 'library', type: 'library', label: 'Library' },
+      { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap transcripts per run (testing)' },
+      { flag: 'reset', type: 'boolean', label: 'Re-tag every transcript' },
+    ],
+  },
+  {
     id: 'enrich:faces',
+    speed: 'medium', secPerItem: 1,
     script: 'src/indexer/face-enrich.ts',
     label: 'Enrich — Faces',
     description: 'Detect faces and compute 128-d embeddings. Required before clustering (enrich:people).',
     category: 'enrich',
     longRunning: true,
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
       { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap items per run (testing)' },
       { flag: 'reset', type: 'boolean', label: 'Re-process items already done' },
     ],
   },
   {
     id: 'enrich:sensitive',
+    speed: 'medium', secPerItem: 0.5,
     script: 'src/indexer/sensitive-enrich.ts',
     label: 'Enrich — Sensitive',
     description: 'Score every photo for NSFW + violence. Continuous [0,1] scores stored on the item.',
     category: 'enrich',
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
       { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap items per run (testing)' },
       { flag: 'reset', type: 'boolean', label: 'Re-score everything' },
     ],
   },
   {
     id: 'enrich:people',
+    speed: 'fast',
     script: 'src/indexer/cluster-faces.ts',
     label: 'Enrich — People (Cluster)',
     description: 'Cluster detected face embeddings into people. Run after enrich:faces.',
@@ -168,7 +227,7 @@ export const JOB_CATALOG: JobDefinition[] = [
     category: 'aggregate',
     longRunning: true,
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
     ],
   },
   {
@@ -179,7 +238,7 @@ export const JOB_CATALOG: JobDefinition[] = [
     description: 'Runs backfill:vectors → backfill:previews → backfill:views in order.',
     category: 'aggregate',
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
     ],
   },
   {
@@ -187,15 +246,44 @@ export const JOB_CATALOG: JobDefinition[] = [
     script: null,
     compose: true,
     label: 'Setup — Full pipeline',
-    description: 'indexer → backfill:all → enrich:all. Use this on a brand-new workspace.',
+    description: 'indexer → backfill:all → enrich:all. Use this on a brand-new library.',
     category: 'aggregate',
     longRunning: true,
     options: [
-      { flag: 'workspace', type: 'workspace', label: 'Workspace' },
+      { flag: 'library', type: 'library', label: 'Library' },
     ],
   },
 ];
 
 export function getJobDefinition(id: string): JobDefinition | null {
   return JOB_CATALOG.find((j) => j.id === id) ?? null;
+}
+
+// ─── Aggregate expansion ─────────────────────────────────────────────────────
+// The admin UI no longer enqueues composite jobs as a single shell-chained
+// process. Instead it expands them into discrete steps that the queue runs
+// one at a time — so each step is its own visible row (status, progress,
+// pause point), and the pipeline is legible in the sidebar.
+//
+// Order matters: indexer → backfill → enrich, and within enrich, faces must
+// precede people (clustering needs the embeddings). The CLI `pnpm enrich:all`
+// still runs via run-sequence for terminal use.
+export const AGGREGATE_STEPS: Record<string, string[]> = {
+  'backfill:all': ['backfill:vectors', 'backfill:previews', 'backfill:views'],
+  'enrich:all': [
+    'enrich:text', 'enrich:video-text', 'enrich:transcript', 'enrich:transcript-tags',
+    'enrich:faces', 'enrich:sensitive', 'enrich:people',
+  ],
+  'setup': [
+    'indexer',
+    'backfill:vectors', 'backfill:previews', 'backfill:views',
+    'enrich:text', 'enrich:video-text', 'enrich:transcript',
+    'enrich:faces', 'enrich:sensitive', 'enrich:people',
+  ],
+};
+
+/** Expand an aggregate command into its ordered discrete steps. Returns
+ *  `[command]` unchanged for non-aggregates. */
+export function expandCommand(command: string): string[] {
+  return AGGREGATE_STEPS[command] ?? [command];
 }

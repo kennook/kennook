@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
  *
  * Why not WebSockets: this traffic is one-way (server → client). SSE is a
  * regular HTTP response with no upgrade handshake, no framing layer, no
- * ping/pong, and reconnects without code. For Kennook's broadcast pattern
+ * ping/pong, and reconnects without code. For KenNook's broadcast pattern
  * it's lighter to write and lighter at runtime.
  */
 export async function GET(req: NextRequest) {

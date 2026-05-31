@@ -6,7 +6,7 @@
  *
  * The client is responsible for actually committing the tags via the
  * existing `media.addUserTag` tRPC mutation — that keeps cache updates,
- * cross-tab sync events, and workspace/user resolution in one place.
+ * cross-tab sync events, and library/user resolution in one place.
  *
  * Audio flow:
  *   request body (webm/mp4) → tmp file

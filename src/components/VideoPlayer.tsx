@@ -32,8 +32,16 @@ interface Props {
    *  slideshow to auto-advance past a video to the next playlist item. */
   onEnded?: () => void;
   /** Stable identifier for per-video state (progress memory). If omitted,
-   *  progress persistence is disabled. Use `"<workspaceSlug>:<itemUuid>"`. */
+   *  progress persistence is disabled. Use `"<librarySlug>:<itemUuid>"`. */
   progressKey?: string;
+  /** Initial seek position in ms. Used by search-result deep-links so the
+   *  viewer opens at the match timestamp. Takes precedence over saved
+   *  progress when both are present. */
+  initialTimeMs?: number | null;
+  /** Scale the bottom controls bar on large displays — same `kn-chrome-scaled`
+   *  zoom that the MediaViewer chrome uses. Caller sets true in maxed mode so
+   *  the preview-modal video keeps its compact controls. */
+  scaled?: boolean;
 }
 
 /**
@@ -57,11 +65,13 @@ export function VideoPlayer({
   autoPlay = true,
   className = '',
   videoClassName = 'w-full h-full',
+  scaled = false,
   videoStyle,
   onPrev,
   onNext,
   onEnded,
   progressKey,
+  initialTimeMs,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playedRef = useRef<HTMLDivElement>(null);
@@ -91,6 +101,11 @@ export function VideoPlayer({
   const effectiveMuted = muted || forceMute;
   const [controlsVisible, setControlsVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
+  // True while the cursor is sitting on the controls bar. Holds the idle
+  // timer open — without this, resting on a button (no mousemove fires) lets
+  // the bar hide right under the cursor, and the next click falls through the
+  // bar's pointer-events-none state to the video, toggling play.
+  const hoveredControlsRef = useRef(false);
 
   // Small stack of pre-seek positions so users can undo an accidental jump.
   // Pushed BEFORE each deliberate seek (skip, jump-to-%, scrub, drag, etc.),
@@ -157,7 +172,7 @@ export function VideoPlayer({
   //
   // When the user navigates away and comes back to a video, resume where
   // they left off (within sanity bounds). Persistence is per progressKey,
-  // not per src — same video opened in different workspaces would have
+  // not per src — same video opened in different libraries would have
   // different keys, but the same item across sessions is consistent.
   const lastSaveRef = useRef(0);
 
@@ -297,7 +312,9 @@ export function VideoPlayer({
   function showControls() {
     setControlsVisible(true);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    if (playing) {
+    // Don't arm the hide timer while the cursor is parked on the controls
+    // bar itself; the user is clearly looking at them.
+    if (playing && !hoveredControlsRef.current) {
       idleTimerRef.current = window.setTimeout(() => setControlsVisible(false), 2500);
     }
   }
@@ -331,6 +348,14 @@ export function VideoPlayer({
         onLoadedMetadata={(e) => {
           const dur = e.currentTarget.duration;
           setDuration(dur);
+          // Initial seek wins over saved progress — search-result deep-links
+          // (?t=ms) explicitly point at a moment the user wants to see; the
+          // resume-progress UX would otherwise yank them elsewhere.
+          if (initialTimeMs != null && Number.isFinite(initialTimeMs)) {
+            const target = Math.max(0, Math.min(dur - 0.1, initialTimeMs / 1000));
+            e.currentTarget.currentTime = target;
+            return;
+          }
           // Resume position, if any, and if it falls within sane bounds.
           if (progressKey) {
             const saved = getVideoProgress(progressKey);
@@ -355,14 +380,37 @@ export function VideoPlayer({
       />
 
       <div
+        onMouseEnter={() => {
+          hoveredControlsRef.current = true;
+          if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
+          setControlsVisible(true);
+        }}
+        onMouseLeave={() => {
+          hoveredControlsRef.current = false;
+          // Resume normal auto-hide once the cursor leaves the bar.
+          showControls();
+        }}
         className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent
-                    px-4 pb-3 pt-12 transition-opacity duration-200
-                    ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                    px-4 pb-3 pt-12 transition-opacity duration-200 will-change-[opacity]
+                    ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}
+                    ${scaled ? 'kn-video-controls-scaled' : ''}`}
       >
         <div
           onMouseDown={startSeekDrag}
-          className="relative h-1.5 hover:h-2 transition-all cursor-pointer mb-3
-                     bg-zinc-700/60 rounded-full"
+          // ::before extends the clickable area 15px above/below the visible
+          // bar — events on the pseudo bubble to this host, so the existing
+          // handler catches them, and getBoundingClientRect() still reports
+          // the visible bar's width so seek math is unchanged. `mb-5` widens
+          // the gap to the button row so the 15px slop doesn't intrude on
+          // button hit areas.
+          // Grow on hover via scaleY (transform — GPU, no layout) instead of a
+          // height change (which forced Layout + Paint each frame of the
+          // transition). transition-transform also avoids the property-spew of
+          // transition-all. The thumb + fills inside scale along with the bar,
+          // which on a 6→9px track is visually indistinguishable.
+          className="relative h-1.5 hover:scale-y-150 origin-center cursor-pointer mb-6
+                     bg-zinc-700/60 rounded-full transition-transform
+                     before:content-[''] before:absolute before:-inset-y-[20px] before:inset-x-0"
         >
           <div
             ref={bufferedRef}
@@ -437,7 +485,11 @@ export function VideoPlayer({
 function ControlButton({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
   return (
     <button
-      onClick={onClick}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      // Fast double-clicks on seek/play buttons would otherwise raise a native
+      // `dblclick` whose target can be the underlying video (cursor drift), and
+      // some browsers react to that — swallow it at the button.
+      onDoubleClick={(e) => e.stopPropagation()}
       title={title}
       aria-label={title}
       className="text-zinc-100 hover:text-white p-1.5 rounded transition hover:bg-white/10"

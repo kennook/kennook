@@ -30,6 +30,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { VIEWER_THUMB_H } from '@/lib/viewer-thumb';
 
 interface Props {
   /** Static image source — same URL used elsewhere as the preview. */
@@ -68,7 +69,6 @@ interface Props {
   className?: string;
 }
 
-const THUMB_MAX = 140;
 // Drag interaction: clicks outside the rect re-center it (and start a
 // drag from there). The threshold avoids treating a tiny mouse twitch
 // during a click as a jump.
@@ -98,8 +98,13 @@ export function ViewportMinimap({
 
   if (!Number.isFinite(contentRatio) || contentRatio <= 0) return null;
 
-  const thumbW = contentRatio >= 1 ? THUMB_MAX : THUMB_MAX * contentRatio;
-  const thumbH = contentRatio >= 1 ? THUMB_MAX / contentRatio : THUMB_MAX;
+  // Height is shared with the reel film-strip via VIEWER_THUMB_H so the
+  // minimap and the tiles sit at the same height and share a baseline. Width
+  // tracks the active item's aspect — landscape items end up wider than a
+  // reel tile and portrait items narrower, which is the correct encoding for
+  // a "this is the item you're looking at" widget.
+  const thumbH = VIEWER_THUMB_H;
+  const thumbW = VIEWER_THUMB_H * contentRatio;
   const hasPan = maxX > 0 || maxY > 0;
 
   // ── Inactive state ──────────────────────────────────────────────────

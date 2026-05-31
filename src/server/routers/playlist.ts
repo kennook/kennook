@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { router, publicProcedure } from '@/server/trpc';
 import { getUserSqlite } from '@/db/user-client';
 import { getRawSqlite } from '@/db/client';
-import { listWorkspaces } from '@/server/workspaces';
+import { listLibraries } from '@/server/libraries';
 import { LIKE_COUNT_EXPR, markItemViewedByUuid } from './media';
 import { publishToUser } from '@/server/sync-broker';
 
@@ -11,7 +11,7 @@ interface PlaylistRow {
   uuid: string;
   name: string;
   description: string | null;
-  cover_workspace: string | null;
+  cover_library: string | null;
   cover_item_uuid: string | null;
   created_at: number;
   updated_at: number;
@@ -19,7 +19,7 @@ interface PlaylistRow {
 
 interface PlaylistItemRow {
   playlist_id: number;
-  workspace_slug: string;
+  library_slug: string;
   item_uuid: string;
   position: number;
   added_at: number;
@@ -46,7 +46,7 @@ interface MediaItemRow {
 }
 
 const itemRefSchema = z.object({
-  workspaceSlug: z.string(),
+  librarySlug: z.string(),
   itemUuid: z.string(),
 });
 
@@ -55,7 +55,7 @@ export const playlistRouter = router({
   list: publicProcedure.query(({ ctx }) => {
     const db = getUserSqlite();
     const rows = db.prepare(`
-      SELECT p.id, p.uuid, p.name, p.description, p.cover_workspace, p.cover_item_uuid,
+      SELECT p.id, p.uuid, p.name, p.description, p.cover_library, p.cover_item_uuid,
              p.created_at, p.updated_at,
              (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = p.id) AS item_count
       FROM playlists p
@@ -66,7 +66,7 @@ export const playlistRouter = router({
     return rows.map(rowToPlaylistSummary);
   }),
 
-  // ── Get one playlist + its items (resolved cross-workspace). ──────────
+  // ── Get one playlist + its items (resolved cross-library). ──────────
   get: publicProcedure
     .input(z.object({
       uuid: z.string(),
@@ -77,7 +77,7 @@ export const playlistRouter = router({
     .query(({ input, ctx }) => {
       const db = getUserSqlite();
       const playlist = db.prepare(`
-        SELECT id, uuid, name, description, cover_workspace, cover_item_uuid,
+        SELECT id, uuid, name, description, cover_library, cover_item_uuid,
                created_at, updated_at
         FROM playlists WHERE uuid = ? AND user_id = ?
       `).get(input.uuid, ctx.userId) as unknown as PlaylistRow | undefined;
@@ -89,27 +89,27 @@ export const playlistRouter = router({
 
       const effectiveOffset = input.cursor ?? input.offset;
       const items = db.prepare(`
-        SELECT playlist_id, workspace_slug, item_uuid, position, added_at
+        SELECT playlist_id, library_slug, item_uuid, position, added_at
         FROM playlist_items
         WHERE playlist_id = ?
         ORDER BY position ASC
         LIMIT ? OFFSET ?
       `).all(playlist.id, input.limit, effectiveOffset) as unknown as PlaylistItemRow[];
 
-      // Resolve each item by querying its workspace's DB. Items whose
-      // workspace is no longer in the registry or whose item is missing
+      // Resolve each item by querying its library's DB. Items whose
+      // library is no longer in the registry or whose item is missing
       // are returned as `null` so the client can show a "missing" state.
-      const validWorkspaces = new Set(listWorkspaces().map((w) => w.slug));
+      const validLibraries = new Set(listLibraries().map((w) => w.slug));
       const resolved = items.map((it) => {
-        if (!validWorkspaces.has(it.workspace_slug)) {
+        if (!validLibraries.has(it.library_slug)) {
           return {
             ...refToBase(it),
             available: false,
-            reason: 'workspace removed' as const,
+            reason: 'library removed' as const,
           };
         }
         try {
-          const sqlite = getRawSqlite(it.workspace_slug);
+          const sqlite = getRawSqlite(it.library_slug);
           // LIKE_COUNT_EXPR's `?` is the user_id (must come first since the
           // subquery lives in SELECT before WHERE's placeholder).
           const row = sqlite.prepare(`
@@ -130,13 +130,13 @@ export const playlistRouter = router({
           return {
             ...refToBase(it),
             available: true as const,
-            item: rowToDto(row, it.workspace_slug),
+            item: rowToDto(row, it.library_slug),
           };
         } catch {
           return {
             ...refToBase(it),
             available: false,
-            reason: 'workspace error' as const,
+            reason: 'library error' as const,
           };
         }
       });
@@ -166,7 +166,7 @@ export const playlistRouter = router({
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(uuid, ctx.userId, input.name, input.description ?? null, now, now);
       const row = db.prepare(`
-        SELECT id, uuid, name, description, cover_workspace, cover_item_uuid,
+        SELECT id, uuid, name, description, cover_library, cover_item_uuid,
                created_at, updated_at
         FROM playlists WHERE uuid = ? AND user_id = ?
       `).get(uuid, ctx.userId) as unknown as PlaylistRow;
@@ -236,7 +236,7 @@ export const playlistRouter = router({
 
       const insert = db.prepare(`
         INSERT OR IGNORE INTO playlist_items
-          (playlist_id, workspace_slug, item_uuid, position, added_at)
+          (playlist_id, library_slug, item_uuid, position, added_at)
         VALUES (?, ?, ?, ?, ?)
       `);
       const updatePlaylistTimestamp = db.prepare(
@@ -244,24 +244,24 @@ export const playlistRouter = router({
       );
       const setCoverIfMissing = db.prepare(`
         UPDATE playlists
-        SET cover_workspace = ?, cover_item_uuid = ?
+        SET cover_library = ?, cover_item_uuid = ?
         WHERE id = ? AND (cover_item_uuid IS NULL OR cover_item_uuid = '')
       `);
 
       let added = 0;
       let nextPos = maxPos + 1;
       for (const it of input.items) {
-        const res = insert.run(playlist.id, it.workspaceSlug, it.itemUuid, nextPos, Date.now());
+        const res = insert.run(playlist.id, it.librarySlug, it.itemUuid, nextPos, Date.now());
         if (res.changes > 0) {
           added++;
           nextPos++;
           // First item added becomes the cover (only if no cover yet).
-          if (added === 1) setCoverIfMissing.run(it.workspaceSlug, it.itemUuid, playlist.id);
+          if (added === 1) setCoverIfMissing.run(it.librarySlug, it.itemUuid, playlist.id);
         }
         // Adding to a playlist counts as interaction — even items that were
         // already in the playlist get a view recorded (it was a deliberate
-        // action). Cheap upsert; cross-workspace safe.
-        markItemViewedByUuid(it.workspaceSlug, ctx.userId, it.itemUuid);
+        // action). Cheap upsert; cross-library safe.
+        markItemViewedByUuid(it.librarySlug, ctx.userId, it.itemUuid);
       }
       updatePlaylistTimestamp.run(Date.now(), playlist.id);
       publishToUser(ctx.userId, {
@@ -286,11 +286,11 @@ export const playlistRouter = router({
 
       const stmt = db.prepare(`
         DELETE FROM playlist_items
-        WHERE playlist_id = ? AND workspace_slug = ? AND item_uuid = ?
+        WHERE playlist_id = ? AND library_slug = ? AND item_uuid = ?
       `);
       let removed = 0;
       for (const it of input.items) {
-        const res = stmt.run(playlist.id, it.workspaceSlug, it.itemUuid);
+        const res = stmt.run(playlist.id, it.librarySlug, it.itemUuid);
         if (res.changes > 0) removed++;
       }
       db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?')
@@ -311,8 +311,8 @@ function rowToPlaylistSummary(row: PlaylistRow & { item_count: number }) {
     name: row.name,
     description: row.description,
     itemCount: row.item_count,
-    coverThumbnailUrl: row.cover_item_uuid && row.cover_workspace
-      ? `/api/thumbnails/${row.cover_item_uuid}?ws=${row.cover_workspace}`
+    coverThumbnailUrl: row.cover_item_uuid && row.cover_library
+      ? `/api/thumbnails/${row.cover_item_uuid}?lib=${row.cover_library}`
       : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -321,15 +321,15 @@ function rowToPlaylistSummary(row: PlaylistRow & { item_count: number }) {
 
 function refToBase(ref: PlaylistItemRow) {
   return {
-    workspaceSlug: ref.workspace_slug,
+    librarySlug: ref.library_slug,
     itemUuid: ref.item_uuid,
     position: ref.position,
     addedAt: ref.added_at,
   };
 }
 
-function rowToDto(row: MediaItemRow, workspaceSlug: string) {
-  const qs = `?ws=${workspaceSlug}`;
+function rowToDto(row: MediaItemRow, librarySlug: string) {
+  const qs = `?lib=${librarySlug}`;
   return {
     id: row.id,
     uuid: row.uuid,
@@ -347,7 +347,7 @@ function rowToDto(row: MediaItemRow, workspaceSlug: string) {
     rotation: row.rotation ?? 0,
     nsfwScore: row.nsfw_score ?? 0,
     violenceScore: row.violence_score ?? 0,
-    workspaceSlug,
+    librarySlug,
     thumbnailUrl: `/api/thumbnails/${row.uuid}${qs}`,
     previewUrl: `/api/preview/${row.uuid}${qs}`,
     mediaUrl: `/api/media/${row.uuid}${qs}`,

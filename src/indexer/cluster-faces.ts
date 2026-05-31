@@ -1,4 +1,4 @@
-// Cluster face embeddings into people. Cross-workspace.
+// Cluster face embeddings into people. Cross-library.
 //
 // Algorithm: union-find with a same-person edge whenever Euclidean
 // distance between two 128-d face-api descriptors falls below
@@ -12,7 +12,7 @@
 //
 // Performance: naive O(n²) pairwise distance — fine up to ~30 k faces
 // (single-digit minutes on a modern laptop). Past that, the upgrade is
-// vec0-based ANN: for each face, query the workspace's media_face_embeddings
+// vec0-based ANN: for each face, query the library's media_face_embeddings
 // for the top-K nearest neighbours and only union against those. Same
 // invariants, dramatically smaller constant.
 //
@@ -22,7 +22,7 @@
 //   pnpm enrich:people --reset               # drop all assignments + people
 //                                              and re-cluster from scratch
 
-import { listWorkspaces } from '@/server/workspaces';
+import { listLibraries } from '@/server/libraries';
 import { getRawSqlite, type Statement } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
 import { emitProgress } from './progress';
@@ -53,7 +53,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 interface FaceRow {
-  workspaceSlug: string;
+  librarySlug: string;
   faceId: number;
   embedding: Float32Array;
   personId: number | null;
@@ -75,7 +75,7 @@ async function main() {
 
   if (args.reset) {
     console.log('Reset: dropping all person assignments + people rows.');
-    for (const ws of listWorkspaces()) {
+    for (const ws of listLibraries()) {
       getRawSqlite(ws.slug).exec(`UPDATE media_faces SET person_id = NULL`);
     }
     userDb.exec(`DELETE FROM people WHERE user_id = ${USER_ID}`);
@@ -83,9 +83,9 @@ async function main() {
 
   emitProgress({ step: 'Enrich: people', label: 'loading face embeddings' });
 
-  // ── Load every face across every workspace ─────────────────────────
+  // ── Load every face across every library ─────────────────────────
   const faces: FaceRow[] = [];
-  for (const ws of listWorkspaces()) {
+  for (const ws of listLibraries()) {
     const sqlite = getRawSqlite(ws.slug);
     const rows = sqlite.prepare(`
       SELECT mf.id          AS face_id,
@@ -105,7 +105,7 @@ async function main() {
       // Wrap (don't copy) — caller doesn't mutate.
       const emb = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, EMBEDDING_DIM);
       faces.push({
-        workspaceSlug: ws.slug,
+        librarySlug: ws.slug,
         faceId: r.face_id,
         embedding: emb,
         personId: r.person_id,
@@ -114,7 +114,7 @@ async function main() {
     }
   }
 
-  console.log(`Loaded ${faces.length} face(s) across ${listWorkspaces().length} workspace(s).`);
+  console.log(`Loaded ${faces.length} face(s) across ${listLibraries().length} library(s).`);
   emitProgress({
     step: 'Enrich: people',
     current: faces.length,
@@ -180,11 +180,11 @@ async function main() {
   // that id (smallest wins when multiple — stable, predictable). Else
   // create a new people row.
   const insertPerson = userDb.prepare(`
-    INSERT INTO people (uuid, user_id, face_count, cover_face_id, cover_workspace_slug)
+    INSERT INTO people (uuid, user_id, face_count, cover_face_id, cover_library_slug)
     VALUES (?, ?, ?, ?, ?)
     RETURNING id
   `);
-  // One prepared UPDATE per workspace — cached by slug to avoid re-prepping
+  // One prepared UPDATE per library — cached by slug to avoid re-prepping
   // inside the inner loop.
   const updateFaceStmts = new Map<string, Statement>();
   const getUpdateFace = (slug: string): Statement => {
@@ -223,7 +223,7 @@ async function main() {
         USER_ID,
         indices.length,
         cover.faceId,
-        cover.workspaceSlug,
+        cover.librarySlug,
       ) as { id: number };
       personId = res.id;
       newPeople++;
@@ -232,16 +232,16 @@ async function main() {
     for (const fi of indices) {
       const face = faces[fi];
       if (face.personId === personId) continue;
-      getUpdateFace(face.workspaceSlug).run(personId, face.faceId);
+      getUpdateFace(face.librarySlug).run(personId, face.faceId);
       updatedFaces++;
     }
   }
 
-  // ── Recompute face_count per person across all workspaces ──────────
+  // ── Recompute face_count per person across all libraries ──────────
   // Cluster merges can leave older person rows orphaned (their faces
   // moved to a different person id). Recount + delete zeroes.
   const counts = new Map<number, number>();
-  for (const ws of listWorkspaces()) {
+  for (const ws of listLibraries()) {
     const rows = getRawSqlite(ws.slug).prepare(`
       SELECT person_id AS pid, COUNT(*) AS n FROM media_faces
       WHERE person_id IS NOT NULL

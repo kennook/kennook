@@ -24,7 +24,17 @@ export const users = sqliteTable('users', {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storage_locations — BYOC: local disk, S3, R2, etc.
+//
+// config.root_path holds the absolute filesystem root for `type:'local'`
+// (e.g. "/Volumes/Expansion"). media_items.path is stored *relative* to this
+// root so relocations are O(1): point the storage at a new root and every
+// row beneath it follows automatically.
 // ─────────────────────────────────────────────────────────────────────────────
+export type StorageConfig = {
+  /** Absolute filesystem path that media_items.path values are relative to. */
+  root_path: string;
+};
+
 export const storageLocations = sqliteTable('storage_locations', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: integer('user_id').notNull().references(() => users.id),
@@ -32,7 +42,7 @@ export const storageLocations = sqliteTable('storage_locations', {
   type: text('type', {
     enum: ['local', 's3', 'r2', 'b2', 'gcs'],
   }).notNull(),
-  config: text('config', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  config: text('config', { mode: 'json' }).$type<StorageConfig>().notNull(),
   isDefault: integer('is_default').notNull().default(0),
   createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`),
 });
@@ -46,6 +56,7 @@ export const mediaItems = sqliteTable('media_items', {
   userId: integer('user_id').notNull().references(() => users.id),
 
   storageLocationId: integer('storage_location_id').notNull().references(() => storageLocations.id),
+  /** Path relative to storageLocations.config.root_path. Join with the root to get the absolute path. */
   path: text('path').notNull(),
   filename: text('filename').notNull(),
 
@@ -74,6 +85,11 @@ export const mediaItems = sqliteTable('media_items', {
     enum: ['pending', 'indexed', 'failed'],
   }).notNull().default('pending'),
 
+  /** Multi-frame video OCR status. 'n/a' for photos. */
+  videoTextStatus: text('video_text_status', {
+    enum: ['pending', 'done', 'failed', 'n/a'],
+  }).notNull().default('pending'),
+
   metadata: text('metadata', { mode: 'json' }).$type<Record<string, unknown>>(),
 
   thumbnailPath: text('thumbnail_path'),
@@ -91,6 +107,31 @@ export const mediaItems = sqliteTable('media_items', {
 
 export type MediaItem = typeof mediaItems.$inferSelect;
 export type NewMediaItem = typeof mediaItems.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// media_text_occurrences — per-frame (OCR) or per-segment (transcript) text
+// with timestamps. Drives "match at 1:23" deep-linking in search results.
+// media_items.ocr_text / .transcript are denormalized rollups of this table
+// kept in sync by the enrichment writers so FTS5 keeps matching unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+export const mediaTextOccurrences = sqliteTable('media_text_occurrences', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  mediaItemId: integer('media_item_id').notNull().references(() => mediaItems.id, { onDelete: 'cascade' }),
+  source: text('source', { enum: ['ocr', 'transcript'] }).notNull(),
+  /** ms into the timeline; NULL for photo OCR (no timeline). */
+  tStartMs: integer('t_start_ms'),
+  /** End of this occurrence. NULL when not applicable. */
+  tEndMs: integer('t_end_ms'),
+  text: text('text').notNull(),
+  confidence: real('confidence'),
+  createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`),
+}, (t) => ({
+  itemIdx: index('media_text_occ_item_idx').on(t.mediaItemId),
+  sourceIdx: index('media_text_occ_source_idx').on(t.mediaItemId, t.source),
+}));
+
+export type MediaTextOccurrence = typeof mediaTextOccurrences.$inferSelect;
+export type NewMediaTextOccurrence = typeof mediaTextOccurrences.$inferInsert;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Virtual tables (vec0 + fts5) are NOT defined here — Drizzle doesn't model
