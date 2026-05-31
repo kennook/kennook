@@ -1,4 +1,14 @@
-# pnpm v10+ canonical settings file. Used even for single-package repos.
+# pnpm v10+ canonical settings file.
+
+# Workspace packages. Root is the kennook-app (Next.js library viewer).
+# `marketing/` is the public kennook.com Next.js site (deployed via OpenNext
+# + CDK). `infra/` is the CDK TypeScript app that provisions both.
+packages:
+  - .
+  - marketing
+  - infra
+
+
 # Approve native-binding install/postinstall scripts for legitimate deps.
 allowBuilds:
   # tfjs-node's postinstall downloads the platform-native libtensorflow

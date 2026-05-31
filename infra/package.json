@@ -1,0 +1,25 @@
+{
+  "name": "@kennook/infra",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AWS CDK infrastructure for KenNook (marketing site, distribution APIs).",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "diff:dev": "cdk diff --profile kennook-dev '*-Dev'",
+    "diff:prod": "cdk diff --profile kennook-prod '*-Prod'",
+    "deploy:dev": "cdk deploy --profile kennook-dev '*-Dev' --require-approval never",
+    "deploy:prod": "cdk deploy --profile kennook-prod '*-Prod' --require-approval broadening"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "aws-cdk": "^2.170.0",
+    "constructs": "^10.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0"
+  }
+}

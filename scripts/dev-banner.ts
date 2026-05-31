@@ -29,7 +29,7 @@ const ips = getLocalIPv4s();
 const lines: string[] = [];
 lines.push('');
 lines.push('  ╭─────────────────────────────────────────────────────────────────');
-lines.push('  │  Kennook is reachable at:');
+lines.push('  │  KenNook is reachable at:');
 lines.push('  │');
 lines.push(`  │    Local       http://localhost:${PORT}`);
 if (hostname) {

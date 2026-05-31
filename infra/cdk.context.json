@@ -1,0 +1,10 @@
+{
+  "hosted-zone:account=719146259408:domainName=kennook.dev:region=us-east-1": {
+    "Id": "/hostedzone/Z06219732X9LO8G9U4X1V",
+    "Name": "kennook.dev."
+  },
+  "hosted-zone:account=719146259408:domainName=kennook.dev:region=us-west-2": {
+    "Id": "/hostedzone/Z06219732X9LO8G9U4X1V",
+    "Name": "kennook.dev."
+  }
+}
