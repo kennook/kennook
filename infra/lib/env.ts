@@ -31,6 +31,11 @@ export interface KennookEnv {
   /** Git branch that maps to this env. GitHub Actions on a push to this
    *  branch can assume the env's OIDC role and deploy. */
   trustedBranch: 'develop' | 'main';
+  /** GitHub environment name declared in the deploy workflow's `environment:`
+   *  block. When a workflow declares an environment, GitHub's OIDC token uses
+   *  `sub = repo:OWNER/REPO:environment:NAME` (NOT the branch-based form), so
+   *  the trust policy has to know which env name to expect. */
+  githubEnvironmentName: 'development' | 'production';
 }
 
 /** GitHub repo coordinates — used as the OIDC trust constraint so only
@@ -52,6 +57,7 @@ export const ENVS: Record<EnvName, KennookEnv> = {
     marketingDomains: ['kennook.dev', 'www.kennook.dev'],
     hardenStateful: false,
     trustedBranch: 'develop',
+    githubEnvironmentName: 'development',
   },
   prod: {
     name: 'prod',
@@ -62,5 +68,6 @@ export const ENVS: Record<EnvName, KennookEnv> = {
     marketingDomains: ['kennook.com', 'www.kennook.com'],
     hardenStateful: true,
     trustedBranch: 'main',
+    githubEnvironmentName: 'production',
   },
 };
