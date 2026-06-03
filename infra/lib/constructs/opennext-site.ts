@@ -156,13 +156,18 @@ export class OpenNextSite extends Construct {
     );
 
     // ── CloudFront distribution ──────────────────────────────────────────
-    // Three behaviors:
+    // Behaviors:
     //   1. Default        → server Lambda (everything not matched below)
     //   2. /_next/static* → S3 (immutable, hashed-filename assets)
     //   3. /_next/image*  → image Lambda
-    // public/ files fall through to the default behavior and are served by
-    // the server Lambda — fine for low-traffic; later we can glob public/
-    // at synth time and add per-path S3 behaviors.
+    //   4. /version.json  → S3, caching DISABLED (the self-hosted-update
+    //      manifest; must be served from the bucket, not the server Lambda,
+    //      and must reflect a new release immediately — no CDN staleness).
+    // OTHER public/ files still fall through to the default behavior and hit
+    // the server Lambda → 404 (e.g. /favicon.ico). Low-traffic-acceptable for
+    // now; the real fix is to glob public/ at synth time and add per-path S3
+    // behaviors. version.json is special-cased because the upgrade flow depends
+    // on it.
 
     // Function URLs come back as `https://<id>.lambda-url.<region>.on.aws/` —
     // CloudFront's origin domain wants just the hostname. We can't strip with
@@ -201,6 +206,16 @@ export class OpenNextSite extends Construct {
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          compress: true,
+        },
+        // The update manifest: served straight from S3, never cached at the
+        // edge so a fresh release is visible to self-hosted servers right away
+        // (the app already caches the check ~1h server-side).
+        'version.json': {
+          origin: s3Origin,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           compress: true,
         },
         '_next/image*': {
