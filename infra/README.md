@@ -21,16 +21,22 @@ infra/
 
 CDK bootstraps once per (account, region). The marketing stack lives in
 **us-west-2**, the ACM cert sub-stack lives in **us-east-1** (CloudFront
-requires that region for certs). Each env needs both:
+requires that region for certs). Each env needs both.
+
+Always invoke cdk through `pnpm exec` (or `pnpm --filter @kennook/infra exec`),
+NOT a bare/global `cdk`: the app runs via `tsx bin/kennook-infra.ts` (see
+`cdk.json`), and both `cdk` and `tsx` are workspace-local devDeps. A bare `cdk`
+fails with `/bin/sh: tsx: command not found` (exit 127) because `node_modules/.bin`
+isn't on PATH. `pnpm exec` / `pnpm run` put it there.
 
 ```bash
 # Dev account
-cdk bootstrap aws://719146259408/us-west-2 --profile kennook-dev
-cdk bootstrap aws://719146259408/us-east-1 --profile kennook-dev
+pnpm --filter @kennook/infra exec cdk bootstrap aws://719146259408/us-west-2 --profile kennook-dev
+pnpm --filter @kennook/infra exec cdk bootstrap aws://719146259408/us-east-1 --profile kennook-dev
 
 # Prod account
-cdk bootstrap aws://045064752951/us-west-2 --profile kennook-prod
-cdk bootstrap aws://045064752951/us-east-1 --profile kennook-prod
+pnpm --filter @kennook/infra exec cdk bootstrap aws://045064752951/us-west-2 --profile kennook-prod
+pnpm --filter @kennook/infra exec cdk bootstrap aws://045064752951/us-east-1 --profile kennook-prod
 ```
 
 Symptom of a missing bootstrap during deploy:
