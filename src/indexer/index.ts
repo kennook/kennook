@@ -262,6 +262,8 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
   let width: number | null = null;
   let height: number | null = null;
   let durationMs: number | null = null;
+  let videoBitrate: number | null = null;
+  let videoCodec: string | null = null;
   let capturedAt: number | null = ctx.stat.mtimeMs;
   let capturedLat: number | null = null;
   let capturedLon: number | null = null;
@@ -286,6 +288,8 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     width = probe.width;
     height = probe.height;
     durationMs = probe.durationMs;
+    videoBitrate = probe.bitrate;
+    videoCodec = probe.codec;
   }
 
   const embedding = await embedImage(thumbPath);
@@ -296,12 +300,12 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
   const insert = sqlite.prepare(`
     INSERT INTO media_items (
       uuid, user_id, storage_location_id, path, filename, kind,
-      size_bytes, width, height, duration_ms, sha256,
+      size_bytes, width, height, duration_ms, video_bitrate, video_codec, sha256,
       captured_at, captured_lat, captured_lon, camera_make, camera_model,
       thumbnail_path, preview_path, embedding_status
     ) VALUES (
       ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, 'indexed'
     )
@@ -318,6 +322,8 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     width,
     height,
     durationMs,
+    videoBitrate,
+    videoCodec,
     hash,
     capturedAt,
     capturedLat,

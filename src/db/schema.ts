@@ -66,6 +66,10 @@ export const mediaItems = sqliteTable('media_items', {
   width: integer('width'),
   height: integer('height'),
   durationMs: integer('duration_ms'),
+  /** Video-only: overall bit-rate (bits/sec) and codec name from ffprobe.
+   *  Null for photos and for videos indexed before schema v15 (no backfill). */
+  videoBitrate: integer('video_bitrate'),
+  videoCodec: text('video_codec'),
 
   sha256: text('sha256'),
   phash: text('phash'),

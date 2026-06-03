@@ -81,6 +81,10 @@ interface Props {
   /** "Post-screensaver quiet": fade chrome to a low-opacity state regardless
    *  of mode. The parent clears it on the first user input. */
   quiet?: boolean;
+  /** True while the screensaver overlay is up. Pauses the playing video /
+   *  slideshow underneath so it doesn't run unseen, then restores it on
+   *  dismiss — but only if it was playing when the screensaver appeared. */
+  suspended?: boolean;
   /** Initial seek position in ms for video playback. Forwarded to
    *  VideoPlayer; takes precedence over saved progress on first paint.
    *  Set by search-result clicks on a timestamped text match. */
@@ -105,6 +109,7 @@ export function MediaViewer({
   maxed: controlledMaxed,
   onMaxedChange,
   quiet = false,
+  suspended = false,
   initialTimeMs,
 }: Props) {
   // Maxed can be controlled by the parent (preferred — typically synced
@@ -362,6 +367,25 @@ export function MediaViewer({
     const t = window.setTimeout(() => onNext(), slideshowPhotoMs);
     return () => window.clearTimeout(t);
   }, [item, slideshow, paused, onNext, slideshowPhotoMs]);
+
+  // 4) Screensaver suspend. While the screensaver is up, freeze the slideshow
+  //    auto-advance (Ken Burns + photo timer) so it doesn't run unseen. On
+  //    dismiss, resume only if it was playing when the screensaver appeared —
+  //    a manual pause is preserved. Videos pause via VideoPlayer.forcePaused.
+  //    Keyed on `suspended` alone; `paused` is sampled at the transition (the
+  //    user can't toggle it while the screensaver captures all input).
+  const slideshowResumeRef = useRef(false);
+  useEffect(() => {
+    if (!slideshow) return;
+    if (suspended) {
+      slideshowResumeRef.current = !paused;
+      setPaused(true);
+    } else if (slideshowResumeRef.current) {
+      slideshowResumeRef.current = false;
+      setPaused(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suspended, slideshow]);
 
   // Brief overlay shown when the user adjusts slideshow speed.
   // Incrementing the key re-mounts the indicator so its fade-out
@@ -790,6 +814,7 @@ export function MediaViewer({
               src={item.mediaUrl}
               progressKey={`${item.librarySlug}:${item.uuid}`}
               initialTimeMs={initialTimeMs}
+              forcePaused={suspended}
               className={maxed
                 ? 'w-full h-full overflow-hidden'
                 : 'max-h-full max-w-full rounded overflow-hidden bg-black'}
@@ -1230,16 +1255,42 @@ export function MediaViewer({
             </ToolbarButton>
           </>
         )}
-        <ToolbarButton
-          onClick={handleStepBack}
-          title={slideshow ? 'Exit slideshow (Esc)'
-            : maxed ? 'Back to preview (Esc)'
-            : 'Close (Esc)'}
-        >
-          <CloseIcon />
-        </ToolbarButton>
+        {/* Close stays inline in the top-right toolbar in preview mode. In
+            maxed mode it's pulled out to its own top-right corner below
+            (intuitive dismiss spot) while the rest of the toolbar docks
+            bottom-left by the progress bar. */}
+        {!maxed && (
+          <ToolbarButton
+            onClick={handleStepBack}
+            title="Close (Esc)"
+          >
+            <CloseIcon />
+          </ToolbarButton>
+        )}
         </div>
       </div>
+
+      {/* ── Floating top-right close (maxed only) ────────────────────────
+          Separated from the bottom-left toolbar so the dismiss affordance
+          lives where users instinctively reach for it. Outer wrapper holds
+          the position; inner layer holds the chrome-scale zoom (the two
+          can't share an element — see the toolbar comment above). */}
+      {maxed && (
+        <div
+          {...chromeHoverHandlers}
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute top-4 right-4 z-10 ${chromeFadeClass}`}
+        >
+          <div className="kn-chrome-scaled">
+            <ToolbarButton
+              onClick={handleStepBack}
+              title={slideshow ? 'Exit slideshow (Esc)' : 'Back to preview (Esc)'}
+            >
+              <CloseIcon />
+            </ToolbarButton>
+          </div>
+        </div>
+      )}
 
       {/* ── Nav arrows ──────────────────────────────────────────────── */}
       <div {...chromeHoverHandlers} className={chromeFadeClass}>

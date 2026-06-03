@@ -5,6 +5,7 @@ import { useCallback } from 'react';
 
 export type Kind = 'photo' | 'video';
 export type Orientation = 'portrait' | 'landscape' | 'square';
+export type Quality = 'sd' | 'hd' | '4k';
 export type Watched = 'watched' | 'unwatched';
 export type SensitiveFilter = 'hide' | 'only';
 
@@ -21,7 +22,10 @@ export interface PageState {
   person: string | null;
   kind: Kind | null;
   orientation: Orientation | null;
+  quality: Quality | null;
   cameraMake: string | null;
+  /** storage_locations.id of the selected BYOC source, or null for all. */
+  storage: number | null;
   year: number | null;
   tags: string[];
   /** "Mentioned" tags from transcripts (source='transcript') — what's SAID. */
@@ -52,7 +56,7 @@ export interface PageState {
 // Keys we manage in the URL. Anything not in this list is left alone, so other
 // libraries (analytics, etc.) can drop their own params without us clobbering.
 // `ws` is the pre-rename library key — we still read it but always write `lib`.
-const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'camera', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
+const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
 type UrlKey = typeof ALL_KEYS[number];
 
 // Keys that DON'T reset `page` when they change — these don't alter
@@ -75,7 +79,17 @@ function parseState(params: URLSearchParams): PageState {
     person: params.get('person'),
     kind: (params.get('kind') as Kind | null) ?? null,
     orientation: (params.get('orientation') as Orientation | null) ?? null,
+    quality: (() => {
+      const q = params.get('quality');
+      return q === 'sd' || q === 'hd' || q === '4k' ? q : null;
+    })(),
     cameraMake: params.get('camera'),
+    storage: (() => {
+      const raw = params.get('storage');
+      if (!raw) return null;
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? n : null;
+    })(),
     year: yearRaw ? parseInt(yearRaw, 10) : null,
     tags: tagsRaw ? tagsRaw.split(',').filter(Boolean) : [],
     mentioned: mentionedRaw ? mentionedRaw.split(',').filter(Boolean) : [],
@@ -124,7 +138,9 @@ function applyPatchToParams(
   if ('person' in patch) writeKey(out, 'person', patch.person);
   if ('kind' in patch) writeKey(out, 'kind', patch.kind);
   if ('orientation' in patch) writeKey(out, 'orientation', patch.orientation);
+  if ('quality' in patch) writeKey(out, 'quality', patch.quality);
   if ('cameraMake' in patch) writeKey(out, 'camera', patch.cameraMake);
+  if ('storage' in patch) writeKey(out, 'storage', patch.storage);
   if ('year' in patch) writeKey(out, 'year', patch.year);
   if ('tags' in patch) writeKey(out, 'tags', patch.tags);
   if ('mentioned' in patch) writeKey(out, 'mentioned', patch.mentioned);

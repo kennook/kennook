@@ -48,7 +48,7 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 14;
+const LATEST_SCHEMA_VERSION = 15;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -405,6 +405,16 @@ function applyMigrations(sqlite: DatabaseSync) {
         WHERE transcript_tags_status = 'pending'
     `);
     version = 14;
+  }
+
+  // ── v15: capture video bit-rate + codec from ffprobe going forward ──────
+  // Nullable, no backfill — existing rows stay NULL; only files indexed after
+  // this point populate them. The resolution-based "quality" facet derives
+  // from width/height and needs neither column, so it works on old rows too.
+  if (version < 15) {
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN video_bitrate INTEGER'); } catch { /* column exists */ }
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN video_codec TEXT'); } catch { /* column exists */ }
+    version = 15;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

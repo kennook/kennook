@@ -43,13 +43,14 @@ function pickVariantUrl(id: string): string {
   return `/screensaver/${id}-${pickHeight()}.mp4`;
 }
 
-// Burn-like grade for the screensaver footage so the stock videos feel
-// ambient instead of full-glare. brightness ≈ overall darkness (lower =
-// dimmer), contrast deepens shadows and lifts highlights for a punchier
-// look, saturate nudges colors slightly. All GPU-composited — no runtime
-// cost. Tune to taste; brightness(0.3) is roughly equivalent in feel to
-// the prior opacity(0.25) but with richer mid-tones.
-const SCREENSAVER_FILTER = 'brightness(0.3) contrast(1.4) saturate(1.05)';
+// Deliberately understated grade so the footage recedes into the
+// background instead of demanding attention. brightness ≈ overall darkness
+// (lower = dimmer), contrast at 1 stays neutral (no punchy shadow-deepening),
+// saturate < 1 mutes the colors, and a soft blur dissolves fine detail so the
+// eye reads it as ambient texture rather than "a video playing". All
+// GPU-composited — no runtime cost. Tune to taste; raise brightness or drop
+// the blur if it feels too faint.
+const SCREENSAVER_FILTER = 'brightness(0.2) contrast(1) saturate(0.8) blur(4px)';
 
 /**
  * Mount once at the page root. Triggered via the `global.screensaver`
@@ -182,7 +183,9 @@ export function Screensaver({ open, onExit }: Props) {
         muted
         loop
         playsInline
-        className="absolute inset-0 w-full h-full object-cover"
+        // scale-105 pushes the soft blurred edge off-screen so the filter
+        // doesn't feather a faint black margin at the viewport bounds.
+        className="absolute inset-0 w-full h-full object-cover scale-105"
         style={{ filter: SCREENSAVER_FILTER }}
       />
     </div>

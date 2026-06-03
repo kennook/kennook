@@ -42,6 +42,10 @@ interface Props {
    *  zoom that the MediaViewer chrome uses. Caller sets true in maxed mode so
    *  the preview-modal video keeps its compact controls. */
   scaled?: boolean;
+  /** External pause gate (e.g. the screensaver overlay). While true the video
+   *  is held paused; when it clears we resume ONLY if the video was playing
+   *  when the gate engaged — a user-initiated pause is preserved. */
+  forcePaused?: boolean;
 }
 
 /**
@@ -72,6 +76,7 @@ export function VideoPlayer({
   onEnded,
   progressKey,
   initialTimeMs,
+  forcePaused = false,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playedRef = useRef<HTMLDivElement>(null);
@@ -212,6 +217,24 @@ export function VideoPlayer({
     if (video.paused) void video.play();
     else video.pause();
   }
+
+  // External pause gate (screensaver). Pause while engaged; on release resume
+  // only if the video was actually playing when it engaged, so a user pause
+  // survives a screensaver show/dismiss. Keyed on `forcePaused` alone — we
+  // sample play state at the transition, not on every render.
+  const resumeOnReleaseRef = useRef(false);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (forcePaused) {
+      resumeOnReleaseRef.current = !video.paused;
+      video.pause();
+    } else if (resumeOnReleaseRef.current) {
+      resumeOnReleaseRef.current = false;
+      void video.play();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forcePaused]);
 
   function toggleMute() {
     const video = videoRef.current;

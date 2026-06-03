@@ -219,7 +219,9 @@ function HomeContent() {
   const filterArgs = {
     kind: url.kind ?? undefined,
     orientation: url.orientation ?? undefined,
+    quality: url.quality ?? undefined,
     cameraMake: url.cameraMake ?? undefined,
+    storage: url.storage ?? undefined,
     year: url.year ?? undefined,
     tags: url.tags.length > 0 ? url.tags : undefined,
     mentioned: url.mentioned.length > 0 ? url.mentioned : undefined,
@@ -228,6 +230,12 @@ function HomeContent() {
     person: url.person ?? undefined,
     sensitive: url.sensitive ?? undefined,
   };
+
+  const facetsQuery = trpc.media.facets.useQuery({
+    ...filterArgs,
+    query: inSearch ? url.query : undefined,
+    similarToUuid: inSimilar ? (url.similar ?? undefined) : undefined,
+  }, { enabled: !inPlaylist });
 
   // Person header data — only fetched when a person is selected; cheap
   // (one row from user.db). The grid query above already filters by
@@ -257,11 +265,27 @@ function HomeContent() {
         onRemove: () => url.set({ orientation: null }),
       });
     }
+    if (url.quality) {
+      const label = url.quality === '4k' ? '4K+' : url.quality.toUpperCase();
+      out.push({
+        key: 'quality',
+        label,
+        onRemove: () => url.set({ quality: null }),
+      });
+    }
     if (url.cameraMake) {
       out.push({
         key: 'camera',
         label: url.cameraMake,
         onRemove: () => url.set({ cameraMake: null }),
+      });
+    }
+    if (url.storage != null) {
+      const name = facetsQuery.data?.storages.find((s) => s.value === url.storage)?.name;
+      out.push({
+        key: 'storage',
+        label: name ? `Storage: ${name}` : 'Storage',
+        onRemove: () => url.set({ storage: null }),
       });
     }
     if (url.year != null) {
@@ -322,14 +346,16 @@ function HomeContent() {
     }
     return out;
   }, [
-    url, personDetails.data,
+    url, personDetails.data, facetsQuery.data,
   ]);
 
   const clearAllFilters = () => {
     url.set({
       kind: null,
       orientation: null,
+      quality: null,
       cameraMake: null,
+      storage: null,
       year: null,
       tags: [],
       mentioned: [],
@@ -339,12 +365,6 @@ function HomeContent() {
       sensitive: null,
     });
   };
-
-  const facetsQuery = trpc.media.facets.useQuery({
-    ...filterArgs,
-    query: inSearch ? url.query : undefined,
-    similarToUuid: inSimilar ? (url.similar ?? undefined) : undefined,
-  }, { enabled: !inPlaylist });
 
   // `placeholderData: keepPreviousData` keeps the prior page's items visible
   // during the next-page fetch — critical for the in-viewer cross-page
@@ -782,8 +802,12 @@ function HomeContent() {
               onKindChange={(v) => url.set({ kind: v })}
               orientation={url.orientation}
               onOrientationChange={(v) => url.set({ orientation: v })}
+              quality={url.quality}
+              onQualityChange={(v) => url.set({ quality: v })}
               cameraMake={url.cameraMake}
               onCameraChange={(v) => url.set({ cameraMake: v })}
+              storage={url.storage}
+              onStorageChange={(v) => url.set({ storage: v })}
               year={url.year}
               onYearChange={(v) => url.set({ year: v })}
               tags={url.tags}
@@ -1025,6 +1049,7 @@ function HomeContent() {
         onSelectItem={(it) => setSelectedUuid(it.uuid)}
         onAddToPlaylist={(it) => setAddToPlaylistItem(it)}
         quiet={quietMode}
+        suspended={screensaverOpen}
         initialTimeMs={url.tMs}
       />
 

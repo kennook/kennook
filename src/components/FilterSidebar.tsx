@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { likeFillColor } from '@/lib/like-colors';
 
 export type Orientation = 'portrait' | 'landscape' | 'square';
+export type Quality = 'sd' | 'hd' | '4k';
 export type Kind = 'photo' | 'video';
 export type Watched = 'watched' | 'unwatched';
 export type SensitiveFilter = 'hide' | 'only';
@@ -11,7 +12,9 @@ export type SensitiveFilter = 'hide' | 'only';
 export interface FacetCounts {
   kinds: Array<{ value: 'photo' | 'video'; count: number }>;
   orientations: Array<{ value: 'portrait' | 'landscape' | 'square'; count: number }>;
+  qualities: Array<{ value: 'sd' | 'hd' | '4k'; count: number }>;
   cameras: Array<{ value: string; count: number }>;
+  storages: Array<{ value: number; name: string; root: string; count: number }>;
   years: Array<{ value: number; count: number }>;
   tags: Array<{ value: string; count: number }>;
   mentioned: Array<{ value: string; count: number }>;
@@ -27,8 +30,14 @@ interface Props {
   orientation: Orientation | null;
   onOrientationChange: (v: Orientation | null) => void;
 
+  quality: Quality | null;
+  onQualityChange: (v: Quality | null) => void;
+
   cameraMake: string | null;
   onCameraChange: (v: string | null) => void;
+
+  storage: number | null;
+  onStorageChange: (v: number | null) => void;
 
   year: number | null;
   onYearChange: (v: number | null) => void;
@@ -55,12 +64,22 @@ const ORIENTATION_LABELS: Record<Orientation, string> = {
   square: 'Square',
 };
 
+// Highest tier first — users scanning for "best quality" hit it immediately.
+const QUALITY_ORDER: Quality[] = ['4k', 'hd', 'sd'];
+const QUALITY_LABELS: Record<Quality, string> = {
+  '4k': '4K+',
+  hd: 'HD',
+  sd: 'SD',
+};
+
 export function FilterSidebar({
   facets,
   loading,
   kind, onKindChange,
   orientation, onOrientationChange,
+  quality, onQualityChange,
   cameraMake, onCameraChange,
+  storage, onStorageChange,
   year, onYearChange,
   tags, onTagsChange,
   mentioned, onMentionedChange,
@@ -71,7 +90,9 @@ export function FilterSidebar({
   const hasAnyActive =
     kind !== null ||
     orientation !== null ||
+    quality !== null ||
     cameraMake !== null ||
+    storage !== null ||
     year !== null ||
     tags.length > 0 ||
     mentioned.length > 0 ||
@@ -82,7 +103,9 @@ export function FilterSidebar({
   const resetAll = () => {
     onKindChange(null);
     onOrientationChange(null);
+    onQualityChange(null);
     onCameraChange(null);
+    onStorageChange(null);
     onYearChange(null);
     onTagsChange([]);
     onMentionedChange([]);
@@ -99,6 +122,23 @@ export function FilterSidebar({
   const toggleMentioned = (t: string) => {
     if (mentioned.includes(t)) onMentionedChange(mentioned.filter((x) => x !== t));
     else onMentionedChange([...mentioned, t]);
+  };
+
+  // Storage sources — only worth showing when the current results span 2+
+  // sources (a single-source view offers no choice). Still shown when one is
+  // actively selected, so it can always be cleared. Sources that share a name
+  // get their root path's last segment appended to stay distinguishable.
+  const storageList = facets?.storages ?? [];
+  const showStorage = storageList.length > 1 || storage !== null;
+  const dupStorageNames = new Set(
+    storageList.map((s) => s.name).filter((n, i, arr) => arr.indexOf(n) !== i),
+  );
+  const storageLabel = (id: number) => {
+    const s = storageList.find((x) => x.value === id);
+    if (!s) return String(id);
+    if (!dupStorageNames.has(s.name)) return s.name;
+    const leaf = s.root.split('/').filter(Boolean).pop();
+    return leaf ? `${s.name} · ${leaf}` : s.name;
   };
 
   return (
@@ -204,6 +244,29 @@ export function FilterSidebar({
         })}
       </FilterSection>
 
+      <FilterSection title="Quality">
+        <FilterRow
+          active={quality === null}
+          onClick={() => onQualityChange(null)}
+        >
+          All
+        </FilterRow>
+        {QUALITY_ORDER.map((q) => {
+          const count = facets?.qualities.find((c) => c.value === q)?.count ?? 0;
+          if (count === 0 && quality !== q) return null;
+          return (
+            <FilterRow
+              key={q}
+              active={quality === q}
+              count={count}
+              onClick={() => onQualityChange(q)}
+            >
+              {QUALITY_LABELS[q]}
+            </FilterRow>
+          );
+        })}
+      </FilterSection>
+
       <DynamicFilterSection
         title="Camera"
         options={facets?.cameras ?? []}
@@ -211,6 +274,17 @@ export function FilterSidebar({
         onSelect={onCameraChange}
         loading={loading}
       />
+
+      {showStorage && (
+        <DynamicFilterSection
+          title="Storage"
+          options={storageList.map((s) => ({ value: s.value, count: s.count }))}
+          selected={storage}
+          onSelect={onStorageChange}
+          loading={loading}
+          formatValue={storageLabel}
+        />
+      )}
 
       <DynamicFilterSection
         title="Year"

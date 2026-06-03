@@ -55,13 +55,34 @@ export function isAssetId(query: string): boolean {
 
 const orientationSchema = z.enum(['portrait', 'landscape', 'square']).optional();
 const watchedSchema = z.enum(['watched', 'unwatched']).optional();
+const qualitySchema = z.enum(['sd', 'hd', '4k']).optional();
+
+// Resolution-tier expression, keyed off the SHORTER side so portrait phone
+// clips (1080×1920) tier the same as landscape 1080p. Three simple buckets:
+//   sd  = <720  ·  hd = 720–2159  ·  4k = ≥2160.
+// Scalar min() returns NULL if either dimension is NULL, so items missing
+// dimensions fall through to NULL and drop out of the facet (HAVING) and any
+// quality filter — same null-safety the orientation facet relies on. Applies
+// to photos and videos alike (both store width/height).
+const QUALITY_TIER_SQL = `
+  CASE
+    WHEN min(m.width, m.height) >= 2160 THEN '4k'
+    WHEN min(m.width, m.height) >= 720  THEN 'hd'
+    WHEN min(m.width, m.height) >= 1    THEN 'sd'
+    ELSE NULL
+  END`;
 
 // Filters applicable to every view (list, search, similar). Kept as a single
 // schema so the API is consistent and easy to extend.
 const filterShape = z.object({
   kind: z.enum(['photo', 'video']).optional(),
   orientation: orientationSchema,
+  /** Resolution tier (shorter side): 'sd' <720, 'hd' 720–2159, '4k' ≥2160. */
+  quality: qualitySchema,
   cameraMake: z.string().optional(),
+  /** storage_locations.id — filter to one BYOC source. Keyed by id (not name)
+   *  because a library can hold two sources with the same name. */
+  storage: z.number().int().optional(),
   year: z.number().int().min(1900).max(2100).optional(),
   tags: z.array(z.string()).optional(),
   /** "Mentioned" tags — derived from the spoken transcript (media_tags
@@ -135,9 +156,18 @@ function buildFilterClauses(filters: MediaFilters, ctx: Context): FilterClauses 
   else if (filters.orientation === 'landscape') where.push('m.width > m.height');
   else if (filters.orientation === 'square') where.push('m.width = m.height AND m.width > 0');
 
+  if (filters.quality) {
+    where.push(`(${QUALITY_TIER_SQL}) = ?`);
+    params.push(filters.quality);
+  }
+
   if (filters.cameraMake) {
     where.push('m.camera_make = ?');
     params.push(filters.cameraMake);
+  }
+  if (filters.storage != null) {
+    where.push('m.storage_location_id = ?');
+    params.push(filters.storage);
   }
   if (filters.year != null) {
     where.push(`strftime('%Y', m.captured_at / 1000, 'unixepoch') = ?`);
@@ -235,7 +265,11 @@ function withoutKey(filters: MediaFilters, key: keyof MediaFilters): MediaFilter
 export interface FacetCounts {
   kinds: Array<{ value: 'photo' | 'video'; count: number }>;
   orientations: Array<{ value: 'portrait' | 'landscape' | 'square'; count: number }>;
+  qualities: Array<{ value: 'sd' | 'hd' | '4k'; count: number }>;
   cameras: Array<{ value: string; count: number }>;
+  /** BYOC storage sources holding items. `value` is the storage id; `name` +
+   *  `root` (config root_path) let the UI disambiguate same-named sources. */
+  storages: Array<{ value: number; name: string; root: string; count: number }>;
   years: Array<{ value: number; count: number }>;
   tags: Array<{ value: string; count: number }>;
   /** Transcript-derived tags (source='transcript') — the "Mentioned" axis. */
@@ -313,7 +347,7 @@ async function computeFacets(
   // null = no narrowing (recent mode); empty array = no matches at all.
   const candidateIds = await getCandidateIds(sqlite, ctx, facetCtx);
 
-  const empty: FacetCounts = { kinds: [], orientations: [], cameras: [], years: [], tags: [], mentioned: [] };
+  const empty: FacetCounts = { kinds: [], orientations: [], qualities: [], cameras: [], storages: [], years: [], tags: [], mentioned: [] };
   if (candidateIds !== null && candidateIds.length === 0) return empty;
 
   // Build a candidate-membership clause + parameter array (or pass-through
@@ -356,6 +390,16 @@ async function computeFacets(
     ORDER BY count DESC
   `).all(...of_.params) as unknown as FacetCounts['orientations'];
 
+  const qf = facet('quality');
+  const qualities = sqlite.prepare(`
+    SELECT ${QUALITY_TIER_SQL} AS value, COUNT(*) AS count
+    FROM media_items m
+    WHERE ${qf.where} ${candidateClause}
+    GROUP BY value
+    HAVING value IS NOT NULL
+    ORDER BY count DESC
+  `).all(...qf.params) as unknown as FacetCounts['qualities'];
+
   const cf = facet('cameraMake');
   const cameras = sqlite.prepare(`
     SELECT m.camera_make AS value, COUNT(*) AS count
@@ -365,6 +409,22 @@ async function computeFacets(
     ORDER BY count DESC, value ASC
     LIMIT 20
   `).all(...cf.params) as unknown as FacetCounts['cameras'];
+
+  const sf = facet('storage');
+  const storages = (sqlite.prepare(`
+    SELECT m.storage_location_id AS value, sl.name AS name, sl.config AS config, COUNT(*) AS count
+    FROM media_items m
+    JOIN storage_locations sl ON sl.id = m.storage_location_id
+    WHERE ${sf.where} ${candidateClause}
+    GROUP BY m.storage_location_id
+    ORDER BY count DESC, name ASC
+  `).all(...sf.params) as unknown as Array<{ value: number; name: string; config: string; count: number }>)
+    .map(({ value, name, config, count }) => {
+      // config is JSON text — pull root_path for the UI's same-name disambiguation.
+      let root = '';
+      try { root = (JSON.parse(config) as { root_path?: string }).root_path ?? ''; } catch { /* leave blank */ }
+      return { value, name, root, count };
+    });
 
   const yf = facet('year');
   const years = (sqlite.prepare(`
@@ -401,7 +461,7 @@ async function computeFacets(
     LIMIT 30
   `).all(...mf.params) as unknown as FacetCounts['mentioned'];
 
-  return { kinds, orientations, cameras, years, tags, mentioned };
+  return { kinds, orientations, qualities, cameras, storages, years, tags, mentioned };
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────

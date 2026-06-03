@@ -4,33 +4,49 @@ export interface VideoMetadata {
   durationMs: number | null;
   width: number | null;
   height: number | null;
+  /** Overall bit-rate in bits/sec. ffprobe reports it on the stream for some
+   *  containers and only on the format for others, so we read either. */
+  bitrate: number | null;
+  /** Video codec name, e.g. 'h264', 'hevc', 'vp9'. */
+  codec: string | null;
 }
+
+const EMPTY_META: VideoMetadata = {
+  durationMs: null, width: null, height: null, bitrate: null, codec: null,
+};
 
 export async function probeVideo(videoPath: string): Promise<VideoMetadata> {
   return new Promise((resolve) => {
     const ffprobe = spawn('ffprobe', [
       '-v', 'error',
       '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height,duration:format=duration',
+      // bit_rate + codec_name ride along the same probe — no extra subprocess.
+      '-show_entries', 'stream=width,height,duration,bit_rate,codec_name:format=duration,bit_rate',
       '-of', 'json',
       videoPath,
     ]);
 
     const chunks: Buffer[] = [];
     ffprobe.stdout.on('data', (c) => chunks.push(c));
-    ffprobe.on('error', () => resolve({ durationMs: null, width: null, height: null }));
+    ffprobe.on('error', () => resolve({ ...EMPTY_META }));
     ffprobe.on('close', () => {
       try {
         const json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const stream = json.streams?.[0] ?? {};
         const durSec = parseFloat(stream.duration ?? json.format?.duration ?? '0');
+        // Prefer the per-stream bit_rate; fall back to the container's. ffprobe
+        // emits 'N/A' (or omits the field) when it can't determine one.
+        const rawBitrate = stream.bit_rate ?? json.format?.bit_rate;
+        const bitrate = rawBitrate != null ? parseInt(rawBitrate, 10) : NaN;
         resolve({
           durationMs: Number.isFinite(durSec) ? Math.round(durSec * 1000) : null,
           width: stream.width ?? null,
           height: stream.height ?? null,
+          bitrate: Number.isFinite(bitrate) ? bitrate : null,
+          codec: typeof stream.codec_name === 'string' ? stream.codec_name : null,
         });
       } catch {
-        resolve({ durationMs: null, width: null, height: null });
+        resolve({ ...EMPTY_META });
       }
     });
   });
