@@ -16,6 +16,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { getCurrentUser, isAdmin } from '@/server/auth';
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
+import { AdminUpdateBanner } from '@/components/admin/AdminUpdateBanner';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const cookieHeader = (await headers()).get('cookie');
@@ -31,7 +32,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex">
       <AdminSidebar />
       <main className="flex-1 min-w-0 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-8 py-8">{children}</div>
+        <div className="max-w-5xl mx-auto px-8 py-8">
+          <AdminUpdateBanner />
+          {children}
+        </div>
       </main>
     </div>
   );

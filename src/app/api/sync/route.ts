@@ -4,6 +4,7 @@ import {
   assignScreensaverIndex,
   type Subscriber,
 } from '@/server/sync-broker';
+import { KENNOOK_VERSION, KENNOOK_BUILD_ID } from '@/lib/version';
 
 // Long-lived streaming response — needs the Node runtime (Edge has aggressive
 // connection limits and lacks `req.signal` semantics we rely on here).
@@ -59,6 +60,16 @@ export async function GET(req: NextRequest) {
       send(`data: ${JSON.stringify({
         sessionId: 'server-snapshot',
         event: { type: 'screensaver.assignment', index: assignScreensaverIndex(userId) },
+      })}\n\n`);
+
+      // Build version of THIS process — baked at build time, so it's the
+      // version actually running, not the checkout's. Re-sent on every
+      // reconnect; when the prod process restarts onto a new build, the
+      // client's auto-reconnecting EventSource receives the new value and the
+      // reload prompt fires.
+      send(`data: ${JSON.stringify({
+        sessionId: 'server-snapshot',
+        event: { type: 'server-version', version: KENNOOK_VERSION, buildId: KENNOOK_BUILD_ID },
       })}\n\n`);
 
       // Heartbeat at 25s — under typical reverse-proxy idle timeouts

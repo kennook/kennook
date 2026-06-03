@@ -5,12 +5,14 @@
   "description": "Public kennook.com marketing site. Next.js App Router, deployed to AWS via OpenNext + CDK.",
   "scripts": {
     "dev": "next dev --port 3100",
+    "gen-version": "node scripts/gen-version.mjs",
+    "prebuild": "node scripts/gen-version.mjs",
     "build": "next build",
     "start": "next start --port 3100",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "build:opennext": "open-next build",
-    "build:all": "rm -rf ../.marketing-deploy && mkdir -p ../.marketing-deploy && rsync -a --exclude=node_modules --exclude=.next --exclude=.open-next ./ ../.marketing-deploy/ && cd ../.marketing-deploy && npm install --no-audit --no-fund && npx --no-install next build && npx --no-install open-next build"
+    "build:all": "node scripts/gen-version.mjs && rm -rf ../.marketing-deploy && mkdir -p ../.marketing-deploy && rsync -a --exclude=node_modules --exclude=.next --exclude=.open-next ./ ../.marketing-deploy/ && cd ../.marketing-deploy && npm install --no-audit --no-fund && npx --no-install next build && npx --no-install open-next build"
   },
   "dependencies": {
     "next": "^15.0.0",

@@ -10,6 +10,7 @@ import { PreferencesProvider } from '@/lib/preferences';
 import { CurrentUserProvider } from '@/lib/current-user';
 import { SyncProvider, SESSION_ID } from '@/lib/sync';
 import { ViewedBackfill } from '@/components/ViewedBackfill';
+import { ReloadPrompt } from '@/components/ReloadPrompt';
 
 export const trpc = createTRPCReact<AppRouter>();
 
@@ -64,6 +65,7 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
           <CurrentUserProvider>
             <SyncProvider>
               <ViewedBackfill />
+              <ReloadPrompt />
               {children}
             </SyncProvider>
           </CurrentUserProvider>

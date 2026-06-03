@@ -47,7 +47,14 @@ jobs:
           aws-region: us-west-2
 
       - name: Build marketing site (npm-install layout for OpenNext)
+        # The build generates public/version.json from the root package.json
+        # version (→ kennook.com/version.json, polled by self-hosted servers to
+        # detect updates). Optional release notes / link come from `production`
+        # GitHub-environment variables; unset → omitted from the manifest.
         run: pnpm --filter @kennook/marketing build:all
+        env:
+          KENNOOK_RELEASE_NOTES: ${{ vars.KENNOOK_RELEASE_NOTES }}
+          KENNOOK_RELEASE_URL: ${{ vars.KENNOOK_RELEASE_URL }}
 
       # `--require-approval broadening` makes CDK pause if an IAM change
       # would broaden permissions — extra safety on prod. CI can't answer

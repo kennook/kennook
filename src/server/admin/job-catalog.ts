@@ -47,7 +47,7 @@ export interface JobDefinition {
   compose?: boolean;
   label: string;
   description: string;
-  category: 'index' | 'backfill' | 'enrich' | 'aggregate';
+  category: 'index' | 'backfill' | 'enrich' | 'aggregate' | 'system';
   /** Options the script accepts. `library` always rendered as a
    *  library picker; other types as appropriate inputs. */
   options: JobOption[];
@@ -252,6 +252,19 @@ export const JOB_CATALOG: JobDefinition[] = [
     options: [
       { flag: 'library', type: 'library', label: 'Library' },
     ],
+  },
+
+  // System maintenance. Not library-scoped and intentionally kept out of the
+  // per-storage run menu (see estimate.ts) — it's enqueued from the admin
+  // update banner, which POSTs `{ command: 'upgrade' }` to /api/admin/jobs.
+  {
+    id: 'upgrade',
+    script: 'scripts/upgrade.ts',
+    label: 'Upgrade server',
+    description: 'Pull the latest code, install dependencies, and rebuild the production server into a staging dir, then swap it in. Prompts for a manual restart when the build is ready.',
+    category: 'system',
+    longRunning: true,
+    options: [],
   },
 ];
 

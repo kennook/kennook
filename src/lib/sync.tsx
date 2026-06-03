@@ -24,7 +24,13 @@ export type SyncEvent =
   | { type: 'item.like'; librarySlug: string; uuid: string; count: number }
   | { type: 'item.tag.changed'; librarySlug: string; uuid: string }
   | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
-  | { type: 'playlist.changed' };
+  | { type: 'playlist.changed' }
+  /** Build version of the server process this stream is connected to. Sent
+   *  in the on-connect snapshot and again on every EventSource reconnect, so
+   *  when the prod process restarts onto a new build the client sees the new
+   *  version and can prompt a reload. `buildId` changes on every build even
+   *  when the semver is unchanged (rebuild/hotfix). */
+  | { type: 'server-version'; version: string; buildId: string };
 
 interface Envelope {
   sessionId: string;

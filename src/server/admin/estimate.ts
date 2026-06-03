@@ -55,6 +55,10 @@ export function buildEstimates(sqlite: Sqlite): ActionEstimate[] {
   const single = (command: string): ActionEstimate | null => {
     const def = getJobDefinition(command);
     if (!def) return null;
+    // System jobs (e.g. 'upgrade') aren't library-scoped and never belong in
+    // the per-storage run menu. Bailing here also narrows def.category to the
+    // run-menu categories below.
+    if (def.category === 'system') return null;
     const count = counts[command];
     const eta = def.secPerItem != null && count != null
       ? Math.round(def.secPerItem * count)
