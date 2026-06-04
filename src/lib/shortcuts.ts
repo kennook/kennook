@@ -26,14 +26,14 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: 'nav.prevItem',
     label: 'Previous item',
     category: 'navigation',
-    defaultKeys: ['Meta+ArrowLeft'],
-    description: 'Matches the on-screen ← arrow; plain ←/→ stay video seek',
+    defaultKeys: ['Shift+ArrowLeft', 'j', 'J'],
+    description: 'Plain ←/→ stay video seek',
   },
   {
     id: 'nav.nextItem',
     label: 'Next item',
     category: 'navigation',
-    defaultKeys: ['Meta+ArrowRight'],
+    defaultKeys: ['Shift+ArrowRight', 'k', 'K'],
   },
 
   // Viewer
@@ -48,7 +48,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'viewer.slideshowFaster', label: 'Slideshow: speed up',  category: 'viewer', defaultKeys: ['.'], description: 'Slideshow mode only · −1s per photo' },
 
   // Video playback
-  { id: 'video.playPause',     label: 'Play / pause',          category: 'video', defaultKeys: [' ', 'k', 'K'] },
+  { id: 'video.playPause',     label: 'Play / pause',          category: 'video', defaultKeys: [' '] },
   { id: 'video.seekBack10',    label: 'Back 10 seconds',       category: 'video', defaultKeys: ['ArrowLeft'] },
   { id: 'video.seekForward10', label: 'Forward 10 seconds',    category: 'video', defaultKeys: ['ArrowRight'] },
   { id: 'video.mute',          label: 'Mute / unmute',         category: 'video', defaultKeys: ['m', 'M'] },
@@ -158,6 +158,13 @@ function matchesBinding(e: KeyboardEvent, binding: string): boolean {
   if (mods.size > 0) {
     if (e.shiftKey !== mods.has('Shift')) return false;
     if (e.altKey !== mods.has('Alt')) return false;
+  } else if (key.length > 1 && e.shiftKey) {
+    // Bare binding on a NAMED key (ArrowLeft, Escape, …): Shift is a real
+    // modifier there (it doesn't change e.key), so a held Shift must NOT match
+    // — otherwise Shift+ArrowLeft (prev item) would also fire ArrowLeft (seek).
+    // Printable single-char keys are exempt: Shift is part of producing them
+    // (e.g. "?" is Shift+/), so we don't constrain it.
+    return false;
   }
   return true;
 }
