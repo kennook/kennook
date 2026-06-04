@@ -28,8 +28,9 @@ import {
 // ─── Schema ─────────────────────────────────────────────────────────────
 
 export interface Preferences {
-  /** Video playback */
-  videoMuted: boolean;
+  /** Video playback. Mute is intentionally NOT a preference — it's per-window
+   *  session state (starts muted, see VideoPlayer + the audio.unmuted sync
+   *  event); only the volume LEVEL persists. */
   videoVolume: number;       // 0.0 – 1.0
   videoPlaybackRate: number; // 1.0 normal; 0.5/1.5/2.0 etc.
   /** Default fit when entering maxed video/photo mode. */
@@ -41,11 +42,6 @@ export interface Preferences {
 }
 
 const DEFAULTS: Preferences = {
-  // Default to muted: video preferences don't currently persist across page
-  // reloads, and a fresh tab popping out at full volume is jarring. The user
-  // can unmute (and that state holds for the session); next reload starts
-  // muted again. Flip back to false once persistence lands.
-  videoMuted: true,
   videoVolume: 1.0,
   videoPlaybackRate: 1.0,
   defaultFit: 'cover',
@@ -148,7 +144,7 @@ export function usePreferences() {
 /**
  * Read + write a single preference. Tuple matches React's useState shape.
  *
- *   const [muted, setMuted] = usePreference('videoMuted');
+ *   const [volume, setVolume] = usePreference('videoVolume');
  */
 export function usePreference<K extends keyof Preferences>(key: K) {
   const { prefs, set } = useContext(PreferencesContext);

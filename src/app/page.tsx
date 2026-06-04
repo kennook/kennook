@@ -13,7 +13,9 @@ import {
 import { MediaViewer } from '@/components/MediaViewer';
 import { ReassignPersonDialog } from '@/components/ReassignPersonDialog';
 import { AddToPlaylistDialog } from '@/components/AddToPlaylistDialog';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar';
+import { SortControl } from '@/components/SortControl';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { MobileApp } from '@/components/mobile/MobileApp';
 import { LibrarySwitcher } from '@/components/LibrarySwitcher';
@@ -190,6 +192,17 @@ function HomeContent() {
     applyRotationPatch(e.uuid, e.rotation);
   });
 
+  // An item was excluded elsewhere — drop it from our caches, and close the
+  // viewer if we happen to have it open.
+  useSyncEvent('item.excluded', (e) => {
+    trpcUtils.media.list.invalidate();
+    trpcUtils.media.search.invalidate();
+    trpcUtils.media.similar.invalidate();
+    trpcUtils.media.facets.invalidate();
+    trpcUtils.playlist.get.invalidate();
+    if (url.item === e.uuid) setSelectedUuid(null);
+  });
+
   // A tag change anywhere — invalidate the affected item's details (which
   // carries the tag list) and the tag facet.
   useSyncEvent('item.tag.changed', () => {
@@ -229,6 +242,8 @@ function HomeContent() {
     watched: url.watched ?? undefined,
     person: url.person ?? undefined,
     sensitive: url.sensitive ?? undefined,
+    sort: url.sort ?? undefined,
+    shuffleSeed: url.shuffle ?? undefined,
   };
 
   const facetsQuery = trpc.media.facets.useQuery({
@@ -614,6 +629,8 @@ function HomeContent() {
   // Item targeted for the "Add to playlist" dialog. Single-item only —
   // multi-add still flows through the SelectionBar's dropdown.
   const [addToPlaylistItem, setAddToPlaylistItem] = useState<MediaItemDto | null>(null);
+  // Item pending the "exclude" (soft-delete) confirmation.
+  const [excludeItem, setExcludeItem] = useState<MediaItemDto | null>(null);
 
   const goToPage = (page: number) => {
     url.set({ page });
@@ -708,6 +725,17 @@ function HomeContent() {
   const setRotationMutation = trpc.media.setRotation.useMutation({
     onSuccess: (_data, vars) => {
       applyRotationPatch(vars.uuid, vars.rotation);
+    },
+  });
+
+  const excludeMutation = trpc.media.exclude.useMutation({
+    onSuccess: () => {
+      // Item now soft-deleted — refetch the lists/facets so it drops out.
+      trpcUtils.media.list.invalidate();
+      trpcUtils.media.search.invalidate();
+      trpcUtils.media.similar.invalidate();
+      trpcUtils.media.facets.invalidate();
+      trpcUtils.playlist.get.invalidate();
     },
   });
 
@@ -1008,6 +1036,23 @@ function HomeContent() {
             onClearAll={clearAllFilters}
           />
 
+          {/* Sort + shuffle — browse and search/similar (playlists keep their
+              own order). Picking a sort clears shuffle; the shuffle toggle
+              mints a fresh seed on, clears it off. */}
+          {!inPlaylist && (
+            <div className="flex justify-end mb-3">
+              <SortControl
+                sort={url.sort}
+                shuffle={url.shuffle}
+                relevanceMode={inSearch || inSimilar}
+                onSelectSort={(key) => url.set({ sort: key, shuffle: null })}
+                onToggleShuffle={() =>
+                  url.set({ shuffle: url.shuffle != null ? null : Math.floor(Math.random() * 2_000_000_000) })
+                }
+              />
+            </div>
+          )}
+
           <MediaGrid
             items={items}
             onSelect={handleOpen}
@@ -1048,6 +1093,7 @@ function HomeContent() {
         reelHasMore={hasMore}
         onSelectItem={(it) => setSelectedUuid(it.uuid)}
         onAddToPlaylist={(it) => setAddToPlaylistItem(it)}
+        onExclude={(it) => setExcludeItem(it)}
         quiet={quietMode}
         suspended={screensaverOpen}
         initialTimeMs={url.tMs}
@@ -1057,6 +1103,27 @@ function HomeContent() {
         <AddToPlaylistDialog
           item={addToPlaylistItem}
           onClose={() => setAddToPlaylistItem(null)}
+        />
+      )}
+
+      {excludeItem && (
+        <ConfirmDialog
+          title="Exclude this item?"
+          message="It'll be hidden from all results — browse, search, playlists, everywhere. The file isn't deleted from disk, so this is recoverable."
+          confirmLabel="Exclude"
+          danger
+          onCancel={() => setExcludeItem(null)}
+          onConfirm={() => {
+            const target = excludeItem;
+            // If it's the item open in the viewer, advance to a neighbor first
+            // (or close if it was the last) so we don't strand on a vanished item.
+            if (selected && selected.uuid === target.uuid) {
+              const nextUuid = items[selectedIndex + 1]?.uuid ?? items[selectedIndex - 1]?.uuid ?? null;
+              setSelectedUuid(nextUuid);
+            }
+            excludeMutation.mutate({ uuid: target.uuid, librarySlug: target.librarySlug });
+            setExcludeItem(null);
+          }}
         />
       )}
 

@@ -24,7 +24,15 @@ export type SyncEvent =
   | { type: 'item.like'; librarySlug: string; uuid: string; count: number }
   | { type: 'item.tag.changed'; librarySlug: string; uuid: string }
   | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
+  /** An item was soft-deleted ("excluded"); other tabs drop it from grids and
+   *  close it if it's the one they have open. */
+  | { type: 'item.excluded'; librarySlug: string; uuid: string }
   | { type: 'playlist.changed' }
+  /** Solo-audio rule: a window broadcasts this when the user unmutes it, and
+   *  every OTHER window/device mutes itself in response. Muting broadcasts
+   *  nothing (everyone just stays muted). No payload — the sender is identified
+   *  by the envelope's sessionId, which it skips on echo. */
+  | { type: 'audio.unmuted' }
   /** Build version of the server process this stream is connected to. Sent
    *  in the on-connect snapshot and again on every EventSource reconnect, so
    *  when the prod process restarts onto a new build the client sees the new

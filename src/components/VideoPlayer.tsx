@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShortcut } from '@/lib/shortcuts';
 import { usePreference } from '@/lib/preferences';
-import { useAudioLeader } from '@/lib/audio-leader';
+import { useSync, useSyncEvent } from '@/lib/sync';
 import {
   clearVideoProgress,
   getVideoProgress,
@@ -85,25 +85,25 @@ export function VideoPlayer({
   const currentTimeRef = useRef<HTMLSpanElement>(null);
 
   const [playing, setPlaying] = useState(false);
-  // Volume stays a cross-tab preference — same global level everywhere.
-  // Muted is intentionally LOCAL to this tab: a shared preference races
-  // the audio-leader BroadcastChannel (storage event vs message event)
-  // and can briefly unmute siblings when the user toggles one window.
-  // Per-tab muted closes that race entirely. We seed the initial value
-  // from the preference so a user who set "muted by default" still gets
-  // a muted first paint.
-  const [mutedPrefInitial] = usePreference('videoMuted');
-  const [muted, setMuted] = useState<boolean>(mutedPrefInitial);
+  // Volume *level* stays a cross-tab preference (same loudness everywhere).
+  // Mute is per-window and deliberately NOT persisted: a fresh window load
+  // always starts muted (also autoplay-policy friendly), and the user unmutes
+  // when they want sound. There's no shared mute state worth remembering
+  // because unmuting one window mutes all the others (the solo-audio rule).
+  const [muted, setMuted] = useState(true);
   const [volume, setVolume] = usePreference('videoVolume');
   const [duration, setDuration] = useState<number | null>(null);
 
-  // Single-audio coordinator. `forceMute` is on when either the
-  // screensaver has suppressed everyone, or another player owns the
-  // audio token. UI shows the muted icon in that case so the user
-  // understands why no sound — clicking unmute claims leadership.
-  const audio = useAudioLeader();
-  const forceMute = audio.suppressed || (audio.leaderActive && !audio.isLeader);
-  const effectiveMuted = muted || forceMute;
+  // Solo-audio coordination over the sync layer (same-browser via
+  // BroadcastChannel + cross-device via SSE): unmuting THIS window broadcasts
+  // `audio.unmuted` so every other window/device mutes; receiving it mutes us.
+  // Muting broadcasts nothing — everyone just stays muted until a manual unmute.
+  const sync = useSync();
+  useSyncEvent('audio.unmuted', () => setMuted(true));
+  const applyMute = (next: boolean) => {
+    setMuted(next);
+    if (!next) sync.publish({ type: 'audio.unmuted' });
+  };
   const [controlsVisible, setControlsVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
   // True while the cursor is sitting on the controls bar. Holds the idle
@@ -239,39 +239,31 @@ export function VideoPlayer({
   function toggleMute() {
     const video = videoRef.current;
     if (!video) return;
-    // `video.muted` reflects the EFFECTIVE state (may be force-muted by
-    // the audio leader or screensaver). If the user clicks the mute icon
-    // while in that state, intent is "give THIS player audio" — claim
-    // leadership first so the next effect render unblocks the audio.
-    const next = !video.muted;
+    const next = !muted;
     if (!next && volume === 0) {
+      // Unmuting at zero volume would be silent — nudge to an audible level.
       setVolume(0.5);
       video.volume = 0.5;
     }
-    if (next) audio.release();
-    else      audio.claim();
-    video.muted = next;
-    setMuted(next);
+    applyMute(next);
   }
 
   function changeVolume(v: number) {
     setVolume(v);
-    // Slider drives the muted flag too: dragging to 0 mutes, dragging up
-    // from 0 unmutes — keeps the invariant "slider value = audible level".
-    if (v === 0 && !muted) setMuted(true);
-    else if (v > 0 && muted) setMuted(false);
+    // Slider doubles as mute: drag to 0 mutes; drag up from 0 unmutes (and
+    // solos audio to this window) — keeps "slider value = audible level".
+    if (v === 0 && !muted) applyMute(true);
+    else if (v > 0 && muted) applyMute(false);
   }
 
-  // Apply effective mute (preference OR force) + volume to the element
-  // whenever any input changes — including the audio-leader / screensaver
-  // signals, so another tab claiming audio (or the screensaver opening)
-  // mutes this video in the same render.
+  // Keep the element's mute/volume in sync with state — covers a remote unmute
+  // muting us, slider changes, and per-item element swaps.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.muted = effectiveMuted;
+    v.muted = muted;
     v.volume = volume;
-  }, [effectiveMuted, volume]);
+  }, [muted, volume]);
 
   function seekBy(seconds: number) {
     const video = videoRef.current;
@@ -353,19 +345,13 @@ export function VideoPlayer({
         src={src}
         autoPlay={autoPlay}
         playsInline
-        // Honor the persisted mute preference on the initial render of every
-        // new video element — covers maxed-toggle remounts and switching items.
+        // Mute starts on for every new element (fresh load / item swap / maxed
+        // remount); the user unmutes deliberately.
         muted={muted}
         onClick={togglePlay}
         onPlay={() => {
           setPlaying(true);
           showControls();
-          // Whoever starts playing audibly wins the audio token. If
-          // there's already a leader (another tab or this same tab's
-          // earlier play), the apply effect will force-mute us instead;
-          // we only steal the token when we're actually about to make
-          // sound (`effectiveMuted` reflects screensaver + force-mute).
-          if (!effectiveMuted) audio.claim();
         }}
         onPause={() => { setPlaying(false); setControlsVisible(true); }}
         onLoadedMetadata={(e) => {
@@ -476,24 +462,19 @@ export function VideoPlayer({
           <div className="flex items-center gap-1.5">
             <ControlButton
               onClick={toggleMute}
-              title={
-                audio.suppressed ? 'Muted (screensaver)'
-                : forceMute     ? 'Muted (another video is playing)'
-                : effectiveMuted ? 'Unmute (M)'
-                : 'Mute (M)'
-              }
+              title={muted ? 'Unmute (M)' : 'Mute (M)'}
             >
-              {effectiveMuted || volume === 0 ? <MuteIcon /> : <VolumeIcon />}
+              {muted || volume === 0 ? <MuteIcon /> : <VolumeIcon />}
             </ControlButton>
             <input
               type="range"
               min={0}
               max={1}
               step={0.05}
-              value={effectiveMuted ? 0 : volume}
+              value={muted ? 0 : volume}
               onChange={(e) => changeVolume(parseFloat(e.target.value))}
               aria-label="Volume"
-              title={`Volume — ${Math.round((effectiveMuted ? 0 : volume) * 100)}%`}
+              title={`Volume — ${Math.round((muted ? 0 : volume) * 100)}%`}
               className="w-20 accent-emerald-400 cursor-pointer"
             />
           </div>

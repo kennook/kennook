@@ -26,13 +26,14 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: 'nav.prevItem',
     label: 'Previous item',
     category: 'navigation',
-    defaultKeys: ['ArrowUp'],
+    defaultKeys: ['Meta+ArrowLeft'],
+    description: 'Matches the on-screen ← arrow; plain ←/→ stay video seek',
   },
   {
     id: 'nav.nextItem',
     label: 'Next item',
     category: 'navigation',
-    defaultKeys: ['ArrowDown'],
+    defaultKeys: ['Meta+ArrowRight'],
   },
 
   // Viewer
@@ -109,8 +110,70 @@ function isTypingTarget(e: KeyboardEvent): boolean {
   return false;
 }
 
-/** Format a key for display in the help overlay. */
+// ─── Binding matching (with modifiers) ──────────────────────────────────────
+//
+// A binding is either a bare key ("ArrowUp", "f", "+") or a modifier combo
+// ("Meta+ArrowLeft"). Modifiers: Meta (⌘), Ctrl, Shift, Alt. We peel known
+// "Mod+" prefixes off the FRONT so the literal "+" key (zoom in) still parses
+// as a bare key rather than being split apart.
+
+const MODIFIERS = ['Meta', 'Ctrl', 'Shift', 'Alt'] as const;
+type Modifier = typeof MODIFIERS[number];
+
+function parseBinding(binding: string): { key: string; mods: Set<Modifier> } {
+  const mods = new Set<Modifier>();
+  let rest = binding;
+  let peeled = true;
+  while (peeled) {
+    peeled = false;
+    for (const m of MODIFIERS) {
+      const prefix = `${m}+`;
+      // The length guard keeps "+" (and "Meta+" with no key) from collapsing
+      // to an empty key.
+      if (rest.startsWith(prefix) && rest.length > prefix.length) {
+        mods.add(m);
+        rest = rest.slice(prefix.length);
+        peeled = true;
+      }
+    }
+  }
+  return { key: rest, mods };
+}
+
+function bindingHasModifier(binding: string): boolean {
+  return parseBinding(binding).mods.size > 0;
+}
+
+/**
+ * Match a KeyboardEvent against a binding. A bare binding requires Meta AND
+ * Ctrl to be absent — so plain ← (video seek) does NOT also fire on ⌘← (prev
+ * item). Shift/Alt are left unconstrained for bare bindings because they're
+ * part of producing the character (e.g. "?" is Shift+/). Combos check all four.
+ */
+function matchesBinding(e: KeyboardEvent, binding: string): boolean {
+  const { key, mods } = parseBinding(binding);
+  if (e.key !== key) return false;
+  if (e.metaKey !== mods.has('Meta')) return false;
+  if (e.ctrlKey !== mods.has('Ctrl')) return false;
+  if (mods.size > 0) {
+    if (e.shiftKey !== mods.has('Shift')) return false;
+    if (e.altKey !== mods.has('Alt')) return false;
+  }
+  return true;
+}
+
+const MOD_GLYPH: Record<Modifier, string> = {
+  Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Meta: '⌘',
+};
+
+/** Format a key (or combo) for display in the help overlay, e.g. ⌘←. */
 export function formatKey(k: string): string {
+  const { key, mods } = parseBinding(k);
+  const prefix = MODIFIERS.filter((m) => mods.has(m)).map((m) => MOD_GLYPH[m]).join('');
+  return prefix + formatBaseKey(key);
+}
+
+function formatBaseKey(k: string): string {
   if (k === ' ') return 'Space';
   if (k === 'ArrowLeft') return '←';
   if (k === 'ArrowRight') return '→';
@@ -138,7 +201,12 @@ export function useShortcut(
 
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e)) return;
-      if (keys.includes(e.key)) handlerRef.current(e);
+      const matched = keys.find((k) => matchesBinding(e, k));
+      if (!matched) return;
+      // Modifier combos (e.g. ⌘←) collide with the browser's own bindings
+      // (Back/Forward on macOS) — suppress the default so navigation wins.
+      if (bindingHasModifier(matched)) e.preventDefault();
+      handlerRef.current(e);
     };
 
     window.addEventListener('keydown', onKey);
@@ -211,7 +279,7 @@ export function useTapOrHold(id: string, opts: TapOrHoldOptions) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(e)) return;
-      if (!keys.includes(e.key)) return;
+      if (!keys.some((k) => matchesBinding(e, k))) return;
       e.preventDefault(); // suppress browser default (scroll, etc.)
       if (pressed) return; // ignore keyboard autorepeat
       pressed = true;
@@ -223,7 +291,7 @@ export function useTapOrHold(id: string, opts: TapOrHoldOptions) {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (!keys.includes(e.key)) return;
+      if (!keys.some((k) => matchesBinding(e, k))) return;
       const elapsed = performance.now() - downAt;
       const wasHolding = holding;
       pressed = false;

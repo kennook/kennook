@@ -40,6 +40,19 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
     PRAGMA foreign_keys = ON;
   `);
 
+  // Deterministic per-(id, seed) hash for the shuffle sort (ORDER BY
+  // shuffle_key(m.id, seed)). A murmur-style avalanche: different seeds give
+  // genuinely different orders (not rotations of one another), and adjacent ids
+  // don't land adjacently — which a plain `(id*prime+seed) % p` can't do in
+  // SQLite (no XOR operator, no intermediate vars). Returns a 31-bit int.
+  sqlite.function('shuffle_key', { deterministic: true }, (id, seed) => {
+    let h = (Number(id) ^ Number(seed)) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 2246822519) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 3266489917) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
+    return h & 0x7fffffff;
+  });
+
   initSchema(sqlite);
   applyMigrations(sqlite);
   _connections.set(slug, sqlite);
@@ -48,7 +61,7 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 15;
+const LATEST_SCHEMA_VERSION = 16;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -415,6 +428,16 @@ function applyMigrations(sqlite: DatabaseSync) {
     try { sqlite.exec('ALTER TABLE media_items ADD COLUMN video_bitrate INTEGER'); } catch { /* column exists */ }
     try { sqlite.exec('ALTER TABLE media_items ADD COLUMN video_codec TEXT'); } catch { /* column exists */ }
     version = 15;
+  }
+
+  // ── v16: by-item indexes for the "most liked (everyone)" + "most viewed"
+  // sorts. Existing indexes lead with user_id (media_likes PK / media_views_
+  // user_idx), so the SUM/COUNT-by-media_item_id sort subqueries would table-
+  // scan per row without these.
+  if (version < 16) {
+    sqlite.exec('CREATE INDEX IF NOT EXISTS media_likes_item_idx ON media_likes(media_item_id)');
+    sqlite.exec('CREATE INDEX IF NOT EXISTS media_views_item_idx ON media_views(media_item_id)');
+    version = 16;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

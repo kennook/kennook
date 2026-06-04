@@ -8,6 +8,15 @@ export type Orientation = 'portrait' | 'landscape' | 'square';
 export type Quality = 'sd' | 'hd' | '4k';
 export type Watched = 'watched' | 'unwatched';
 export type SensitiveFilter = 'hide' | 'only';
+export type SortKey =
+  | 'taken-desc' | 'taken-asc'   // capture date
+  | 'added-desc' | 'added-asc'   // date added to library
+  | 'likes'                      // your rating
+  | 'likes-all'                  // everyone's likes
+  | 'views';                     // total views (all users)
+export const SORT_KEYS: readonly SortKey[] = [
+  'taken-desc', 'taken-asc', 'added-desc', 'added-asc', 'likes', 'likes-all', 'views',
+];
 
 /**
  * Everything that determines what's shown on the page, encoded in the URL.
@@ -33,6 +42,12 @@ export interface PageState {
   minLikes: number | null;
   watched: Watched | null;
   sensitive: SensitiveFilter | null;
+  /** Result ordering. null → the view's natural default (browse: newest taken;
+   *  search/similar: relevance). Ignored while `shuffle` is active. */
+  sort: SortKey | null;
+  /** Shuffle seed. Non-null → results in a stable seeded-random order until
+   *  toggled off. Overrides `sort`. */
+  shuffle: number | null;
   /** Active library slug. Lives in the URL (not just the cookie) so each
    *  tab has its own source of truth — fixes a cross-tab leak where flipping
    *  libraries in one tab silently changed the next tab's reload. */
@@ -56,7 +71,7 @@ export interface PageState {
 // Keys we manage in the URL. Anything not in this list is left alone, so other
 // libraries (analytics, etc.) can drop their own params without us clobbering.
 // `ws` is the pre-rename library key — we still read it but always write `lib`.
-const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
+const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'sort', 'shuffle', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
 type UrlKey = typeof ALL_KEYS[number];
 
 // Keys that DON'T reset `page` when they change — these don't alter
@@ -98,6 +113,16 @@ function parseState(params: URLSearchParams): PageState {
     sensitive: (() => {
       const s = params.get('sensitive');
       return s === 'hide' || s === 'only' ? s : null;
+    })(),
+    sort: (() => {
+      const s = params.get('sort');
+      return (SORT_KEYS as readonly string[]).includes(s ?? '') ? (s as SortKey) : null;
+    })(),
+    shuffle: (() => {
+      const raw = params.get('shuffle');
+      if (!raw) return null;
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? n : null;
     })(),
     // Prefer the new `lib` key; fall back to legacy `ws` for old bookmarks.
     library: params.get('lib') ?? params.get('ws'),
@@ -147,6 +172,8 @@ function applyPatchToParams(
   if ('minLikes' in patch) writeKey(out, 'likes', patch.minLikes);
   if ('watched' in patch) writeKey(out, 'seen', patch.watched);
   if ('sensitive' in patch) writeKey(out, 'sensitive', patch.sensitive);
+  if ('sort' in patch) writeKey(out, 'sort', patch.sort);
+  if ('shuffle' in patch) writeKey(out, 'shuffle', patch.shuffle);
   if ('library' in patch) {
     // Write the new key and clear the legacy one so old `?ws=` doesn't linger.
     writeKey(out, 'lib', patch.library);

@@ -72,6 +72,9 @@ interface Props {
   /** Open the "Add to playlist" dialog targeting this item. Parent owns
    *  the dialog so it can mount above the viewer. */
   onAddToPlaylist?: (item: MediaItemDto) => void;
+  /** Exclude (soft-delete) this item. Parent owns the confirm dialog +
+   *  the advance-to-next/close behavior. */
+  onExclude?: (item: MediaItemDto) => void;
   /** Controlled maxed-mode flag. When BOTH `maxed` and `onMaxedChange`
    *  are provided, the viewer is controlled and the parent owns the
    *  state (typically synced to the URL). When omitted, the viewer
@@ -106,6 +109,7 @@ export function MediaViewer({
   onRotate,
   reelItems, reelHasMore, onSelectItem,
   onAddToPlaylist,
+  onExclude,
   maxed: controlledMaxed,
   onMaxedChange,
   quiet = false,
@@ -1114,6 +1118,19 @@ export function MediaViewer({
               </button>
             )}
 
+            {/* Exclude (soft-delete) — for corrupted files or items that don't
+                belong. Hidden from all results; recoverable in the DB. */}
+            {onExclude && (
+              <button
+                onClick={() => onExclude(item)}
+                className="w-full bg-red-950/50 hover:bg-red-900/60 text-red-200 ring-1 ring-red-900/50
+                           rounded-md py-2 text-sm font-medium transition flex items-center justify-center gap-2"
+              >
+                <TrashIcon />
+                Exclude…
+              </button>
+            )}
+
             <Field label="Type" value={item.kind} />
             {item.width && item.height && (
               <Field label="Dimensions" value={`${item.width} × ${item.height}`} />
@@ -1233,6 +1250,15 @@ export function MediaViewer({
                 title={`Rotate (currently ${item.rotation ?? 0}°)`}
               >
                 <RotateIcon />
+              </ToolbarButton>
+            )}
+            {onExclude && (
+              <ToolbarButton
+                onClick={() => onExclude(item)}
+                title="Exclude (hide from all results)"
+                className="text-red-300 hover:text-red-200 ring-1 ring-red-900/50"
+              >
+                <TrashIcon />
               </ToolbarButton>
             )}
             {/* Fit/cover migrates here during slideshow — its usual home in
@@ -1502,7 +1528,7 @@ function NavButton({
         // event; swallow it here so it can't reach the media element below
         // (which has its own click-to-toggle-play behavior on videos).
         onDoubleClick={(e) => e.stopPropagation()}
-        title={side === 'left' ? 'Previous — ←' : 'Next — →'}
+        title={side === 'left' ? 'Previous — ⌘←' : 'Next — ⌘→'}
         aria-label={side === 'left' ? 'Previous' : 'Next'}
         className={`w-11 h-11 rounded-full bg-black/80 hover:bg-black/95
                     text-zinc-100 flex items-center justify-center transition shadow-lg
@@ -1870,6 +1896,12 @@ function RotateIcon() { return (
     {/* Three-quarter-circle arrow suggesting "rotate 90°". */}
     <path d="M3 8a5 5 0 0 1 9-3" />
     <path d="M12 2v3h-3" />
+  </svg>
+); }
+function TrashIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L12 4" />
   </svg>
 ); }
 

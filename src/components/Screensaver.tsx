@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useScreensaverIndex } from '@/lib/sync';
-import { audioLeader } from '@/lib/audio-leader';
 
 interface Props {
   open: boolean;
@@ -85,15 +84,6 @@ export function Screensaver({ open, onExit }: Props) {
     });
     return () => { cancelled = true; };
   }, [open, src, assignedIndex]);
-
-  // While the screensaver is up, suppress audio on every VideoPlayer in
-  // this tab — otherwise the previously-playing video keeps blaring
-  // behind the ambient screensaver loop. Cleanup releases the suppression
-  // when the screensaver closes (or the component unmounts mid-show).
-  useEffect(() => {
-    audioLeader.setSuppressed(open);
-    return () => { audioLeader.setSuppressed(false); };
-  }, [open]);
 
   // Keep the screen awake while the screensaver is on. Crucial on mobile:
   // a muted video doesn't otherwise prevent the screen from sleeping, and

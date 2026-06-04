@@ -56,6 +56,13 @@ export function isAssetId(query: string): boolean {
 const orientationSchema = z.enum(['portrait', 'landscape', 'square']).optional();
 const watchedSchema = z.enum(['watched', 'unwatched']).optional();
 const qualitySchema = z.enum(['sd', 'hd', '4k']).optional();
+const sortSchema = z.enum([
+  'taken-desc', 'taken-asc', // capture date (EXIF, falls back to added date)
+  'added-desc', 'added-asc', // date added to the library (created_at)
+  'likes',                   // this user's 1–5 rating
+  'likes-all',               // summed likes across all users
+  'views',                   // total views across all users
+]).optional();
 
 // Resolution-tier expression, keyed off the SHORTER side so portrait phone
 // clips (1080×1920) tier the same as landscape 1080p. Three simple buckets:
@@ -99,8 +106,45 @@ const filterShape = z.object({
    *    'only' → keep ONLY those items (review mode).
    *  Unset → no filter; flagged items still surface (with a badge). */
   sensitive: z.enum(['hide', 'only']).optional(),
+  /** Result ordering. Unset → each view's natural default (browse: newest by
+   *  capture date; search/similar: relevance). When `shuffleSeed` is set it
+   *  overrides `sort` with a stable seeded random order. */
+  sort: sortSchema,
+  shuffleSeed: z.number().int().optional(),
 });
 export type MediaFilters = z.infer<typeof filterShape>;
+
+// Build the ORDER BY clause + bind params for a list/search/similar query.
+// `shuffleSeed` (when present) wins with a deterministic seeded permutation —
+// stable across pages/reloads so the shuffle (and the slideshow that walks the
+// same array) doesn't re-scramble per page. Otherwise honor `sort`; when
+// neither is set, fall back to the caller's natural order (`fallback`, e.g.
+// relevance for search). Non-chronological sorts get a captured-date tiebreaker
+// so ties (0 likes/views) stay deterministic across pages.
+const CHRON_TIEBREAK = 'COALESCE(m.captured_at, m.created_at) DESC';
+
+function buildOrderBy(
+  filters: MediaFilters,
+  fallback: string,
+): { sql: string; params: SqlParam[] } {
+  if (filters.shuffleSeed != null) {
+    // shuffle_key is a custom SQL function registered per connection (see
+    // src/db/client.ts) — a proper avalanche hash, stable per seed.
+    return { sql: 'ORDER BY shuffle_key(m.id, ?)', params: [filters.shuffleSeed] };
+  }
+  let expr: string;
+  switch (filters.sort) {
+    case 'taken-desc': expr = 'COALESCE(m.captured_at, m.created_at) DESC'; break;
+    case 'taken-asc':  expr = 'COALESCE(m.captured_at, m.created_at) ASC'; break;
+    case 'added-desc': expr = 'm.created_at DESC'; break;
+    case 'added-asc':  expr = 'm.created_at ASC'; break;
+    case 'likes':      expr = `like_count DESC, ${CHRON_TIEBREAK}`; break;
+    case 'likes-all':  expr = `(SELECT COALESCE(SUM(count), 0) FROM media_likes WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
+    case 'views':      expr = `(SELECT COUNT(*) FROM media_views WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
+    default:           expr = fallback;
+  }
+  return { sql: `ORDER BY ${expr}`, params: [] };
+}
 
 // Records that the current user has interacted with the item — called from
 // every place an interaction happens (open in viewer, like, tag, playlist
@@ -480,6 +524,7 @@ export const mediaRouter = router({
     .query(({ input, ctx }) => {
       const sqlite = getRawSqlite(ctx.library.slug);
       const { where, params } = buildFilterClauses(input, ctx);
+      const order = buildOrderBy(input, 'COALESCE(m.captured_at, m.created_at) DESC');
       const effectiveOffset = input.cursor ?? input.offset;
       // Fetch limit+1 to detect a next page without a separate COUNT(*).
       const rows = sqlite.prepare(`
@@ -489,9 +534,9 @@ export const mediaRouter = router({
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE ${where}
-        ORDER BY COALESCE(m.captured_at, m.created_at) DESC
+        ${order.sql}
         LIMIT ? OFFSET ?
-      `).all(ctx.userId, ...params, input.limit + 1, effectiveOffset) as unknown as MediaRow[];
+      `).all(ctx.userId, ...params, ...order.params, input.limit + 1, effectiveOffset) as unknown as MediaRow[];
       const hasMore = rows.length > input.limit;
       return {
         items: rows.slice(0, input.limit).map((r) => rowToDto(r, ctx.library.slug)),
@@ -604,6 +649,8 @@ export const mediaRouter = router({
       // KNN already operates on the full embedding table, then the structural
       // WHERE narrows results.
       const { where, params } = buildFilterClauses(input, ctx);
+      // Nearest-neighbor ranking is the natural default; explicit sort/shuffle overrides.
+      const order = buildOrderBy(input, 'v.vec_similarity DESC');
 
       const effectiveOffset = input.cursor ?? input.offset;
       // Use offset+limit+1 to support pagination + hasMore detection. k is
@@ -631,13 +678,14 @@ export const mediaRouter = router({
         FROM vec_results v
         JOIN media_items m ON m.id = v.id
         WHERE ${where} AND m.id != ?
-        ORDER BY v.vec_similarity DESC
+        ${order.sql}
         LIMIT ? OFFSET ?
       `).all(
         embRow.embedding, k,
         ctx.userId,           // for LIKE_COUNT_EXPR in SELECT
         ...params,            // filter params (incl. minLikes if set)
         source.id,
+        ...order.params,      // shuffle seed, if shuffling
         input.limit + 1, effectiveOffset,
       ) as unknown as SearchRow[];
 
@@ -700,6 +748,8 @@ export const mediaRouter = router({
       const ftsQuery = toFtsQuery(input.query);
 
       const { where, params } = buildFilterClauses(input, ctx);
+      // Relevance is the natural default; an explicit sort/shuffle overrides it.
+      const order = buildOrderBy(input, 'final_score DESC');
 
       const effectiveOffset = input.cursor ?? input.offset;
       // k must exceed offset+limit so pagination doesn't outrun the vector
@@ -735,7 +785,7 @@ export const mediaRouter = router({
         JOIN media_items m ON m.id = v.id
         LEFT JOIN fts_results f ON f.id = v.id
         WHERE ${where}
-        ORDER BY final_score DESC
+        ${order.sql}
         LIMIT ? OFFSET ?
       `);
 
@@ -743,6 +793,7 @@ export const mediaRouter = router({
         queryBuf, k, ftsQuery,
         ctx.userId,           // for LIKE_COUNT_EXPR in SELECT
         ...params,            // filter params (incl. minLikes if set)
+        ...order.params,      // shuffle seed, if shuffling
         input.limit + 1, effectiveOffset,
       ) as unknown as SearchRow[];
 
@@ -936,6 +987,33 @@ export const mediaRouter = router({
         },
       });
       return { uuid: input.uuid, rotation: input.rotation };
+    }),
+
+  // Soft-delete ("exclude") an item: stamp deleted_at so it drops out of EVERY
+  // result set (list/search/similar/playlists/people/facets/enrichment all
+  // filter `deleted_at IS NULL`). The row and its files are left on disk —
+  // recoverable by clearing deleted_at — so this is non-destructive. Use for
+  // corrupted files or items that shouldn't be in the library.
+  exclude: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const item = sqlite.prepare(
+        'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
+      ).get(input.uuid) as { id: number } | undefined;
+      if (!item) throw new Error('Item not found');
+      const now = Date.now();
+      sqlite.prepare(
+        'UPDATE media_items SET deleted_at = ?, updated_at = ? WHERE id = ?',
+      ).run(now, now, item.id);
+
+      // Fan out so every other tab/device drops it from their grids/viewers.
+      publishToUser(ctx.userId, {
+        sessionId: ctx.sessionId,
+        event: { type: 'item.excluded', librarySlug: slug, uuid: input.uuid },
+      });
+      return { uuid: input.uuid };
     }),
 
   // Add a user-typed tag to a media item. Tag name is normalized to lowercase
