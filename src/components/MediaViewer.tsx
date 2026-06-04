@@ -1528,7 +1528,7 @@ function NavButton({
         // event; swallow it here so it can't reach the media element below
         // (which has its own click-to-toggle-play behavior on videos).
         onDoubleClick={(e) => e.stopPropagation()}
-        title={side === 'left' ? 'Previous — ⌘←' : 'Next — ⌘→'}
+        title={side === 'left' ? 'Previous — ⇧← or J' : 'Next — ⇧→ or K'}
         aria-label={side === 'left' ? 'Previous' : 'Next'}
         className={`w-11 h-11 rounded-full bg-black/80 hover:bg-black/95
                     text-zinc-100 flex items-center justify-center transition shadow-lg
