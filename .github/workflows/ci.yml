@@ -1,0 +1,32 @@
+name: CI
+
+# Lightweight gate for the public app repo: typecheck on every push to main and
+# every PR. Skips native postinstalls (--ignore-scripts) — tsc only needs the
+# type declarations, and the heavy deps (onnxruntime, tfjs, sqlite-vec) don't
+# build cleanly/quickly in CI and aren't needed to typecheck.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm typecheck
