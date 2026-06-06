@@ -126,3 +126,16 @@ No separate search server. No Elasticsearch. SQLite handles libraries up to ~500
 | 0.3 | Smart albums, auto-tagging, collections |
 | 0.5 | Multi-user, BYOC (S3/R2 backends) |
 | 1.0 | Polished UI, PWA, paid Pro tier |
+
+## Status & support
+
+KenNook is **early and built by one person**. It's free to self-host, forever.
+Bug reports are welcome, but support is best-effort and I'm not taking feature
+requests yet while the core stabilizes. Please use **Discussions** for questions
+and **Issues** for reproducible bugs.
+
+## License
+
+[GNU AGPL-3.0](LICENSE). Free to use, modify, and self-host. If you run a
+**modified** version as a network service, the AGPL requires you to offer your
+users the source. The managed/cloud edition of KenNook is a separate offering.

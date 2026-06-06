@@ -1,12 +1,10 @@
 # pnpm v10+ canonical settings file.
 
-# Workspace packages. Root is the kennook app (Next.js library viewer).
-# `marketing/` is the public kennook.com Next.js site (deployed via OpenNext
-# + CDK). `infra/` is the CDK TypeScript app that provisions both.
+# Workspace package: the self-hosted KenNook app. The marketing site
+# (kennook.com) and AWS CDK infra were split into a separate private repo so
+# this public repo is just the product.
 packages:
   - .
-  - marketing
-  - infra
 
 
 # Approve native-binding install/postinstall scripts for legitimate deps.
