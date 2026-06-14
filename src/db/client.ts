@@ -61,7 +61,7 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 16;
+const LATEST_SCHEMA_VERSION = 17;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -438,6 +438,14 @@ function applyMigrations(sqlite: DatabaseSync) {
     sqlite.exec('CREATE INDEX IF NOT EXISTS media_likes_item_idx ON media_likes(media_item_id)');
     sqlite.exec('CREATE INDEX IF NOT EXISTS media_views_item_idx ON media_views(media_item_id)');
     version = 16;
+  }
+
+  // ── v17: manual sensitivity override. Tri-state: NULL = use auto-detection
+  // (nsfw_score/violence_score vs thresholds), 1 = forced sensitive, 0 = forced
+  // safe. Separate from the auto scores so enrich:sensitive never clobbers it.
+  if (version < 17) {
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN sensitive_override INTEGER'); } catch { /* column exists */ }
+    version = 17;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

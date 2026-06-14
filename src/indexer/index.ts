@@ -15,13 +15,7 @@ import {
 import { ensureFfmpegAvailable, extractFrame, probeVideo } from './ffmpeg';
 import { emitProgress } from './progress';
 import { buildStorageRouter, relativeMediaPath, type StorageRouter } from '@/server/storage';
-
-const IMAGE_EXTS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.avif',
-]);
-const VIDEO_EXTS = new Set([
-  '.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.ogv',
-]);
+import { IMAGE_EXTS, VIDEO_EXTS, kindForExt } from './media-extensions';
 
 const DEFAULT_USER_ID = 1;
 
@@ -496,6 +490,57 @@ async function runRetry(library: Library, ffmpegOk: boolean) {
   }
 }
 
+// Index a single file (e.g. an admin upload). Mirrors the per-file logic in
+// runRetry, but for one explicit path. processOne handles storage routing,
+// dedup, thumbnails, metadata, embedding, and the insert.
+async function runSingleFile(absTarget: string, library: Library, ffmpegOk: boolean) {
+  const ext = path.extname(absTarget).toLowerCase();
+  const kind = kindForExt(ext);
+  if (!kind) {
+    console.error(`Unsupported file type "${ext || absTarget}" — not an image or video KenNook can index.`);
+    process.exit(1);
+  }
+  if (kind === 'video' && !ffmpegOk) {
+    console.error('ffmpeg not available — cannot index a video. Install with: brew install ffmpeg');
+    process.exit(1);
+  }
+
+  const sqlite = getRawSqlite(library.slug);
+  const router = buildStorageRouter(sqlite);
+  const stat = await fs.promises.stat(absTarget);
+  const ctx: PipelineCtx = {
+    filepath: absTarget,
+    filename: path.basename(absTarget),
+    ext,
+    kind,
+    stat,
+  };
+
+  console.log(`Indexing 1 file → library "${library.name}" (${library.slug})`);
+  emitProgress({
+    step: 'Indexing', current: 0, total: 1,
+    label: `indexing ${ctx.filename}`,
+    currentItem: absTarget, currentItemKind: 'path',
+  });
+
+  try {
+    const result = await processOne(ctx, library.slug, router);
+    const done = result.status === 'indexed' ? 'indexed' : 'skipped (duplicate)';
+    emitProgress({ step: 'Indexing', current: 1, total: 1, label: `done — ${done}` });
+    console.log(result.status === 'indexed'
+      ? `✓ Indexed ${ctx.filename}`
+      : `↷ Skipped ${ctx.filename} (duplicate of item #${result.id})`);
+  } catch (err) {
+    // Single-file mode intentionally does NOT touch failed-files.json — that
+    // list is library-wide and overwriting it here would clobber a prior scan's
+    // failures. The non-zero exit + stderr is what the job runner records.
+    const msg = err instanceof Error ? err.message : String(err);
+    emitProgress({ step: 'Indexing', current: 1, total: 1, label: `failed — ${msg}` });
+    console.error(`✗ ${ctx.filename}: ${msg}`);
+    process.exit(1);
+  }
+}
+
 // ─── Entry ────────────────────────────────────────────────────────────────
 async function main() {
   const { librarySlug, targetPath, retry } = parseArgs(process.argv.slice(2));
@@ -517,7 +562,13 @@ async function main() {
     process.exit(1);
   }
 
-  await runFreshIndex(absTarget, library, ffmpegOk);
+  // A directory walks as a fresh index; a single file (e.g. an admin upload)
+  // indexes just that one file.
+  if (fs.statSync(absTarget).isDirectory()) {
+    await runFreshIndex(absTarget, library, ffmpegOk);
+  } else {
+    await runSingleFile(absTarget, library, ffmpegOk);
+  }
 }
 
 main().catch((err) => {

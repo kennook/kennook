@@ -11,9 +11,13 @@ import {
 } from '@/server/storage';
 
 export const storageRouter = router({
-  list: publicProcedure.query(({ ctx }) => {
-    return listStorageInfo(getRawSqlite(ctx.library.slug));
-  }),
+  // `librarySlug` lets callers (e.g. the Move-to-library dialog) list a
+  // DIFFERENT library's storages than the active one. Defaults to the active.
+  list: publicProcedure
+    .input(z.object({ librarySlug: z.string().optional() }).optional())
+    .query(({ ctx, input }) => {
+      return listStorageInfo(getRawSqlite(input?.librarySlug ?? ctx.library.slug));
+    }),
 
   // Cheap existence/type probe for the AddStorage / Relocate dialog inputs.
   // Lets the UI validate paths before the user commits.

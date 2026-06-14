@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { router, publicProcedure } from '@/server/trpc';
 import { getRawSqlite } from '@/db/client';
@@ -6,6 +8,11 @@ import { embedText, floatArrayToBuffer } from '@/ai/embeddings';
 import type { Context } from '@/server/trpc';
 import { publishToUser } from '@/server/sync-broker';
 import { NSFW_THRESHOLD, VIOLENCE_THRESHOLD } from '@/lib/sensitive-thresholds';
+import { getLibraryBySlug } from '@/server/libraries';
+import { getStorageRootPath, resolveMediaPath } from '@/server/storage';
+import { enqueue, ensureRunnerStarted } from '@/server/admin/job-runner';
+import { purgeMediaItem } from '@/server/media-purge';
+import { uniquePath, moveFile } from '@/server/fs-move';
 
 interface MediaRow {
   id: number;
@@ -25,6 +32,7 @@ interface MediaRow {
   rotation: number;
   nsfw_score: number;
   violence_score: number;
+  sensitive_override: number | null;
 }
 
 export const MAX_LIKES = 5;
@@ -287,11 +295,13 @@ function buildFilterClauses(filters: MediaFilters, ctx: Context): FilterClauses 
     }
   }
 
+  // Effective sensitivity = manual override if set (1/0), else auto-detection.
+  // Mirror of effectiveSensitive() from sensitive-thresholds.ts, in SQL.
   if (filters.sensitive === 'hide') {
-    where.push('(m.nsfw_score < ? AND m.violence_score < ?)');
+    where.push('COALESCE(m.sensitive_override, CASE WHEN m.nsfw_score >= ? OR m.violence_score >= ? THEN 1 ELSE 0 END) = 0');
     params.push(NSFW_THRESHOLD, VIOLENCE_THRESHOLD);
   } else if (filters.sensitive === 'only') {
-    where.push('(m.nsfw_score >= ? OR m.violence_score >= ?)');
+    where.push('COALESCE(m.sensitive_override, CASE WHEN m.nsfw_score >= ? OR m.violence_score >= ? THEN 1 ELSE 0 END) = 1');
     params.push(NSFW_THRESHOLD, VIOLENCE_THRESHOLD);
   }
 
@@ -530,7 +540,7 @@ export const mediaRouter = router({
       const rows = sqlite.prepare(`
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-               m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+               m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE ${where}
@@ -538,9 +548,16 @@ export const mediaRouter = router({
         LIMIT ? OFFSET ?
       `).all(ctx.userId, ...params, ...order.params, input.limit + 1, effectiveOffset) as unknown as MediaRow[];
       const hasMore = rows.length > input.limit;
+      // Exact total over the same filter clause — cheap (indexed COUNT) and
+      // lets the UI show "Page X of Y" + a jump-to-last control. The leading
+      // user_id placeholder is already in `params`.
+      const total = sqlite.prepare(
+        `SELECT COUNT(*) AS n FROM media_items m WHERE ${where}`,
+      ).get(...params) as { n: number };
       return {
         items: rows.slice(0, input.limit).map((r) => rowToDto(r, ctx.library.slug)),
         hasMore,
+        totalCount: total.n,
         nextCursor: hasMore ? effectiveOffset + input.limit : undefined,
       };
     }),
@@ -552,7 +569,7 @@ export const mediaRouter = router({
       const row = sqlite.prepare(`
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-               m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+               m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE m.id = ? AND m.user_id = ? AND m.deleted_at IS NULL
@@ -627,7 +644,7 @@ export const mediaRouter = router({
       const source = sqlite.prepare(`
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-               m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+               m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
@@ -670,7 +687,7 @@ export const mediaRouter = router({
         SELECT
           m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
           m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-          m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+          m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
           ${LIKE_COUNT_EXPR},
           v.vec_similarity AS vec_similarity,
           CAST(NULL AS REAL) AS fts_score,
@@ -721,7 +738,7 @@ export const mediaRouter = router({
         const row = sqlite.prepare(`
           SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                  m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-                 m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+                 m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
                  ${LIKE_COUNT_EXPR}
           FROM media_items m
           WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
@@ -773,7 +790,7 @@ export const mediaRouter = router({
         SELECT
           m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
           m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-          m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+          m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
           ${LIKE_COUNT_EXPR},
           v.vec_similarity AS vec_similarity,
           f.score          AS fts_score,
@@ -1016,6 +1033,178 @@ export const mediaRouter = router({
       return { uuid: input.uuid };
     }),
 
+  // Manual sensitivity override (tri-state): 1 = force sensitive, 0 = force safe,
+  // null = revert to auto-detection. Stored separately from the auto scores so
+  // re-running enrich:sensitive never clobbers it. Mirrors setRotation.
+  setSensitive: publicProcedure
+    .input(z.object({
+      uuid: z.string(),
+      override: z.union([z.literal(0), z.literal(1), z.null()]),
+      librarySlug: z.string().optional(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const item = sqlite.prepare(
+        'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
+      ).get(input.uuid) as { id: number } | undefined;
+      if (!item) throw new Error('Item not found');
+      sqlite.prepare(
+        'UPDATE media_items SET sensitive_override = ?, updated_at = ? WHERE id = ?',
+      ).run(input.override, Date.now(), item.id);
+
+      publishToUser(ctx.userId, {
+        sessionId: ctx.sessionId,
+        event: { type: 'item.sensitive', librarySlug: slug, uuid: input.uuid, override: input.override },
+      });
+      return { uuid: input.uuid, override: input.override };
+    }),
+
+  // Bulk version of setSensitive for the multi-select Actions menu. Items may
+  // span libraries (each ref carries its own slug); best-effort per item.
+  setSensitiveBulk: publicProcedure
+    .input(z.object({
+      items: z.array(z.object({
+        librarySlug: z.string(),
+        itemUuid: z.string(),
+      })).min(1).max(500),
+      override: z.union([z.literal(0), z.literal(1), z.null()]),
+    }))
+    .mutation(({ input, ctx }) => {
+      const touched = new Map<string, string>(); // library slug → one uuid, for sync
+      let updated = 0;
+      const now = Date.now();
+      for (const it of input.items) {
+        const sqlite = getRawSqlite(it.librarySlug);
+        const item = sqlite.prepare(
+          'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
+        ).get(it.itemUuid) as { id: number } | undefined;
+        if (!item) continue;
+        sqlite.prepare(
+          'UPDATE media_items SET sensitive_override = ?, updated_at = ? WHERE id = ?',
+        ).run(input.override, now, item.id);
+        updated++;
+        if (!touched.has(it.librarySlug)) touched.set(it.librarySlug, it.itemUuid);
+      }
+      // One event per affected library — the handler just invalidates lists, so
+      // a representative uuid is enough to refresh every changed item.
+      for (const [slug, uuid] of touched) {
+        publishToUser(ctx.userId, {
+          sessionId: ctx.sessionId,
+          event: { type: 'item.sensitive', librarySlug: slug, uuid, override: input.override },
+        });
+      }
+      return { updated };
+    }),
+
+  // Move selected items to a DIFFERENT library: relocate each file under the
+  // target storage (preserving its source-relative path), hard-remove it from
+  // the source library, then re-index it in the target. Cross-library = cross-DB
+  // + a physical file move, so this can't be one transaction — each item is
+  // best-effort and reported individually. The file is moved BEFORE the source
+  // purge: a failure there leaves an intact source (a duplicate at worst),
+  // whereas purging first could orphan a file with no row. Indexing only — we do
+  // NOT auto-enrich, since the enrich passes run over the whole target library,
+  // not just the moved items.
+  moveToLibrary: publicProcedure
+    .input(z.object({
+      items: z.array(z.object({
+        librarySlug: z.string(),
+        itemUuid: z.string(),
+      })).min(1).max(500),
+      targetLibrarySlug: z.string(),
+      targetStorageId: z.number().int().positive(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const targetSlug = input.targetLibrarySlug;
+      if (!getLibraryBySlug(targetSlug)) {
+        throw new Error(`Target library "${targetSlug}" not found`);
+      }
+      const destSqlite = getRawSqlite(targetSlug);
+      let destRoot: string;
+      try {
+        destRoot = getStorageRootPath(destSqlite, input.targetStorageId);
+      } catch {
+        throw new Error(`Storage ${input.targetStorageId} not found in "${targetSlug}"`);
+      }
+      if (destRoot === '/') {
+        throw new Error('Cannot move into the catch-all "/" storage — pick a real storage location.');
+      }
+      if (!fs.existsSync(destRoot)) {
+        throw new Error(`Target storage root "${destRoot}" is not currently available.`);
+      }
+
+      const moved: string[] = [];
+      const failed: { uuid: string; error: string }[] = [];
+      const sourceSlugs = new Set<string>();
+
+      for (const it of input.items) {
+        const sourceSlug = it.librarySlug;
+        if (sourceSlug === targetSlug) {
+          failed.push({ uuid: it.itemUuid, error: 'Already in the target library' });
+          continue;
+        }
+        try {
+          const srcSqlite = getRawSqlite(sourceSlug);
+          const row = srcSqlite.prepare(
+            `SELECT id, uuid, storage_location_id, path, thumbnail_path, preview_path
+             FROM media_items WHERE uuid = ? AND deleted_at IS NULL`,
+          ).get(it.itemUuid) as {
+            id: number; uuid: string; storage_location_id: number;
+            path: string; thumbnail_path: string | null; preview_path: string | null;
+          } | undefined;
+          if (!row) {
+            failed.push({ uuid: it.itemUuid, error: 'Item not found' });
+            continue;
+          }
+
+          const srcRoot = getStorageRootPath(srcSqlite, row.storage_location_id);
+          const srcAbs = resolveMediaPath(srcRoot, row.path);
+          // Preserve the source-relative path under the new storage root.
+          const destAbs = uniquePath(path.join(destRoot, row.path));
+          fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+          moveFile(srcAbs, destAbs);
+
+          purgeMediaItem(srcSqlite, sourceSlug, {
+            id: row.id,
+            uuid: row.uuid,
+            thumbnail_path: row.thumbnail_path,
+            preview_path: row.preview_path,
+          }, { unlinkOriginal: false });
+
+          enqueue({
+            command: 'indexer',
+            args: { library: targetSlug, path: destAbs },
+            librarySlug: targetSlug,
+            userId: ctx.userId,
+          });
+
+          moved.push(it.itemUuid);
+          sourceSlugs.add(sourceSlug);
+        } catch (err) {
+          failed.push({ uuid: it.itemUuid, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
+      if (moved.length > 0) {
+        ensureRunnerStarted();
+        // Drop the moved items from every affected source grid/viewer.
+        for (const sourceSlug of sourceSlugs) {
+          publishToUser(ctx.userId, {
+            sessionId: ctx.sessionId,
+            event: {
+              type: 'items.moved',
+              librarySlug: sourceSlug,
+              targetLibrarySlug: targetSlug,
+              count: moved.length,
+            },
+          });
+        }
+      }
+
+      return { moved: moved.length, failed };
+    }),
+
   // Add a user-typed tag to a media item. Tag name is normalized to lowercase
   // + trimmed so "Beach", "beach ", "BEACH" all canonicalize. Reuses an
   // existing tag row if name already exists in this library; the link is
@@ -1138,6 +1327,7 @@ function rowToDto(row: MediaRow, librarySlug: string) {
     rotation: row.rotation,
     nsfwScore: row.nsfw_score,
     violenceScore: row.violence_score,
+    sensitiveOverride: row.sensitive_override,
     librarySlug,
     thumbnailUrl: `/api/thumbnails/${row.uuid}${qs}`,
     previewUrl: `/api/preview/${row.uuid}${qs}`,

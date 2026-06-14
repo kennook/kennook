@@ -22,6 +22,17 @@ export function Pagination({ page, hasMore, totalCount, pageSize, onPageChange }
   return (
     <div className="flex items-center justify-center gap-3 mt-8 pb-4 text-sm">
       <button
+        onClick={() => onPageChange(1)}
+        disabled={page <= 1}
+        title="Jump to the first page"
+        className="px-3 py-1.5 rounded-md text-zinc-200 bg-zinc-900 border border-zinc-800
+                   hover:border-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed
+                   disabled:hover:border-zinc-800 transition"
+      >
+        « First
+      </button>
+
+      <button
         onClick={() => onPageChange(page - 1)}
         disabled={page <= 1}
         className="px-3 py-1.5 rounded-md text-zinc-200 bg-zinc-900 border border-zinc-800
@@ -48,6 +59,20 @@ export function Pagination({ page, hasMore, totalCount, pageSize, onPageChange }
       >
         Next →
       </button>
+
+      {/* Jump-to-last only when the total (and thus the last page) is known. */}
+      {totalPages !== null && (
+        <button
+          onClick={() => onPageChange(totalPages)}
+          disabled={page >= totalPages}
+          title="Jump to the last page"
+          className="px-3 py-1.5 rounded-md text-zinc-200 bg-zinc-900 border border-zinc-800
+                     hover:border-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed
+                     disabled:hover:border-zinc-800 transition"
+        >
+          Last »
+        </button>
+      )}
     </div>
   );
 }

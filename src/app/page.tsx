@@ -12,6 +12,7 @@ import {
 } from '@/components/MediaGrid';
 import { MediaViewer } from '@/components/MediaViewer';
 import { ReassignPersonDialog } from '@/components/ReassignPersonDialog';
+import { MoveToLibraryDialog } from '@/components/MoveToLibraryDialog';
 import { AddToPlaylistDialog } from '@/components/AddToPlaylistDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar';
@@ -25,6 +26,7 @@ import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
 import { PlaylistsSection } from '@/components/PlaylistsSection';
+import { SavedSearchesSection } from '@/components/SavedSearchesSection';
 import { PeopleSection } from '@/components/PeopleSection';
 import { SelectionBar } from '@/components/SelectionBar';
 import { Pagination } from '@/components/Pagination';
@@ -203,6 +205,26 @@ function HomeContent() {
     if (url.item === e.uuid) setSelectedUuid(null);
   });
 
+  // Items were moved to another library elsewhere — drop them from our source
+  // grids (re-indexing in the target is async, so nothing to add here).
+  useSyncEvent('items.moved', () => {
+    trpcUtils.media.list.invalidate();
+    trpcUtils.media.search.invalidate();
+    trpcUtils.media.similar.invalidate();
+    trpcUtils.media.facets.invalidate();
+    trpcUtils.playlist.get.invalidate();
+  });
+
+  // A sensitivity override anywhere — refetch lists/facets (items can enter or
+  // leave a sensitivity-filtered view) and the open item's details (the badge).
+  useSyncEvent('item.sensitive', () => {
+    trpcUtils.media.list.invalidate();
+    trpcUtils.media.search.invalidate();
+    trpcUtils.media.similar.invalidate();
+    trpcUtils.media.facets.invalidate();
+    trpcUtils.media.getDetails.invalidate();
+  });
+
   // A tag change anywhere — invalidate the affected item's details (which
   // carries the tag list) and the tag facet.
   useSyncEvent('item.tag.changed', () => {
@@ -215,6 +237,11 @@ function HomeContent() {
   useSyncEvent('playlist.changed', () => {
     trpcUtils.playlist.list.invalidate();
     trpcUtils.playlist.get.invalidate();
+  });
+
+  // A saved search was created/deleted on another tab — refresh the list.
+  useSyncEvent('savedSearch.changed', () => {
+    trpcUtils.savedSearch.list.invalidate();
   });
 
   // Quietly warm the browser cache with the screensaver video during idle
@@ -366,6 +393,7 @@ function HomeContent() {
 
   const clearAllFilters = () => {
     url.set({
+      query: '',
       kind: null,
       orientation: null,
       quality: null,
@@ -424,7 +452,11 @@ function HomeContent() {
     : inSearch ? (search.data?.hasMore ?? false)
     : (recent.data?.hasMore ?? false);
 
-  const totalCount = inPlaylist ? playlist.data?.totalCount : undefined;
+  const totalCount = inPlaylist
+    ? playlist.data?.totalCount
+    : inRecent
+      ? recent.data?.totalCount
+      : undefined; // search/similar are top-K ranked — no meaningful total
 
   // Resolve the visible viewer item from current items + selection state.
   // If a postLoadIntent is set (after a cross-page navigation) and the
@@ -542,14 +574,16 @@ function HomeContent() {
     setAnchor(null);
   };
 
+  // "Selecting" is active when the mode is explicitly armed OR anything is
+  // already selected (via the hover checkbox / cmd-click). In that state a plain
+  // click on a thumbnail toggles its selection instead of opening the preview,
+  // and the Select button shows pressed.
+  const selecting = selectionMode || selection.length > 0;
+
   const toggleSelectionMode = () => {
-    setSelectionMode((m) => {
-      if (m) {
-        setSelection([]);
-        setAnchor(null);
-      }
-      return !m;
-    });
+    // Pressed (selecting) → exit and clear everything; otherwise arm the mode.
+    if (selecting) clearSelection();
+    else setSelectionMode(true);
   };
 
   // Cross-page navigation: at the boundary of the visible page, step into
@@ -626,6 +660,9 @@ function HomeContent() {
   // Items targeted for face reassignment. Single item from the viewer or
   // many from the SelectionBar — same dialog handles both. Null = closed.
   const [reassignItems, setReassignItems] = useState<MediaItemDto[] | null>(null);
+  // The set of items targeted by the move dialog — either the multi-selection
+  // (from the SelectionBar) or a single item (from the viewer kebab).
+  const [moveSelection, setMoveSelection] = useState<SelectionRef[] | null>(null);
   // Item targeted for the "Add to playlist" dialog. Single-item only —
   // multi-add still flows through the SelectionBar's dropdown.
   const [addToPlaylistItem, setAddToPlaylistItem] = useState<MediaItemDto | null>(null);
@@ -739,6 +776,18 @@ function HomeContent() {
     },
   });
 
+  const setSensitiveMutation = trpc.media.setSensitive.useMutation({
+    onSuccess: () => {
+      // An override can move an item in/out of a sensitivity-filtered view and
+      // flips the badge — refetch lists/facets + the open item's details.
+      trpcUtils.media.list.invalidate();
+      trpcUtils.media.search.invalidate();
+      trpcUtils.media.similar.invalidate();
+      trpcUtils.media.facets.invalidate();
+      trpcUtils.media.getDetails.invalidate();
+    },
+  });
+
   const handleRotate = (item: MediaItemDto, nextRotation: 0 | 90 | 180 | 270) => {
     // Optimistic patch first — instant UI feedback. The server mutation
     // confirms and the sync event echoes to other tabs/devices.
@@ -777,13 +826,14 @@ function HomeContent() {
           </div>
           <button
             onClick={toggleSelectionMode}
+            aria-pressed={selecting}
             className={`rounded px-3 py-1 text-sm transition shrink-0 flex items-center gap-1.5
-                        ${selectionMode
-                          ? 'bg-emerald-400 hover:bg-emerald-300 text-zinc-900 font-medium'
+                        ${selecting
+                          ? 'bg-emerald-400 text-zinc-900 font-medium ring-1 ring-inset ring-emerald-600/70 translate-y-px shadow-[inset_0_2px_4px_rgba(0,0,0,0.35)]'
                           : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'}`}
-            title={selectionMode ? 'Exit selection mode' : 'Enter selection mode'}
+            title={selecting ? 'Exit selection mode' : 'Enter selection mode'}
           >
-            {selectionMode ? (
+            {selecting ? (
               <>
                 <CheckIcon />
                 {selection.length > 0 ? `Done · ${selection.length}` : 'Done'}
@@ -818,6 +868,7 @@ function HomeContent() {
             activePlaylistUuid={url.playlist}
             onSelectPlaylist={handlePlaylistSelect}
           />
+          <SavedSearchesSection />
           <PeopleSection
             activePersonUuid={url.person}
             onSelectPerson={handlePersonSelect}
@@ -873,6 +924,7 @@ function HomeContent() {
               if (refs.length === 0) return;
               setReassignItems(refs);
             }}
+            onMoveSelection={() => setMoveSelection(selection)}
           />
 
           {url.person && personDetails.data && (
@@ -1058,7 +1110,7 @@ function HomeContent() {
             onSelect={handleOpen}
             onToggleSelection={handleToggleSelection}
             selectedKeys={selectedKeys}
-            selectionMode={selectionMode}
+            selectionMode={selecting}
             onSetLikes={handleSetLikes}
             loading={loading}
           />
@@ -1094,6 +1146,10 @@ function HomeContent() {
         onSelectItem={(it) => setSelectedUuid(it.uuid)}
         onAddToPlaylist={(it) => setAddToPlaylistItem(it)}
         onExclude={(it) => setExcludeItem(it)}
+        onMove={(it) => setMoveSelection([{ librarySlug: it.librarySlug, itemUuid: it.uuid }])}
+        onSetSensitive={(it, override) =>
+          setSensitiveMutation.mutate({ uuid: it.uuid, override, librarySlug: it.librarySlug })
+        }
         quiet={quietMode}
         suspended={screensaverOpen}
         initialTimeMs={url.tMs}
@@ -1149,6 +1205,34 @@ function HomeContent() {
               // viewer; the list refreshes on next nav.
               onNext();
             }
+          }}
+        />
+      )}
+
+      {moveSelection && (
+        <MoveToLibraryDialog
+          selection={moveSelection}
+          onClose={() => setMoveSelection(null)}
+          onMoved={() => {
+            // If the open viewer item was moved, advance to a neighbor (or close)
+            // so we don't strand on a vanished item.
+            const movedUuids = new Set(moveSelection.map((s) => s.itemUuid));
+            if (selected && movedUuids.has(selected.uuid)) {
+              const nextUuid =
+                items[selectedIndex + 1]?.uuid ?? items[selectedIndex - 1]?.uuid ?? null;
+              setSelectedUuid(nextUuid);
+            }
+            // Refetch our own lists/facets so the moved items drop out now. The
+            // 'items.moved' sync event covers OTHER tabs but skips this (the
+            // originating) session, so the active tab must invalidate locally —
+            // same as excludeMutation.onSuccess.
+            trpcUtils.media.list.invalidate();
+            trpcUtils.media.search.invalidate();
+            trpcUtils.media.similar.invalidate();
+            trpcUtils.media.facets.invalidate();
+            trpcUtils.playlist.get.invalidate();
+            setMoveSelection(null);
+            clearSelection();
           }}
         />
       )}

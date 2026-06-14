@@ -24,10 +24,17 @@ export type SyncEvent =
   | { type: 'item.like'; librarySlug: string; uuid: string; count: number }
   | { type: 'item.tag.changed'; librarySlug: string; uuid: string }
   | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
+  /** Manual sensitivity override changed (1 sensitive / 0 safe / null auto). */
+  | { type: 'item.sensitive'; librarySlug: string; uuid: string; override: number | null }
   /** An item was soft-deleted ("excluded"); other tabs drop it from grids and
    *  close it if it's the one they have open. */
   | { type: 'item.excluded'; librarySlug: string; uuid: string }
+  /** N items were moved out of `librarySlug` into `targetLibrarySlug`; other
+   *  tabs drop them from the source grid (re-indexing in the target is async). */
+  | { type: 'items.moved'; librarySlug: string; targetLibrarySlug: string; count: number }
   | { type: 'playlist.changed' }
+  /** A saved search was created or deleted; other tabs refresh the list. */
+  | { type: 'savedSearch.changed' }
   /** Solo-audio rule: a window broadcasts this when the user unmutes it, and
    *  every OTHER window/device mutes itself in response. Muting broadcasts
    *  nothing (everyone just stays muted). No payload — the sender is identified

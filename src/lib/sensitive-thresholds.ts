@@ -15,3 +15,18 @@ export const VIOLENCE_THRESHOLD = 0.27;
 export function isSensitive(nsfwScore: number, violenceScore: number): boolean {
   return nsfwScore >= NSFW_THRESHOLD || violenceScore >= VIOLENCE_THRESHOLD;
 }
+
+/**
+ * Effective sensitivity, honoring a manual override. `sensitive_override` is
+ * tri-state: null = use auto-detection, 1 = forced sensitive, 0 = forced safe.
+ * Single source of truth wherever "is this item sensitive?" is decided
+ * client-side; the server filter mirrors this in SQL.
+ */
+export function effectiveSensitive(
+  nsfwScore: number,
+  violenceScore: number,
+  override: number | null | undefined,
+): boolean {
+  if (override === 0 || override === 1) return override === 1;
+  return isSensitive(nsfwScore, violenceScore);
+}

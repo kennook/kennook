@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { isSensitive } from '@/lib/sensitive-thresholds';
+import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { SparkleBurst } from './SparkleBurst';
 import type { TextMatch } from './MediaGrid';
@@ -28,6 +28,8 @@ interface MediaCardProps {
   rotation?: number;
   nsfwScore?: number;
   violenceScore?: number;
+  /** Manual sensitivity override: null = auto, 1 = forced sensitive, 0 = safe. */
+  sensitiveOverride?: number | null;
   /** Search hit text occurrences. When present and the first match has a
    *  timestamp, the tile swaps to the frame-at-timestamp thumbnail and
    *  surfaces a "0:45" badge. */
@@ -53,6 +55,7 @@ export function MediaCard({
   rotation = 0,
   nsfwScore = 0,
   violenceScore = 0,
+  sensitiveOverride = null,
   matches,
   onOpen,
   onToggleSelection,
@@ -202,7 +205,7 @@ export function MediaCard({
           chip when both apply. Each is independent so either can show
           alone. */}
       <div className="absolute top-2 right-2 flex flex-col items-end gap-1 pointer-events-none">
-        {isSensitive(nsfwScore, violenceScore) && (
+        {effectiveSensitive(nsfwScore, violenceScore, sensitiveOverride) && (
           <span
             title={`Flagged — nsfw ${(nsfwScore * 100).toFixed(0)}%, violence ${(violenceScore * 100).toFixed(0)}%`}
             className="flex items-center gap-1 bg-amber-950/85 text-amber-300 text-[10px]

@@ -5,7 +5,7 @@ import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
 import { getMediaView, setMediaView } from '@/lib/media-pan';
-import { isSensitive } from '@/lib/sensitive-thresholds';
+import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
 import { ViewerReel } from './ViewerReel';
@@ -75,6 +75,13 @@ interface Props {
   /** Exclude (soft-delete) this item. Parent owns the confirm dialog +
    *  the advance-to-next/close behavior. */
   onExclude?: (item: MediaItemDto) => void;
+  /** Move this item to another library. Tucked under a kebab menu (less
+   *  prominent than the primary actions). Parent owns the move dialog +
+   *  the advance-to-next/close behavior. */
+  onMove?: (item: MediaItemDto) => void;
+  /** Set the manual sensitivity override (1 = sensitive, 0 = safe, null =
+   *  auto). Also tucked under the kebab. */
+  onSetSensitive?: (item: MediaItemDto, override: 0 | 1 | null) => void;
   /** Controlled maxed-mode flag. When BOTH `maxed` and `onMaxedChange`
    *  are provided, the viewer is controlled and the parent owns the
    *  state (typically synced to the URL). When omitted, the viewer
@@ -110,6 +117,8 @@ export function MediaViewer({
   reelItems, reelHasMore, onSelectItem,
   onAddToPlaylist,
   onExclude,
+  onMove,
+  onSetSensitive,
   maxed: controlledMaxed,
   onMaxedChange,
   quiet = false,
@@ -1057,7 +1066,7 @@ export function MediaViewer({
               )}
             </div>
 
-            {isSensitive(item.nsfwScore, item.violenceScore) && (
+            {effectiveSensitive(item.nsfwScore, item.violenceScore, item.sensitiveOverride) && (
               <SensitiveBadge
                 nsfwScore={item.nsfwScore}
                 violenceScore={item.violenceScore}
@@ -1072,17 +1081,6 @@ export function MediaViewer({
               >
                 <SparkleIcon />
                 See similar
-              </button>
-            )}
-
-            {onAddToPlaylist && (
-              <button
-                onClick={() => onAddToPlaylist(item)}
-                className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-md
-                           py-2 text-sm font-medium transition flex items-center justify-center gap-2"
-              >
-                <PlaylistAddIcon />
-                Add to playlist…
               </button>
             )}
 
@@ -1118,17 +1116,22 @@ export function MediaViewer({
               </button>
             )}
 
-            {/* Exclude (soft-delete) — for corrupted files or items that don't
-                belong. Hidden from all results; recoverable in the DB. */}
-            {onExclude && (
-              <button
-                onClick={() => onExclude(item)}
-                className="w-full bg-red-950/50 hover:bg-red-900/60 text-red-200 ring-1 ring-red-900/50
-                           rounded-md py-2 text-sm font-medium transition flex items-center justify-center gap-2"
-              >
-                <TrashIcon />
-                Exclude…
-              </button>
+            {/* Lower-traffic actions — add to playlist, move, sensitivity, and
+                the destructive exclude — live behind a kebab so they don't
+                compete with the primary buttons above. */}
+            {(onAddToPlaylist || onMove || onSetSensitive || onExclude) && (
+              <div className="flex justify-end">
+                <ViewerKebabMenu
+                  onAddToPlaylist={onAddToPlaylist ? () => onAddToPlaylist(item) : undefined}
+                  onMove={onMove ? () => onMove(item) : undefined}
+                  sensitive={onSetSensitive ? {
+                    effective: effectiveSensitive(item.nsfwScore, item.violenceScore, item.sensitiveOverride),
+                    overridden: item.sensitiveOverride != null,
+                  } : null}
+                  onSetSensitive={onSetSensitive ? (override) => onSetSensitive(item, override) : undefined}
+                  onExclude={onExclude ? () => onExclude(item) : undefined}
+                />
+              </div>
             )}
 
             <Field label="Type" value={item.kind} />
@@ -1334,7 +1337,7 @@ export function MediaViewer({
                             text-zinc-200 text-sm rounded-md px-3 py-1.5`}>
               {position.index + 1} / {position.total}
             </div>
-            {isSensitive(item.nsfwScore, item.violenceScore) && (
+            {effectiveSensitive(item.nsfwScore, item.violenceScore, item.sensitiveOverride) && (
               <SensitiveBadge
                 nsfwScore={item.nsfwScore}
                 violenceScore={item.violenceScore}
@@ -1902,6 +1905,140 @@ function TrashIcon() { return (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
        strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L12 4" />
+  </svg>
+); }
+
+// Kebab ("⋮") menu for secondary viewer actions. Currently just "Move to
+// library…", kept out of the prominent button stack so it's low-traffic.
+function ViewerKebabMenu({
+  onAddToPlaylist,
+  onMove,
+  sensitive,
+  onSetSensitive,
+  onExclude,
+}: {
+  onAddToPlaylist?: () => void;
+  onMove?: () => void;
+  sensitive?: { effective: boolean; overridden: boolean } | null;
+  onSetSensitive?: (override: 0 | 1 | null) => void;
+  onExclude?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const itemClass = 'w-full text-left px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800 flex items-center gap-2.5';
+  const run = (fn: () => void) => () => { setOpen(false); fn(); };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="More actions"
+        aria-label="More actions"
+        className="w-8 h-8 rounded-md grid place-items-center text-zinc-400 hover:text-zinc-100
+                   hover:bg-zinc-800 transition"
+      >
+        <KebabIcon />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-56 bg-zinc-900 border border-zinc-800
+                        rounded-lg shadow-xl py-1 z-20">
+          {onAddToPlaylist && (
+            <button type="button" onClick={run(onAddToPlaylist)} className={itemClass}>
+              <PlaylistAddIcon /> Add to playlist…
+            </button>
+          )}
+          {onMove && (
+            <button type="button" onClick={run(onMove)} className={itemClass}>
+              <MoveIcon /> Move to library…
+            </button>
+          )}
+
+          {sensitive && onSetSensitive && (
+            <>
+              <div className="border-t border-zinc-800 my-1" />
+              {sensitive.effective ? (
+                <button type="button" onClick={run(() => onSetSensitive(0))} className={itemClass}>
+                  <ShieldIcon /> Mark as safe
+                </button>
+              ) : (
+                <button type="button" onClick={run(() => onSetSensitive(1))} className={itemClass}>
+                  <FlagIcon /> Mark as sensitive
+                </button>
+              )}
+              {sensitive.overridden && (
+                <button type="button" onClick={run(() => onSetSensitive(null))} className={itemClass}>
+                  <ResetIcon /> Reset to auto-detection
+                </button>
+              )}
+            </>
+          )}
+
+          {onExclude && (
+            <>
+              <div className="border-t border-zinc-800 my-1" />
+              <button
+                type="button"
+                onClick={run(onExclude)}
+                className="w-full text-left px-3 py-2 text-sm text-red-300 hover:bg-red-950/40
+                           hover:text-red-200 flex items-center gap-2.5"
+              >
+                <TrashIcon /> Exclude…
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FlagIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3.5 14V2.5M3.5 3h7l-1.2 2.4L10.5 8h-7" />
+  </svg>
+); }
+
+function ShieldIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 1.8l5 1.8v3.5c0 3.1-2.1 5.2-5 6.1-2.9-.9-5-3-5-6.1V3.6l5-1.8Z" />
+    <path d="M5.8 8l1.6 1.6L10.4 6.5" />
+  </svg>
+); }
+
+function ResetIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 8a5 5 0 1 1 1.5 3.5M3 8V5M3 8h3" />
+  </svg>
+); }
+
+function KebabIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <circle cx="8" cy="3" r="1.4" />
+    <circle cx="8" cy="8" r="1.4" />
+    <circle cx="8" cy="13" r="1.4" />
+  </svg>
+); }
+
+function MoveIcon() { return (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4A1.5 1.5 0 0 1 13.5 6" />
+    <path d="M9 9.5h5M12 7.5l2 2-2 2" />
+    <path d="M2 4.5v7A1.5 1.5 0 0 0 3.5 13H7" />
   </svg>
 ); }
 

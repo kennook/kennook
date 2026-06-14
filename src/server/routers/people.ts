@@ -34,6 +34,7 @@ interface MediaItemRow {
   rotation: number;
   nsfw_score: number;
   violence_score: number;
+  sensitive_override: number | null;
 }
 
 function rowToDto(row: MediaItemRow, librarySlug: string) {
@@ -55,6 +56,7 @@ function rowToDto(row: MediaItemRow, librarySlug: string) {
     rotation: row.rotation ?? 0,
     nsfwScore: row.nsfw_score ?? 0,
     violenceScore: row.violence_score ?? 0,
+    sensitiveOverride: row.sensitive_override ?? null,
     librarySlug,
     thumbnailUrl: `/api/thumbnails/${row.uuid}${qs}`,
     previewUrl: `/api/preview/${row.uuid}${qs}`,
@@ -194,7 +196,7 @@ export const peopleRouter = router({
           const items = sqlite.prepare(`
             SELECT DISTINCT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                    m.captured_at, m.captured_place, m.camera_make, m.camera_model,
-                   m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score,
+                   m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
                    ${LIKE_COUNT_EXPR}
             FROM media_items m
             JOIN media_faces mf ON mf.media_item_id = m.id

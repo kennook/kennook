@@ -5,6 +5,7 @@ import { playlistRouter } from './playlist';
 import { peopleRouter } from './people';
 import { storageRouter } from './storage';
 import { systemRouter } from './system';
+import { savedSearchRouter } from './savedSearch';
 
 export const appRouter = router({
   media: mediaRouter,
@@ -13,6 +14,7 @@ export const appRouter = router({
   people: peopleRouter,
   storage: storageRouter,
   system: systemRouter,
+  savedSearch: savedSearchRouter,
 });
 
 export type AppRouter = typeof appRouter;

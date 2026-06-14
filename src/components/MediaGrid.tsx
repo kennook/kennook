@@ -33,6 +33,9 @@ export interface MediaItemDto {
    *  to show a badge. */
   nsfwScore: number;
   violenceScore: number;
+  /** Manual sensitivity override: null = auto-detect, 1 = forced sensitive,
+   *  0 = forced safe. Combined with the scores via `effectiveSensitive`. */
+  sensitiveOverride: number | null;
   librarySlug: string;
   thumbnailUrl: string;
   previewUrl: string;
@@ -101,6 +104,7 @@ export function MediaGrid({
           rotation={item.rotation}
           nsfwScore={item.nsfwScore}
           violenceScore={item.violenceScore}
+          sensitiveOverride={item.sensitiveOverride}
           matches={item.matches}
           onOpen={(match) => onSelect(item, match)}
           onToggleSelection={onToggleSelection ? (e) => onToggleSelection(item, e) : undefined}

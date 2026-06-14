@@ -30,7 +30,7 @@ export function getUserSqlite(): DatabaseSync {
   return db;
 }
 
-const LATEST_USER_SCHEMA_VERSION = 9;
+const LATEST_USER_SCHEMA_VERSION = 10;
 
 function initUserSchema(db: DatabaseSync) {
   // Base tables (idempotent — IF NOT EXISTS). For new DBs the column set is
@@ -191,6 +191,26 @@ function initUserSchema(db: DatabaseSync) {
     try { db.exec(`ALTER TABLE playlists      RENAME COLUMN cover_workspace      TO cover_library`); } catch {}
     try { db.exec(`ALTER TABLE playlist_items RENAME COLUMN workspace_slug       TO library_slug`); } catch {}
     version = 9;
+  }
+
+  // v9 → v10: per-user, per-library saved searches (query + filters + sort,
+  // stored as JSON). New DBs run every step, so creating it here covers both.
+  if (version < 10) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS saved_searches (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid         TEXT NOT NULL UNIQUE,
+        user_id      INTEGER NOT NULL DEFAULT 1,
+        library_slug TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        search_json  TEXT NOT NULL,
+        created_at   INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        updated_at   INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+      );
+      CREATE INDEX IF NOT EXISTS saved_searches_user_lib_idx
+        ON saved_searches(user_id, library_slug);
+    `);
+    version = 10;
   }
 
   if (version !== LATEST_USER_SCHEMA_VERSION) {
