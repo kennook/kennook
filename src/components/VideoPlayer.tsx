@@ -327,9 +327,12 @@ export function VideoPlayer({
   function showControls() {
     setControlsVisible(true);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    // Don't arm the hide timer while the cursor is parked on the controls
-    // bar itself; the user is clearly looking at them.
-    if (playing && !hoveredControlsRef.current) {
+    // Arm the auto-hide whenever the video is actually playing. Read the
+    // element (not the `playing` state) so this also works when called from
+    // onPlay in the same tick as setPlaying(true) — e.g. a slideshow
+    // auto-advancing to a new video with no mouse activity to re-arm it.
+    // Don't arm while the cursor is parked on the controls bar.
+    if (!videoRef.current?.paused && !hoveredControlsRef.current) {
       idleTimerRef.current = window.setTimeout(() => setControlsVisible(false), 2500);
     }
   }

@@ -154,36 +154,6 @@ body {
   border-radius: 4px;
 }
 
-/* ── Slideshow animations ──────────────────────────────────────────────── */
-
-/* Photo "in" animation: brief fade-in (0–10%) layered on top of a slow
-   Ken Burns zoom-and-drift over the full slide duration. Duration is set
-   inline via animation-duration so it can match the configured interval.
-   The leading rotate() reads --kn-rotation from the element's inline style
-   so the user-applied rotation override composes with the animation. */
-@keyframes kn-photo-in {
-  0%   { opacity: 0; transform: rotate(var(--kn-rotation, 0deg)) scale(1.00) translate(0, 0); }
-  10%  { opacity: 1; }
-  100% { opacity: 1; transform: rotate(var(--kn-rotation, 0deg)) scale(1.12) translate(-1.5%, 1%); }
-}
-.kn-photo-in {
-  animation-name: kn-photo-in;
-  animation-timing-function: ease-out;
-  animation-fill-mode: forwards;
-  will-change: opacity, transform;
-}
-
-/* Old slide fades out while the new one fades in — together they form
-   the crossfade. Short duration so the overlap doesn't dilute the
-   Ken Burns motion on the new slide. */
-@keyframes kn-photo-out {
-  from { opacity: 1; }
-  to   { opacity: 0; }
-}
-.kn-photo-out {
-  animation: kn-photo-out 600ms ease-out forwards;
-}
-
 /* ── Like sparkle burst ─────────────────────────────────────────────────
    Eight glowing particles emanate radially from the heart on every like.
    Each particle reads its outward direction from --kn-spark-angle (set

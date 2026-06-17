@@ -35,7 +35,6 @@ const LIKE_DEBOUNCE_MS = 500;
 const SLIDESHOW_MIN_MS = 2000;
 const SLIDESHOW_MAX_MS = 30000;
 const SLIDESHOW_STEP_MS = 1000;
-const SLIDESHOW_FADE_MS = 600;
 
 interface Props {
   item: MediaItemDto | null;
@@ -46,10 +45,10 @@ interface Props {
   /** Same handler the grid uses; lets viewer rate without leaving the modal. */
   onSetLikes?: (item: MediaItemDto, count: number) => Promise<void> | void;
   position?: { index: number; total: number };
-  /** When true, the viewer is in slideshow mode: always fullscreen, photos
-   *  auto-advance after SLIDESHOW_PHOTO_MS with crossfade + Ken Burns,
-   *  videos advance when they reach the end. Space pauses; Esc exits to
-   *  the regular viewer. */
+  /** When true, the viewer is in slideshow mode: identical to the full-screen
+   *  view (full manual zoom/pan/fit + video controls), plus auto-advance —
+   *  photos after the configured dwell, videos when they reach the end.
+   *  Space pauses; Esc exits to the regular viewer. */
   slideshow?: boolean;
   /** Called when Esc is pressed while slideshow is active — exits slideshow
    *  but keeps the viewer open on the current item. */
@@ -153,11 +152,7 @@ export function MediaViewer({
   const MAX_ZOOM = 4;
   const ZOOM_STEP = 0.25;
 
-  // Slideshow state. `prevItem` holds the previously-displayed item for one
-  // crossfade duration so the dual-layer render can fade it out alongside
-  // the new one fading in. `paused` freezes the auto-advance timer and the
-  // Ken Burns animation.
-  const [prevItem, setPrevItem] = useState<MediaItemDto | null>(null);
+  // `paused` freezes the slideshow auto-advance timer.
   const [paused, setPaused] = useState(false);
 
   // Chrome auto-hide in maxed mode: floating buttons + nav arrows + position
@@ -275,11 +270,9 @@ export function MediaViewer({
     });
   }, [item]);
 
-  // Pan is meaningful only in maxed + cover-fit, and never during
-  // slideshow — the slideshow's automated Ken Burns owns the framing,
-  // and reactivating pan on pause would snap the photo to whatever pan
-  // offset was last saved for this item, which feels like a bug.
-  const isPanEnabled = maxed && fit === 'cover' && !slideshow;
+  // Pan is meaningful only in maxed + cover-fit (incl. slideshow, which now
+  // uses the full-screen view).
+  const isPanEnabled = maxed && fit === 'cover';
 
   // Re-clamp pan whenever zoom changes — the bounds grew (zoom in)
   // or shrunk (zoom out), so a previously-valid pan may now be out of
@@ -307,17 +300,16 @@ export function MediaViewer({
 
   // Persist the current view (pan + new zoom) for this item. Called
   // from user-initiated zoom changes; not from the restore effect
-  // (which loaded from storage in the first place). Skipped during
-  // slideshow so transient adjustments (e.g. Fit/Cover toggle while
-  // viewing the slideshow) don't overwrite the item's saved view.
+  // (which loaded from storage in the first place). Persists in slideshow
+  // too now — it uses the full-screen view, so zoom/pan behaves identically.
   const persistZoom = useCallback((newZoom: number) => {
-    if (!item || slideshow) return;
+    if (!item) return;
     setMediaView(`${item.librarySlug}:${item.uuid}`, {
       x: panRef.current.x,
       y: panRef.current.y,
       zoom: newZoom,
     });
-  }, [item, slideshow]);
+  }, [item]);
 
   const zoomIn = useCallback(() => {
     setZoom((z) => {
@@ -348,28 +340,7 @@ export function MediaViewer({
     }
   }, [slideshow]);
 
-  // 2) Track the prior item for crossfade. When `item.uuid` changes while
-  //    slideshow is active, capture the outgoing item into `prevItem` for
-  //    SLIDESHOW_FADE_MS so its fade-out keyframes can run alongside the
-  //    new slide's fade-in.
-  const prevItemForFadeRef = useRef<MediaItemDto | null>(null);
-  useEffect(() => {
-    if (!slideshow) {
-      setPrevItem(null);
-      prevItemForFadeRef.current = item ?? null;
-      return;
-    }
-    const outgoing = prevItemForFadeRef.current;
-    if (outgoing && outgoing.uuid !== item?.uuid && outgoing.kind === 'photo') {
-      setPrevItem(outgoing);
-      const t = window.setTimeout(() => setPrevItem(null), SLIDESHOW_FADE_MS);
-      prevItemForFadeRef.current = item ?? null;
-      return () => window.clearTimeout(t);
-    }
-    prevItemForFadeRef.current = item ?? null;
-  }, [item, slideshow]);
-
-  // 3) Auto-advance for photos. Videos advance via onEnded; this timer is
+  // Auto-advance for photos. Videos advance via onEnded; this timer is
   //    photo-only. Pause stops scheduling. Duration is the user's
   //    slideshow preference (adjustable via , / . in slideshow mode).
   const [slideshowPhotoMs, setSlideshowPhotoMs] = usePreference('slideshowPhotoMs');
@@ -536,10 +507,10 @@ export function MediaViewer({
   }, { enabled: !!item && maxed });
   useShortcut('viewer.zoomIn', () => {
     if (maxed) { zoomIn(); pulseChrome(); }
-  }, { enabled: !!item && maxed && !slideshow });
+  }, { enabled: !!item && maxed });
   useShortcut('viewer.zoomOut', () => {
     if (maxed) { zoomOut(); pulseChrome(); }
-  }, { enabled: !!item && maxed && !slideshow });
+  }, { enabled: !!item && maxed });
   // Slideshow speed adjust — only active when slideshow is on. `,`
   // slows down (more time per photo), `.` speeds up (less time).
   useShortcut('viewer.slideshowSlower', () => {
@@ -775,49 +746,23 @@ export function MediaViewer({
             ? 'absolute inset-0 overflow-hidden'
             : 'flex-1 self-stretch flex items-center justify-center min-h-0 relative group'}
         >
-          {/* Outgoing photo, briefly rendered alongside the new one so its
-              fade-out keyframes can run as the new one fades in. Only set
-              while slideshow is active and the outgoing item was a photo.
-              Keeps its own rotation through the fade. */}
-          {slideshow && prevItem && prevItem.kind === 'photo' && (
-            <img
-              key={`prev-${prevItem.uuid}`}
-              src={prevItem.previewUrl}
-              alt=""
-              draggable={false}
-              className={`absolute inset-0 w-full h-full ${fitClass}
-                          kn-photo-out select-none pointer-events-none`}
-              style={{
-                ['--kn-rotation' as string]: `${prevItem.rotation ?? 0}deg`,
-                transform: 'rotate(var(--kn-rotation))',
-              } as React.CSSProperties}
-            />
-          )}
-
           {item.kind === 'photo' ? (
             <img
-              key={slideshow ? `cur-${item.uuid}` : undefined}
               src={item.previewUrl}
               alt={item.filename}
               draggable={false}
-              className={slideshow
-                ? `absolute inset-0 w-full h-full ${fitClass} kn-photo-in select-none`
-                : maxed
-                  ? `w-full h-full ${fitClass} select-none`
-                  : 'max-h-full max-w-full object-contain rounded'}
+              className={maxed
+                ? `w-full h-full ${fitClass} select-none`
+                : 'max-h-full max-w-full object-contain rounded'}
               style={{
                 ['--kn-rotation' as string]: `${item.rotation ?? 0}deg`,
                 objectPosition,
-                transform: slideshow
-                  ? undefined
-                  : zoomActive || translateActive
-                    ? `${translatePart}rotate(var(--kn-rotation)) scale(${zoom})`
-                    : 'rotate(var(--kn-rotation))',
+                transform: zoomActive || translateActive
+                  ? `${translatePart}rotate(var(--kn-rotation)) scale(${zoom})`
+                  : 'rotate(var(--kn-rotation))',
                 transition: panDragging
                   ? undefined
                   : 'object-position 200ms, transform 200ms',
-                animationDuration: slideshow ? `${slideshowPhotoMs}ms` : undefined,
-                animationPlayState: slideshow && paused ? 'paused' : undefined,
                 ['WebkitUserDrag' as string]: 'none',
                 ['userDrag' as string]: 'none',
               } as React.CSSProperties}
@@ -905,14 +850,11 @@ export function MediaViewer({
                           ${item.kind === 'video' ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-3'}
                           flex flex-col gap-1.5 items-center`}
             >
-              {/* Zoom + fit/cover pill — hidden entirely during slideshow.
-                  Zoom doesn't apply (Ken Burns owns the transform) and the
-                  fit/cover toggle migrates to the top-right toolbar so it
-                  isn't floating alone in the bottom corner. */}
-              {!slideshow && (
-                <div className="flex items-center gap-1 bg-black/80
-                                rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs
-                                kn-chrome-scaled">
+              {/* Zoom + fit/cover pill — available in the full-screen view,
+                  including slideshow. */}
+              <div className="flex items-center gap-1 bg-black/80
+                              rounded-md ring-1 ring-zinc-800 text-zinc-200 text-xs
+                              kn-chrome-scaled">
                   <button
                     onClick={zoomOut}
                     disabled={zoom <= MIN_ZOOM + 0.001}
@@ -952,7 +894,6 @@ export function MediaViewer({
                     {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
                   </button>
                 </div>
-              )}
 
               {/* Slideshow controls — pause/play + speed slider. Photo-only:
                   on a video, the video player owns playback (its own pause
@@ -990,12 +931,9 @@ export function MediaViewer({
                 </div>
               )}
 
-              {/* Minimap renders in maxed mode but never during slideshow
-                  — the slideshow owns the framing automatically, and
-                  re-introducing a saved pan on pause would yank the
-                  image to a different position mid-pause. */}
-              {!slideshow && (
-                <ViewportMinimap
+              {/* Minimap — shown in the full-screen view (incl. slideshow)
+                  whenever pan is meaningful (cover-fit + overflow). */}
+              <ViewportMinimap
                   src={item.previewUrl}
                   contentRatio={(item.width ?? 1) / (item.height ?? 1)}
                   contentDisplayWidth={panBounds.cw}
@@ -1021,7 +959,6 @@ export function MediaViewer({
                     persistZoom(1);
                   }}
                 />
-              )}
             </div>
           )}
 
@@ -1262,21 +1199,6 @@ export function MediaViewer({
                 className="text-red-300 hover:text-red-200 ring-1 ring-red-900/50"
               >
                 <TrashIcon />
-              </ToolbarButton>
-            )}
-            {/* Fit/cover migrates here during slideshow — its usual home in
-                the bottom-left pill is hidden then (no zoom controls or
-                minimap to keep it company). */}
-            {slideshow && (
-              <ToolbarButton
-                onClick={() => {
-                  setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
-                  setZoom(1);
-                  persistZoom(1);
-                }}
-                title={fit === 'cover' ? 'Fit (no crop) — C' : 'Fill (crop edges) — C'}
-              >
-                {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
               </ToolbarButton>
             )}
             <ToolbarButton onClick={() => setMaxed(false)} title="Restore — F or Esc">
