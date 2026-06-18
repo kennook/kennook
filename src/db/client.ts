@@ -61,7 +61,7 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 17;
+const LATEST_SCHEMA_VERSION = 18;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -446,6 +446,28 @@ function applyMigrations(sqlite: DatabaseSync) {
   if (version < 17) {
     try { sqlite.exec('ALTER TABLE media_items ADD COLUMN sensitive_override INTEGER'); } catch { /* column exists */ }
     version = 17;
+  }
+
+  // ── v18: per-asset viewer framing (pan + zoom). Keyed ALSO by viewport
+  // orientation so a portrait phone and a landscape TV keep SEPARATE
+  // framings for the same item instead of clobbering each other. Asset-level
+  // and shared across users/clients (no user_id) — last writer in a given
+  // orientation wins, by design. FK cascade removes rows when the item is
+  // purged (incl. the move-to-library flow).
+  if (version < 18) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS media_view_state (
+        media_item_id INTEGER NOT NULL
+          REFERENCES media_items(id) ON DELETE CASCADE,
+        orientation   TEXT NOT NULL CHECK(orientation IN ('portrait','landscape')),
+        x             REAL NOT NULL,
+        y             REAL NOT NULL,
+        zoom          REAL NOT NULL,
+        updated_at    INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        PRIMARY KEY (media_item_id, orientation)
+      );
+    `);
+    version = 18;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

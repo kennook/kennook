@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useScreensaverIndex } from '@/lib/sync';
+import { trpc } from '@/lib/trpc-client';
 
 interface Props {
   open: boolean;
@@ -58,10 +59,12 @@ const SCREENSAVER_FILTER = 'brightness(0.2) contrast(1) saturate(0.8) blur(4px)'
  * the very mousemove/keyup that came from the launch press would
  * insta-dismiss it.
  *
- * Future: when this becomes lock-protected, the exit listeners route
- * through a passphrase prompt instead of calling onExit directly. That
- * only meaningfully locks in a desktop app — a browser tab can always
- * be closed — so we leave it for the Electron/Tauri milestone.
+ * Lock: when an admin has set a screensaver passphrase
+ * (`screensaverLock.status` → enabled), a dismiss gesture reveals a
+ * passphrase prompt instead of exiting; only a server-verified passphrase
+ * calls `onExit`. This is a casual-passer-by deterrent, not real security
+ * (a browser overlay can always be bypassed by someone with devtools) —
+ * full device-trust auth is the planned replacement.
  */
 export function Screensaver({ open, onExit }: Props) {
   // Lazily resolve the video to play on first open. Two pieces of state
@@ -73,6 +76,85 @@ export function Screensaver({ open, onExit }: Props) {
   // at the resolution appropriate for this device.
   const [src, setSrc] = useState<string | null>(null);
   const assignedIndex = useScreensaverIndex();
+
+  // Lock state. Fetched eagerly (not just while open) so the passphrase
+  // requirement is known before the first dismiss gesture.
+  const lockStatus = trpc.screensaverLock.status.useQuery(undefined, {
+    staleTime: 10_000,
+  });
+  // FAIL CLOSED: treat the screensaver as locked unless the server has
+  // positively told us the lock is OFF (`enabled === false`). While the
+  // status is loading or the request errors (e.g. a stale build without the
+  // endpoint, or a dropped session), `data` is undefined — and we must NOT
+  // let a click dismiss in that window. Safe for genuinely-unlocked
+  // instances too: `verify` returns ok for any input when no passphrase is
+  // set, so the prompt can't trap anyone.
+  const locked = lockStatus.data?.enabled !== false;
+  const verify = trpc.screensaverLock.verify.useMutation();
+
+  // Refetch the lock state each time the screensaver opens, so a passphrase
+  // set after this tab loaded takes effect on the very next walk-away.
+  const refetchLock = lockStatus.refetch;
+  useEffect(() => {
+    if (open) void refetchLock();
+  }, [open, refetchLock]);
+
+  // Passphrase prompt: shown after a dismiss gesture while locked. `lockedRef`
+  // lets the window-level capture listeners read the latest value without
+  // re-subscribing on every status refetch.
+  const [prompting, setPrompting] = useState(false);
+  const [passphrase, setPassphrase] = useState('');
+  const [authError, setAuthError] = useState(false);
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
+
+  // Reset the prompt whenever the screensaver closes so the next open starts
+  // clean (no stale passphrase text / error).
+  useEffect(() => {
+    if (!open) {
+      setPrompting(false);
+      setPassphrase('');
+      setAuthError(false);
+    }
+  }, [open]);
+
+  const submitPassphrase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (verify.isPending) return;
+    try {
+      const res = await verify.mutateAsync({ password: passphrase });
+      if (res.ok) {
+        onExit();
+      } else {
+        setAuthError(true);
+        setPassphrase('');
+      }
+    } catch {
+      setAuthError(true);
+    }
+  };
+
+  // Cancel the prompt → back to the bare screensaver (does NOT dismiss).
+  const cancelPrompt = useCallback(() => {
+    setPrompting(false);
+    setPassphrase('');
+    setAuthError(false);
+  }, []);
+
+  // Escape cancels the prompt from anywhere — a window-level listener so it
+  // works even if focus has left the input. Capture phase + stopPropagation
+  // so it doesn't also reach the app underneath.
+  useEffect(() => {
+    if (!open || !prompting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        cancelPrompt();
+      }
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [open, prompting, cancelPrompt]);
 
   useEffect(() => {
     if (!open || src) return;
@@ -130,10 +212,19 @@ export function Screensaver({ open, onExit }: Props) {
   // doesn't also close the underlying viewer or fire other shortcuts.
   // Autorepeat keydowns are ignored — holding `S` to launch shouldn't
   // immediately re-trigger dismissal on the very next autorepeat tick.
+  // While the passphrase prompt is up, the listeners stand down so the user
+  // can type into / click the form without each keystroke being read as a
+  // dismiss gesture. (`prompting` is in the deps so the effect re-runs and
+  // detaches when the prompt appears, re-attaches when it's canceled.)
   useEffect(() => {
-    if (!open) return;
+    if (!open || prompting) return;
 
-    const dismiss = () => onExit();
+    // Locked → a dismiss gesture reveals the prompt instead of exiting.
+    // Unlocked → exit immediately, as before.
+    const dismiss = () => {
+      if (lockedRef.current) setPrompting(true);
+      else onExit();
+    };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
@@ -161,12 +252,12 @@ export function Screensaver({ open, onExit }: Props) {
       window.removeEventListener('mousedown', onMouseDown, captureOpts);
       window.removeEventListener('touchstart', onTouch, captureOpts);
     };
-  }, [open, onExit]);
+  }, [open, prompting, onExit]);
 
   if (!open || !src) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black cursor-none">
+    <div className={`fixed inset-0 z-[100] bg-black ${prompting ? '' : 'cursor-none'}`}>
       <video
         src={src}
         autoPlay
@@ -178,6 +269,67 @@ export function Screensaver({ open, onExit }: Props) {
         className="absolute inset-0 w-full h-full object-cover scale-105"
         style={{ filter: SCREENSAVER_FILTER }}
       />
+
+      {prompting && (
+        <div
+          className="absolute inset-0 flex items-center justify-center p-6"
+          // Clicking the dimmed area outside the card cancels back to the
+          // bare screensaver (does not dismiss).
+          onMouseDown={(e) => { if (e.target === e.currentTarget) cancelPrompt(); }}
+        >
+          <form
+            onSubmit={submitPassphrase}
+            className="relative w-full max-w-xs bg-zinc-950/90 backdrop-blur ring-1 ring-zinc-800
+                       rounded-xl p-5 flex flex-col gap-3 shadow-2xl"
+          >
+            <button
+              type="button"
+              onClick={cancelPrompt}
+              aria-label="Cancel"
+              title="Cancel (Esc)"
+              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center
+                         rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-white/10 transition"
+            >
+              ✕
+            </button>
+
+            <div className="text-sm text-zinc-300 text-center pt-1">
+              Enter passphrase to unlock
+            </div>
+            <input
+              autoFocus
+              type="password"
+              value={passphrase}
+              onChange={(e) => { setPassphrase(e.target.value); setAuthError(false); }}
+              placeholder="Passphrase"
+              aria-label="Screensaver passphrase"
+              className={`bg-zinc-900 border rounded-md px-3 py-2 text-sm outline-none
+                          ${authError ? 'border-red-500/70' : 'border-zinc-700 focus:border-zinc-500'}`}
+            />
+            {authError && (
+              <div className="text-xs text-red-400 text-center">Incorrect passphrase</div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={cancelPrompt}
+                className="flex-1 bg-zinc-800 text-zinc-200 rounded-md py-2 text-sm font-medium
+                           hover:bg-zinc-700 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={verify.isPending || passphrase.length === 0}
+                className="flex-1 bg-zinc-200 text-zinc-900 rounded-md py-2 text-sm font-medium
+                           hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                {verify.isPending ? 'Checking…' : 'Unlock'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

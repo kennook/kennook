@@ -6,11 +6,13 @@
  * boundary is "you're on my LAN," not the user list itself.
  */
 
-import { listUsers } from '@/server/auth';
+import { listLoginUsers } from '@/server/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<Response> {
-  return Response.json(listUsers());
+  // Annotated with `hasPassword` so the picker knows when to prompt. The
+  // hash is never included.
+  return Response.json(listLoginUsers());
 }

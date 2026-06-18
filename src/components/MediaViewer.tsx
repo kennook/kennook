@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
-import { getMediaView, setMediaView } from '@/lib/media-pan';
 import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
@@ -144,13 +143,24 @@ export function MediaViewer({
 
   const [fit, setFit] = useState<'cover' | 'contain'>('cover');
   // Zoom multiplier applied as `transform: scale(zoom)` on top of the
-  // current fit mode. Range [1.0, 4.0] — can only zoom IN past the
-  // chosen fit, never further out (toggling to contain handles "see the
-  // whole thing"). Resets to 1.0 on item change and on fit toggle.
+  // current fit mode. Range [0.25, 4.0]. Above 1.0 zooms IN past the fit;
+  // below 1.0 shrinks the framed image below the viewport so it sits with
+  // margins around it (most natural in contain-fit — the whole image just
+  // gets smaller). Resets to 1.0 on item change and on fit toggle.
   const [zoom, setZoom] = useState(1);
-  const MIN_ZOOM = 1;
+  const MIN_ZOOM = 0.25;
   const MAX_ZOOM = 4;
+  // Coarser steps when zooming IN (past 100%); finer 10% steps below 100%
+  // where the whole image is visible and small nudges matter more.
   const ZOOM_STEP = 0.25;
+  const ZOOM_STEP_FINE = 0.1;
+
+  // Direct percentage entry in the zoom pill. `zoomDraft` holds the raw
+  // text while the field is focused; the displayed value falls back to the
+  // live zoom otherwise. `zoomCancelRef` lets Escape blur without committing.
+  const [zoomEditing, setZoomEditing] = useState(false);
+  const [zoomDraft, setZoomDraft] = useState('');
+  const zoomCancelRef = useRef(false);
 
   // `paused` freezes the slideshow auto-advance timer.
   const [paused, setPaused] = useState(false);
@@ -165,7 +175,8 @@ export function MediaViewer({
   // Only meaningful when content overflows the viewport (cover fit clips
   // edges). Driven by the corner minimap widget — direct drag-on-content
   // is intentionally disabled so it doesn't fight the video controls.
-  // Persisted per item in localStorage — see `lib/media-pan.ts`.
+  // Persisted per asset + orientation in the library DB — see the
+  // `mediaView` tRPC router and the `savedView` query below.
   const [pan, setPan] = useState({ x: 0, y: 0 });
 
   // Intentionally do NOT reset `maxed`/`fit` when `item` briefly becomes null.
@@ -185,6 +196,43 @@ export function MediaViewer({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // Viewport orientation selects WHICH saved framing we read/write, so a
+  // portrait phone and a landscape display keep separate pan/zoom for the
+  // same asset rather than overwriting each other. Recomputed every render —
+  // resizeTick re-renders on rotation, so this tracks the live viewport.
+  const orientation: 'portrait' | 'landscape' =
+    typeof window !== 'undefined' && window.innerHeight > window.innerWidth
+      ? 'portrait'
+      : 'landscape';
+  const orientationRef = useRef(orientation);
+  orientationRef.current = orientation;
+
+  // Saved framing for the current item + orientation, read from the asset's
+  // own library DB (shared across clients). Replaces the old per-browser
+  // localStorage memory. One tiny single-row fetch per viewed item.
+  const savedView = trpc.mediaView.get.useQuery(
+    { librarySlug: item?.librarySlug ?? '', uuid: item?.uuid ?? '', orientation },
+    { enabled: !!item, staleTime: 60_000 },
+  );
+  const viewUtils = trpc.useUtils();
+  const { mutate: setView } = trpc.mediaView.set.useMutation();
+  // Persist on user-initiated commits only (zoom press / pan release), never
+  // per frame — keeps the write rate low. Default framing deletes the row
+  // server-side, so resets are cheap too.
+  const persistView = useCallback((x: number, y: number, zoomVal: number) => {
+    if (!item) return;
+    const key = {
+      librarySlug: item.librarySlug,
+      uuid: item.uuid,
+      orientation: orientationRef.current,
+    };
+    setView({ ...key, x, y, zoom: zoomVal });
+    // Keep the local query cache in sync so navigating back to this item
+    // within the session restores the just-saved framing, not a stale read.
+    const isDefault = x === 0 && y === 0 && zoomVal === 1;
+    viewUtils.mediaView.get.setData(key, isDefault ? null : { x, y, zoom: zoomVal });
+  }, [item, setView, viewUtils]);
 
   // Cover-fit pixel dimensions of the current item plus pan limits.
   //   cw, ch    = image dimensions when rendered with `object-fit: cover`
@@ -245,8 +293,12 @@ export function MediaViewer({
       return;
     }
     if (lastPanUuidRef.current === item.uuid) return;
+    // The saved framing now loads async (DB-backed). Wait for it to resolve
+    // for THIS item before applying — otherwise we'd snap to default and
+    // never re-apply once the value arrives.
+    if (savedView.isLoading) return;
     lastPanUuidRef.current = item.uuid;
-    const saved = getMediaView(`${item.librarySlug}:${item.uuid}`);
+    const saved = savedView.data;
     if (!saved) {
       setPan({ x: 0, y: 0 });
       setZoom(1);
@@ -268,7 +320,7 @@ export function MediaViewer({
       x: Math.max(-maxX, Math.min(maxX, saved.x)),
       y: Math.max(-maxY, Math.min(maxY, saved.y)),
     });
-  }, [item]);
+  }, [item, savedView.isLoading, savedView.data]);
 
   // Pan is meaningful only in maxed + cover-fit (incl. slideshow, which now
   // uses the full-screen view).
@@ -286,9 +338,9 @@ export function MediaViewer({
     });
   }, [zoom, computeBounds]);
 
-  // Zoom mutators. Clamp into [MIN_ZOOM, MAX_ZOOM]. Zoom out below 1.0
-  // is intentionally disallowed — use Fit (C) to see the whole image
-  // instead.
+  // Zoom mutators. Clamp into [MIN_ZOOM, MAX_ZOOM]. Below 1.0 the image
+  // shrinks below the viewport (margins around it); Fit (C) still snaps
+  // the whole image to the viewport edges as the 100% baseline.
   const clampZoom = useCallback((z: number) =>
     Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z)), []);
 
@@ -300,30 +352,34 @@ export function MediaViewer({
 
   // Persist the current view (pan + new zoom) for this item. Called
   // from user-initiated zoom changes; not from the restore effect
-  // (which loaded from storage in the first place). Persists in slideshow
+  // (which loaded the value in the first place). Persists in slideshow
   // too now — it uses the full-screen view, so zoom/pan behaves identically.
   const persistZoom = useCallback((newZoom: number) => {
-    if (!item) return;
-    setMediaView(`${item.librarySlug}:${item.uuid}`, {
-      x: panRef.current.x,
-      y: panRef.current.y,
-      zoom: newZoom,
-    });
-  }, [item]);
+    persistView(panRef.current.x, panRef.current.y, newZoom);
+  }, [persistView]);
 
   const zoomIn = useCallback(() => {
     setZoom((z) => {
-      const next = clampZoom(z + ZOOM_STEP);
+      const next = clampZoom(z + (z < 1 ? ZOOM_STEP_FINE : ZOOM_STEP));
       if (next !== z) persistZoom(next);
       return next;
     });
   }, [clampZoom, persistZoom]);
   const zoomOut = useCallback(() => {
     setZoom((z) => {
-      const next = clampZoom(z - ZOOM_STEP);
+      const next = clampZoom(z - (z <= 1 ? ZOOM_STEP_FINE : ZOOM_STEP));
       if (next !== z) persistZoom(next);
       return next;
     });
+  }, [clampZoom, persistZoom]);
+
+  // Apply a typed percentage (e.g. "150" → 1.5), clamped to the zoom range.
+  const applyZoomPercent = useCallback((raw: string) => {
+    const pct = Number(raw.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(pct) || pct <= 0) return;
+    const next = clampZoom(pct / 100);
+    setZoom(next);
+    persistZoom(next);
   }, [clampZoom, persistZoom]);
 
   // ── Slideshow effects ───────────────────────────────────────────────
@@ -436,8 +492,11 @@ export function MediaViewer({
   }, [maxed]);
 
   // Handlers spread onto every chrome wrapper so the idle timer
-  // suspends/resumes correctly as the cursor enters/leaves controls.
+  // suspends/resumes correctly as the cursor enters/leaves controls. The
+  // `data-kn-chrome` marker lets the root mouse-move handler below tell,
+  // authoritatively, whether the cursor is over chrome.
   const chromeHoverHandlers = {
+    'data-kn-chrome': '',
     onMouseEnter: () => {
       chromeHoveredRef.current = true;
       if (idleTimerRef.current) {
@@ -452,6 +511,21 @@ export function MediaViewer({
     },
   };
 
+  // Root mouse-move: re-derive the hover flag from the element actually
+  // under the cursor, THEN pulse. Enter/leave bookkeeping alone gets stuck
+  // `true` when a hovered control unmounts (e.g. a nav arrow disabling at
+  // the first/last item) or re-renders without firing `onMouseLeave` —
+  // which leaves `pulseChrome` permanently short-circuited and the chrome
+  // pinned on screen. Recomputing from the real target on each move
+  // self-heals that the instant the cursor moves.
+  const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
+    if (maxed) {
+      const target = e.target as Element | null;
+      chromeHoveredRef.current = !!target?.closest?.('[data-kn-chrome]');
+    }
+    pulseChrome();
+  }, [maxed, pulseChrome]);
+
   // Minimap drives pan: continuous updates during drag, final commit on
   // release. We persist on commit, not on every move, to keep
   // localStorage writes off the hot path. The `panDragging` flag turns
@@ -464,10 +538,8 @@ export function MediaViewer({
   }, []);
   const handleMinimapCommit = useCallback((final: { x: number; y: number }) => {
     setPanDragging(false);
-    if (item) {
-      setMediaView(`${item.librarySlug}:${item.uuid}`, { ...final, zoom });
-    }
-  }, [item, zoom]);
+    persistView(final.x, final.y, zoom);
+  }, [persistView, zoom]);
 
   // Step-down "back" handler. Used by both the Esc shortcut and the
   // top-right X button so they behave identically:
@@ -651,7 +723,12 @@ export function MediaViewer({
   });
 
   if (!item) return null;
-  const fitClass = fit === 'cover' ? 'object-cover' : 'object-contain';
+  // Below 100% the image is smaller than the viewport, so a cover-crop
+  // would just hide the edges behind black margins for no gain. Reveal the
+  // whole picture (contain) whenever zoomed out; honor the fit toggle at
+  // or above 100%.
+  const renderFit = zoom < 1 ? 'contain' : fit;
+  const fitClass = renderFit === 'cover' ? 'object-cover' : 'object-contain';
 
   const panBounds = computeBounds();
 
@@ -724,7 +801,7 @@ export function MediaViewer({
       onClick={maxed ? undefined : (e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      onMouseMove={pulseChrome}
+      onMouseMove={handleViewerMouseMove}
     >
       {/* ── Media area — single mounted instance across modes ────────── */}
       <div
@@ -866,8 +943,35 @@ export function MediaViewer({
                   >
                     <ZoomOutIcon />
                   </button>
-                  <div className="px-1 min-w-[3rem] text-center tabular-nums select-none">
-                    {Math.round(zoom * 100)}%
+                  <div className="px-1 flex items-center justify-center tabular-nums">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={zoomEditing ? zoomDraft : String(Math.round(zoom * 100))}
+                      onFocus={(e) => {
+                        setZoomEditing(true);
+                        setZoomDraft(String(Math.round(zoom * 100)));
+                        e.currentTarget.select();
+                      }}
+                      onChange={(e) => setZoomDraft(e.target.value.replace(/[^\d]/g, ''))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur();
+                        else if (e.key === 'Escape') {
+                          zoomCancelRef.current = true;
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      onBlur={() => {
+                        setZoomEditing(false);
+                        if (zoomCancelRef.current) { zoomCancelRef.current = false; return; }
+                        applyZoomPercent(zoomDraft);
+                      }}
+                      aria-label="Zoom percentage"
+                      title="Set zoom level — type a percentage"
+                      className="w-9 bg-transparent text-right outline-none
+                                 focus:text-emerald-300 cursor-text"
+                    />
+                    <span className="select-none pl-0.5">%</span>
                   </div>
                   <button
                     onClick={zoomIn}
@@ -1426,6 +1530,7 @@ function NavButton({
   scaled = false,
   onMouseEnter,
   onMouseLeave,
+  'data-kn-chrome': dataChrome,
 }: {
   side: 'left' | 'right';
   onClick?: () => void;
@@ -1438,10 +1543,13 @@ function NavButton({
    *  it's zero-size (children are absolutely positioned to the viewer root). */
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
+  /** Chrome marker so the root mouse-move handler counts an arrow as chrome. */
+  'data-kn-chrome'?: string;
 }) {
   if (disabled) return null;
   return (
     <div
+      data-kn-chrome={dataChrome}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className={`absolute top-1/2 -translate-y-1/2 z-10

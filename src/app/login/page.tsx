@@ -1,16 +1,16 @@
 'use client';
 
 /**
- * User picker — the Phase-0 "login" UX.
+ * User picker + password — the Phase-0.5 "login" UX.
  *
- * Lists every user from /api/auth/users, lets the visitor click one,
- * sets the `kennook_user` cookie via /api/auth/select, and redirects
- * back to wherever they came from (or `/` if no return URL).
+ * Lists every user from /api/auth/users. Accounts without a password sign in
+ * on a single click (legacy behavior); accounts WITH a password open an
+ * inline passphrase form that posts to /api/auth/select. On success the
+ * server sets a signed `kennook_user` cookie and we return to where we came
+ * from (or `/`).
  *
- * No passwords; logout = clear the cookie in browser dev tools. Both
- * deliberate per Phase 0. When real auth lands the page survives —
- * it just gets a password field per user, or gets replaced by an
- * OAuth redirect.
+ * When real auth lands this page survives — it just swaps the picker for an
+ * OAuth redirect or a username field.
  */
 
 import { Suspense, useEffect, useState } from 'react';
@@ -21,6 +21,7 @@ interface User {
   id: number;
   name: string;
   role: 'viewer' | 'admin';
+  hasPassword: boolean;
 }
 
 function LoginContent() {
@@ -29,7 +30,9 @@ function LoginContent() {
   const returnTo = searchParams.get('returnTo') || '/';
 
   const [users, setUsers] = useState<User[] | null>(null);
-  const [busy, setBusy] = useState<number | null>(null);
+  const [selected, setSelected] = useState<User | null>(null);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,25 +42,34 @@ function LoginContent() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  async function pick(userId: number) {
-    setBusy(userId);
+  async function signIn(user: User, pw: string) {
+    setBusy(true);
     setError(null);
     try {
       const res = await fetch('/api/auth/select', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId: user.id, password: pw }),
       });
       if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(txt || `Sign-in failed (${res.status})`);
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Sign-in failed (${res.status})`);
       }
       router.push(returnTo);
-      // Force a re-render so the new cookie is picked up everywhere.
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setBusy(null);
+      setBusy(false);
+    }
+  }
+
+  function choose(user: User) {
+    setError(null);
+    if (user.hasPassword) {
+      setSelected(user);
+      setPassword('');
+    } else {
+      void signIn(user, '');
     }
   }
 
@@ -68,48 +80,78 @@ function LoginContent() {
         <div className="mb-4">
           <KenNookLogo height={28} />
         </div>
-        <h1 className="text-xl font-medium mb-1">Sign in</h1>
-        <p className="text-sm text-zinc-400 mb-5">Pick an account to continue.</p>
 
-        {!users && !error && (
-          <div className="text-sm text-zinc-500">Loading…</div>
-        )}
-        {error && (
-          <div className="text-sm text-red-400 mb-3">{error}</div>
-        )}
+        {!selected ? (
+          <>
+            <h1 className="text-xl font-medium mb-1">Sign in</h1>
+            <p className="text-sm text-zinc-400 mb-5">Pick an account to continue.</p>
 
-        {users && (
-          <div className="space-y-2">
-            {users.map((u) => (
+            {!users && !error && <div className="text-sm text-zinc-500">Loading…</div>}
+            {error && <div className="text-sm text-red-400 mb-3">{error}</div>}
+
+            {users && (
+              <div className="space-y-2">
+                {users.map((u) => (
+                  <button
+                    key={u.id}
+                    onClick={() => choose(u)}
+                    disabled={busy}
+                    className="w-full flex items-center justify-between gap-3
+                               bg-zinc-950/60 hover:bg-zinc-800 hover:ring-zinc-700
+                               ring-1 ring-zinc-800 rounded-lg px-4 py-3 transition
+                               disabled:opacity-50 disabled:cursor-wait text-left"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-zinc-100">{u.name}</div>
+                      <div className="text-[11px] uppercase tracking-wider text-zinc-500">
+                        {u.role}{u.hasPassword ? ' · password' : ''}
+                      </div>
+                    </div>
+                    <span className="text-zinc-600" aria-hidden>→</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <form
+            onSubmit={(e) => { e.preventDefault(); if (!busy) void signIn(selected, password); }}
+          >
+            <h1 className="text-xl font-medium mb-1">{selected.name}</h1>
+            <p className="text-sm text-zinc-400 mb-4">Enter the account password.</p>
+
+            <input
+              autoFocus
+              type="password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(null); }}
+              placeholder="Password"
+              aria-label="Account password"
+              className={`w-full bg-zinc-950 border rounded-md px-3 py-2 text-sm outline-none mb-3
+                          ${error ? 'border-red-500/70' : 'border-zinc-700 focus:border-zinc-500'}`}
+            />
+            {error && <div className="text-sm text-red-400 mb-3">{error}</div>}
+
+            <div className="flex items-center gap-2">
               <button
-                key={u.id}
-                onClick={() => pick(u.id)}
-                disabled={busy !== null}
-                className="w-full flex items-center justify-between gap-3
-                           bg-zinc-950/60 hover:bg-zinc-800 hover:ring-zinc-700
-                           ring-1 ring-zinc-800 rounded-lg px-4 py-3 transition
-                           disabled:opacity-50 disabled:cursor-wait text-left"
+                type="submit"
+                disabled={busy || password.length === 0}
+                className="bg-zinc-200 text-zinc-900 rounded-md px-4 py-2 text-sm font-medium
+                           hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition"
               >
-                <div>
-                  <div className="text-sm font-medium text-zinc-100">{u.name}</div>
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-500">
-                    {u.role}
-                  </div>
-                </div>
-                {busy === u.id ? (
-                  <span className="text-xs text-zinc-500">Signing in…</span>
-                ) : (
-                  <span className="text-zinc-600" aria-hidden>→</span>
-                )}
+                {busy ? 'Signing in…' : 'Sign in'}
               </button>
-            ))}
-          </div>
+              <button
+                type="button"
+                onClick={() => { setSelected(null); setPassword(''); setError(null); }}
+                disabled={busy}
+                className="text-sm text-zinc-400 hover:text-zinc-200 px-2 py-2 transition"
+              >
+                Back
+              </button>
+            </div>
+          </form>
         )}
-
-        <p className="text-[11px] text-zinc-600 mt-5 leading-relaxed">
-          Phase-0 sign-in: no password. To switch users, return to this page.
-          To sign out, clear your browser cookies for this site.
-        </p>
       </div>
     </div>
   );

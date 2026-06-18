@@ -7,6 +7,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes } from 'node:crypto';
+import { hashSecret } from '@/server/secret-hash';
 
 const DATA_ROOT = process.env.KENNOOK_DATA_ROOT ?? './data';
 const USER_DB_PATH = path.join(DATA_ROOT, 'user.db');
@@ -30,7 +32,7 @@ export function getUserSqlite(): DatabaseSync {
   return db;
 }
 
-const LATEST_USER_SCHEMA_VERSION = 10;
+const LATEST_USER_SCHEMA_VERSION = 12;
 
 function initUserSchema(db: DatabaseSync) {
   // Base tables (idempotent — IF NOT EXISTS). For new DBs the column set is
@@ -211,6 +213,44 @@ function initUserSchema(db: DatabaseSync) {
         ON saved_searches(user_id, library_slug);
     `);
     version = 10;
+  }
+
+  // v10 → v11: per-user login passwords. `password_hash` is nullable — a
+  // NULL means "no password" (the account can be selected without one).
+  // Seeds STARTER credentials so the app-wide login gate works immediately:
+  //   Viewer  → "password"   (the default account everyone lands on)
+  //   Admin   → "admin"      (so the gate can't be bypassed by picking the
+  //                           passwordless privileged account)
+  // Both are intended to be changed in /admin/users. Setting a password on
+  // the default Viewer is what flips the whole-app login gate ON, so seeding
+  // here deliberately enables it — see server/auth.ts isAuthGateEnabled().
+  if (version < 11) {
+    try { db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
+    const setPw = db.prepare(
+      `UPDATE users SET password_hash = ? WHERE id = ? AND password_hash IS NULL`,
+    );
+    setPw.run(hashSecret('password'), 1);
+    setPw.run(hashSecret('admin'), 2);
+    // Seed the session-signing secret once so both the prod and dev
+    // processes sign/verify cookies identically (they share this user.db).
+    db.prepare(
+      `INSERT OR IGNORE INTO user_settings (user_id, key, value, updated_at)
+         VALUES (1, 'auth.session_secret', ?, unixepoch() * 1000)`,
+    ).run(randomBytes(32).toString('hex'));
+    version = 11;
+  }
+
+  // v11 → v12: seed a default screensaver-dismiss passphrase ("password") so
+  // the walk-away lock is ON out of the box, mirroring the seeded login
+  // default. INSERT OR IGNORE never clobbers an admin-chosen value. Clearing
+  // it in /admin/settings (empty) means the screensaver dismisses without a
+  // password — see server/screensaver-lock.ts.
+  if (version < 12) {
+    db.prepare(
+      `INSERT OR IGNORE INTO user_settings (user_id, key, value, updated_at)
+         VALUES (1, 'screensaver.lock.hash', ?, unixepoch() * 1000)`,
+    ).run(hashSecret('password'));
+    version = 12;
   }
 
   if (version !== LATEST_USER_SCHEMA_VERSION) {
