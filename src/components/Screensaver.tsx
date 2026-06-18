@@ -105,6 +105,10 @@ export function Screensaver({ open, onExit }: Props) {
   const [prompting, setPrompting] = useState(false);
   const [passphrase, setPassphrase] = useState('');
   const [authError, setAuthError] = useState(false);
+  // Drives a one-shot shake animation on a wrong passphrase; cleared on
+  // animation end so the next wrong attempt can re-trigger it.
+  const [shaking, setShaking] = useState(false);
+  const promptInputRef = useRef<HTMLInputElement>(null);
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
 
@@ -115,22 +119,34 @@ export function Screensaver({ open, onExit }: Props) {
       setPrompting(false);
       setPassphrase('');
       setAuthError(false);
+      setShaking(false);
     }
   }, [open]);
+
+  // Focus the field when the prompt appears. rAF so it runs after the input
+  // is actually in the DOM (more reliable than the `autoFocus` attribute,
+  // which can be missed when the form mounts mid-gesture).
+  useEffect(() => {
+    if (!prompting) return;
+    const raf = requestAnimationFrame(() => promptInputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [prompting]);
 
   const submitPassphrase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (verify.isPending) return;
+    const fail = () => {
+      setAuthError(true);
+      setPassphrase('');
+      setShaking(true);
+      promptInputRef.current?.focus();
+    };
     try {
       const res = await verify.mutateAsync({ password: passphrase });
-      if (res.ok) {
-        onExit();
-      } else {
-        setAuthError(true);
-        setPassphrase('');
-      }
+      if (res.ok) onExit();
+      else fail();
     } catch {
-      setAuthError(true);
+      fail();
     }
   };
 
@@ -279,8 +295,10 @@ export function Screensaver({ open, onExit }: Props) {
         >
           <form
             onSubmit={submitPassphrase}
-            className="relative w-full max-w-xs bg-zinc-950/90 backdrop-blur ring-1 ring-zinc-800
-                       rounded-xl p-5 flex flex-col gap-3 shadow-2xl"
+            onAnimationEnd={() => setShaking(false)}
+            className={`relative w-full max-w-xs bg-zinc-950/90 backdrop-blur ring-1
+                       rounded-xl p-5 flex flex-col gap-3 shadow-2xl
+                       ${shaking ? 'kn-shake ring-red-500/50' : 'ring-zinc-800'}`}
           >
             <button
               type="button"
@@ -297,7 +315,7 @@ export function Screensaver({ open, onExit }: Props) {
               Enter passphrase to unlock
             </div>
             <input
-              autoFocus
+              ref={promptInputRef}
               type="password"
               value={passphrase}
               onChange={(e) => { setPassphrase(e.target.value); setAuthError(false); }}

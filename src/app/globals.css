@@ -211,6 +211,21 @@ body {
   will-change: transform, opacity;
 }
 
+/* Wrong-passphrase shake — a short horizontal wobble on the screensaver
+   unlock card. One-shot; the component clears the trigger on animationend
+   so a repeated wrong attempt re-fires it. */
+@keyframes kn-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-8px); }
+  40%      { transform: translateX(8px); }
+  60%      { transform: translateX(-5px); }
+  80%      { transform: translateX(5px); }
+}
+.kn-shake {
+  animation: kn-shake 0.4s ease-in-out;
+  will-change: transform;
+}
+
 /* Admin /indexing progress strip — vertical sweep over the
    "now scanning" thumbnail. Matches the green-laser feel of the
    reference image. */
