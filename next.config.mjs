@@ -35,6 +35,34 @@ const nextConfig = {
     '@huggingface/transformers',
     'sharp',
   ],
+  // The LAN-discovery deps are Node-only and must NEVER be bundled — webpack
+  // can't resolve their Node built-ins (os / dgram / dns). `serverExternalPackages`
+  // doesn't reliably cover the `instrumentation.ts` compilation, so force them
+  // external for EVERY server webpack pass here. They're `require()`d from
+  // node_modules at runtime, where Node resolves the built-ins natively.
+  // (`bonjour-service` being external means its transitive `multicast-dns` /
+  // `dns-packet` are never followed either.)
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      const pkgs = ['bonjour-service', 'multicast-dns', 'qrcode-terminal'];
+      const prev = Array.isArray(config.externals)
+        ? config.externals
+        : [config.externals].filter(Boolean);
+      config.externals = [
+        ...prev,
+        ...pkgs,
+        // Externalize the `node:` URI scheme. The instrumentation.ts server
+        // compilation (in dev) otherwise throws UnhandledSchemeError on
+        // `node:os` from discovery.ts; Node resolves `node:*` natively at
+        // runtime, so a plain require is correct.
+        ({ request }, cb) =>
+          request && request.startsWith('node:')
+            ? cb(null, 'commonjs ' + request)
+            : cb(),
+      ];
+    }
+    return config;
+  },
   // Hide the dev-mode indicator in the corner. It's useful when actively
   // debugging route compilation, but mostly just gets in the way of UI.
   devIndicators: false,

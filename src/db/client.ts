@@ -61,7 +61,7 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 18;
+const LATEST_SCHEMA_VERSION = 20;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -468,6 +468,29 @@ function applyMigrations(sqlite: DatabaseSync) {
       );
     `);
     version = 18;
+  }
+
+  // ── v19: persist the fit mode (cover/contain) alongside pan+zoom. Without
+  // it, zoom was a multiplier on an implicit baseline that silently flipped
+  // cover→contain below 100%, which made portrait-on-landscape framings jump
+  // in size. Storing the chosen fit makes zoom a continuous multiplier and
+  // remembers the user's framing. Defaults to 'cover' (the prior baseline).
+  if (version < 19) {
+    try {
+      sqlite.exec("ALTER TABLE media_view_state ADD COLUMN fit TEXT NOT NULL DEFAULT 'cover'");
+    } catch { /* column exists */ }
+    version = 19;
+  }
+
+  // ── v20: optimistic-concurrency version on media_view_state. Reads return
+  // it (the ETag); writes are guarded on it so a stale client can't silently
+  // clobber a newer framing, and it lets other clients converge. The
+  // reusable convention lives in server/occ.ts.
+  if (version < 20) {
+    try {
+      sqlite.exec('ALTER TABLE media_view_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
+    } catch { /* column exists */ }
+    version = 20;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

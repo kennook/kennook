@@ -22,6 +22,7 @@ import { MobileApp } from '@/components/mobile/MobileApp';
 import { LibrarySwitcher } from '@/components/LibrarySwitcher';
 import { KenNookLogo } from '@/components/KenNookLogo';
 import { AdminLinkButton } from '@/components/admin/AdminLinkButton';
+import { ConnectDeviceButton } from '@/components/ConnectDeviceButton';
 import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
@@ -854,6 +855,7 @@ function HomeContent() {
           >
             ?
           </button>
+          <ConnectDeviceButton />
           <AdminLinkButton />
           <LibrarySwitcher />
         </div>

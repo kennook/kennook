@@ -14,6 +14,7 @@ import { VoiceTagButton, useVoiceTagger, VoiceTagStatusLine, MicIcon } from './V
 import { FEATURES } from '@/lib/feature-flags';
 import { usePreference } from '@/lib/preferences';
 import { ViewportMinimap } from './ViewportMinimap';
+import { useSyncEvent } from '@/lib/sync';
 
 const CHROME_IDLE_MS = 2500;
 
@@ -141,14 +142,13 @@ export function MediaViewer({
     else setInternalMaxed(resolved);
   }, [isMaxedControlled, onMaxedChange]);
 
-  const [fit, setFit] = useState<'cover' | 'contain'>('cover');
-  // Zoom multiplier applied as `transform: scale(zoom)` on top of the
-  // current fit mode. Range [0.25, 4.0]. Above 1.0 zooms IN past the fit;
-  // below 1.0 shrinks the framed image below the viewport so it sits with
-  // margins around it (most natural in contain-fit — the whole image just
-  // gets smaller). Resets to 1.0 on item change and on fit toggle.
+  // Zoom is a single continuous multiplier. 1.0 = "fill" (cover — the image
+  // covers the viewport, cropping the overflow). Zooming OUT below 1.0
+  // continuously REVEALS the cropped edges until the whole image just fits
+  // (contain) at `fitFloorZoom` — the floor, so zoom-out never shrinks the
+  // image into a margin-padded box. Zooming IN above 1.0 crops further.
+  // `fitFloorZoom` is dynamic (image + viewport aspect); computed below.
   const [zoom, setZoom] = useState(1);
-  const MIN_ZOOM = 0.25;
   const MAX_ZOOM = 4;
   // Coarser steps when zooming IN (past 100%); finer 10% steps below 100%
   // where the whole image is visible and small nudges matter more.
@@ -208,18 +208,48 @@ export function MediaViewer({
   const orientationRef = useRef(orientation);
   orientationRef.current = orientation;
 
+  // Continuous-zoom reference points, dependent on image vs viewport aspect:
+  //   coverRatio   = how much bigger "fill" (cover) is than "fit" (contain).
+  //   fitFloorZoom = 1/coverRatio = the zoom at which the WHOLE image just
+  //                  fits — the zoom-OUT floor. Below it the image would only
+  //                  gain empty margins, which we don't want.
+  // Matching-aspect images have coverRatio 1 (cover == contain): nothing to
+  // reveal, so zoom-out is effectively disabled. resizeTick re-renders on
+  // viewport change so this tracks the live geometry.
+  const coverRatio = (() => {
+    const w = item?.width ?? 0;
+    const h = item?.height ?? 0;
+    if (typeof window === 'undefined' || w <= 0 || h <= 0) return 1;
+    const contentRatio = w / h;
+    const viewportRatio = window.innerWidth / Math.max(1, window.innerHeight);
+    return Math.max(contentRatio / viewportRatio, viewportRatio / contentRatio);
+  })();
+  const fitFloorZoom = coverRatio > 0 ? 1 / coverRatio : 1;
+
   // Saved framing for the current item + orientation, read from the asset's
   // own library DB (shared across clients). Replaces the old per-browser
   // localStorage memory. One tiny single-row fetch per viewed item.
+  // staleTime 0 + refetch-on-focus: with an asset-level, multi-client value
+  // we never want to render a stale framing. The `mediaView.changed` sync
+  // event (below) also invalidates this key when another client writes.
   const savedView = trpc.mediaView.get.useQuery(
     { librarySlug: item?.librarySlug ?? '', uuid: item?.uuid ?? '', orientation },
-    { enabled: !!item, staleTime: 60_000 },
+    { enabled: !!item, staleTime: 0, refetchOnWindowFocus: true },
   );
   const viewUtils = trpc.useUtils();
-  const { mutate: setView } = trpc.mediaView.set.useMutation();
+  const { mutateAsync: setView } = trpc.mediaView.set.useMutation();
+
+  // OCC version (ETag) the next write is based on. Seeded from the restore
+  // effect and updated on every successful write / conflict convergence.
+  const viewVersionRef = useRef(0);
+  // Serializes writes so rapid same-tab commits (e.g. holding zoom) don't
+  // conflict with each other — only cross-CLIENT writes hit the OCC path.
+  const writeChainRef = useRef<Promise<void>>(Promise.resolve());
+
   // Persist on user-initiated commits only (zoom press / pan release), never
-  // per frame — keeps the write rate low. Default framing deletes the row
-  // server-side, so resets are cheap too.
+  // per frame. Version-guarded: if a concurrent client moved the row on, we
+  // converge to their value, then re-apply this gesture on the fresh base
+  // (active gesture wins) — bounded to one retry so two clients can't loop.
   const persistView = useCallback((x: number, y: number, zoomVal: number) => {
     if (!item) return;
     const key = {
@@ -227,12 +257,45 @@ export function MediaViewer({
       uuid: item.uuid,
       orientation: orientationRef.current,
     };
-    setView({ ...key, x, y, zoom: zoomVal });
-    // Keep the local query cache in sync so navigating back to this item
-    // within the session restores the just-saved framing, not a stale read.
-    const isDefault = x === 0 && y === 0 && zoomVal === 1;
-    viewUtils.mediaView.get.setData(key, isDefault ? null : { x, y, zoom: zoomVal });
+    const base = viewVersionRef.current; // capture before the optimistic write
+    // Optimistic local cache so navigating back within the session is instant.
+    viewUtils.mediaView.get.setData(key, { x, y, zoom: zoomVal, version: base + 1 });
+
+    const run = async () => {
+      let baseVersion = base;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let res;
+        try {
+          res = await setView({ ...key, x, y, zoom: zoomVal, fit: 'cover', baseVersion });
+        } catch {
+          return; // network error — keep optimistic value; reconciles on next fetch
+        }
+        if (res.ok && res.row) {
+          viewVersionRef.current = res.row.version;
+          viewUtils.mediaView.get.setData(key, res.row);
+          return;
+        }
+        if (res.conflict) {
+          // Converge to the server's current value, then retry on top of it.
+          viewUtils.mediaView.get.setData(key, res.row);
+          baseVersion = res.row?.version ?? 0;
+          viewVersionRef.current = baseVersion;
+          continue;
+        }
+        return; // !ok && !conflict (e.g. item missing) — nothing to do
+      }
+    };
+    writeChainRef.current = writeChainRef.current.then(run, run);
   }, [item, setView, viewUtils]);
+
+  // Another client changed this asset's framing → refresh the key's cache so
+  // the NEXT open is fresh. We deliberately don't jump the currently-open
+  // view (the restore-once guard below keeps it stable).
+  useSyncEvent('mediaView.changed', (e) => {
+    void viewUtils.mediaView.get.invalidate({
+      librarySlug: e.librarySlug, uuid: e.uuid, orientation: e.orientation,
+    });
+  });
 
   // Cover-fit pixel dimensions of the current item plus pan limits.
   //   cw, ch    = image dimensions when rendered with `object-fit: cover`
@@ -289,6 +352,7 @@ export function MediaViewer({
     if (!item) {
       setPan({ x: 0, y: 0 });
       setZoom(1);
+      viewVersionRef.current = 0;
       lastPanUuidRef.current = null;
       return;
     }
@@ -302,9 +366,13 @@ export function MediaViewer({
     if (!saved) {
       setPan({ x: 0, y: 0 });
       setZoom(1);
+      viewVersionRef.current = 0;
       return;
     }
-    setZoom(saved.zoom);
+    viewVersionRef.current = saved.version; // seed the OCC base from this read
+    // Clamp into the current floor — the saved zoom may have come from a
+    // slightly different viewport size in the same orientation.
+    setZoom(Math.max(fitFloorZoom, Math.min(MAX_ZOOM, saved.zoom)));
     // Pan limits depend on zoom; computeBounds reads the current zoom
     // state which hasn't flushed yet, so recompute manually with the
     // saved zoom to clamp the restored pan correctly.
@@ -322,9 +390,11 @@ export function MediaViewer({
     });
   }, [item, savedView.isLoading, savedView.data]);
 
-  // Pan is meaningful only in maxed + cover-fit (incl. slideshow, which now
-  // uses the full-screen view).
-  const isPanEnabled = maxed && fit === 'cover';
+  // Pan is meaningful whenever the displayed image overflows the viewport —
+  // which can happen in the reveal range too (e.g. a portrait below 100%
+  // still overflows vertically). The actual pan limits come from
+  // computeBounds (0 when there's no overflow), so this just needs `maxed`.
+  const isPanEnabled = maxed;
 
   // Re-clamp pan whenever zoom changes — the bounds grew (zoom in)
   // or shrunk (zoom out), so a previously-valid pan may now be out of
@@ -338,17 +408,22 @@ export function MediaViewer({
     });
   }, [zoom, computeBounds]);
 
-  // Zoom mutators. Clamp into [MIN_ZOOM, MAX_ZOOM]. Below 1.0 the image
-  // shrinks below the viewport (margins around it); Fit (C) still snaps
-  // the whole image to the viewport edges as the 100% baseline.
+  // Zoom mutators. Clamp into [fitFloorZoom, MAX_ZOOM]. The floor is the
+  // whole-image-fits point, so you can reveal everything but never shrink
+  // past it into empty margins.
   const clampZoom = useCallback((z: number) =>
-    Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z)), []);
+    Math.max(fitFloorZoom, Math.min(MAX_ZOOM, z)), [fitFloorZoom]);
 
   // panRef lets persist helpers read the latest pan without dragging
   // it into useCallback deps (which would re-create them on every
   // pan tick — wasteful).
   const panRef = useRef(pan);
   panRef.current = pan;
+
+  // Tracks the previous render's fill-vs-reveal mode so we can suppress the
+  // transform transition on the single frame that crosses the 100% boundary
+  // (see `fitBoundaryCrossed` in the render body).
+  const prevRenderContainRef = useRef(false);
 
   // Persist the current view (pan + new zoom) for this item. Called
   // from user-initiated zoom changes; not from the restore effect
@@ -358,29 +433,50 @@ export function MediaViewer({
     persistView(panRef.current.x, panRef.current.y, newZoom);
   }, [persistView]);
 
+  // #5 (single-client load race): the moment the user changes zoom/pan, claim
+  // this item's restore slot so a still-loading saved value can't snap their
+  // adjustment back when it arrives.
+  const markInteracted = useCallback(() => {
+    if (item) lastPanUuidRef.current = item.uuid;
+  }, [item]);
+
+  // Fit/Fill snap (the "C" key + the pill/minimap button). If we're showing
+  // the whole image (at/near the floor), jump to fill (100%); otherwise jump
+  // to the floor (whole image). Either way recenter pan.
+  const toggleFitFill = useCallback(() => {
+    markInteracted();
+    const target = zoom <= fitFloorZoom + 0.01 ? 1 : fitFloorZoom;
+    setZoom(target);
+    setPan({ x: 0, y: 0 });
+    persistView(0, 0, target);
+  }, [zoom, fitFloorZoom, persistView, markInteracted]);
+
   const zoomIn = useCallback(() => {
+    markInteracted();
     setZoom((z) => {
       const next = clampZoom(z + (z < 1 ? ZOOM_STEP_FINE : ZOOM_STEP));
       if (next !== z) persistZoom(next);
       return next;
     });
-  }, [clampZoom, persistZoom]);
+  }, [clampZoom, persistZoom, markInteracted]);
   const zoomOut = useCallback(() => {
+    markInteracted();
     setZoom((z) => {
       const next = clampZoom(z - (z <= 1 ? ZOOM_STEP_FINE : ZOOM_STEP));
       if (next !== z) persistZoom(next);
       return next;
     });
-  }, [clampZoom, persistZoom]);
+  }, [clampZoom, persistZoom, markInteracted]);
 
   // Apply a typed percentage (e.g. "150" → 1.5), clamped to the zoom range.
   const applyZoomPercent = useCallback((raw: string) => {
     const pct = Number(raw.replace(/[^\d.]/g, ''));
     if (!Number.isFinite(pct) || pct <= 0) return;
+    markInteracted();
     const next = clampZoom(pct / 100);
     setZoom(next);
     persistZoom(next);
-  }, [clampZoom, persistZoom]);
+  }, [clampZoom, persistZoom, markInteracted]);
 
   // ── Slideshow effects ───────────────────────────────────────────────
   //
@@ -533,9 +629,10 @@ export function MediaViewer({
   // rendered content would lag the minimap rectangle.
   const [panDragging, setPanDragging] = useState(false);
   const handleMinimapPan = useCallback((next: { x: number; y: number }) => {
+    markInteracted(); // claim the restore slot at drag start
     setPan(next);
     setPanDragging(true);
-  }, []);
+  }, [markInteracted]);
   const handleMinimapCommit = useCallback((final: { x: number; y: number }) => {
     setPanDragging(false);
     persistView(final.x, final.y, zoom);
@@ -568,12 +665,7 @@ export function MediaViewer({
 
   useShortcut('viewer.fitToggle', () => {
     if (maxed) {
-      setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
-      // Toggling fit resets the zoom multiplier — the new fit is the
-      // new baseline. Without this, zooming in then toggling fit would
-      // leave the user looking at a scaled-up contain-fit image.
-      setZoom(1);
-      persistZoom(1);
+      toggleFitFill();
       pulseChrome();
     }
   }, { enabled: !!item && maxed });
@@ -723,12 +815,29 @@ export function MediaViewer({
   });
 
   if (!item) return null;
-  // Below 100% the image is smaller than the viewport, so a cover-crop
-  // would just hide the edges behind black margins for no gain. Reveal the
-  // whole picture (contain) whenever zoomed out; honor the fit toggle at
-  // or above 100%.
-  const renderFit = zoom < 1 ? 'contain' : fit;
-  const fitClass = renderFit === 'cover' ? 'object-cover' : 'object-contain';
+
+  // Continuous fill↔reveal, no discontinuity at 100%:
+  //   • zoom >= 1 ("fill" and in): render object-cover and scale by `zoom`
+  //     exactly as before — the cover pan machinery below is untouched.
+  //   • zoom < 1 (reveal): render object-CONTAIN, but scale it UP by
+  //     `zoom * coverRatio`. At zoom→1⁻ that scale → coverRatio, which makes
+  //     the contained image exactly the size of the cover image — so it lines
+  //     up seamlessly with the cover render at the boundary (no jump). As zoom
+  //     drops to fitFloorZoom the scale → 1, i.e. the whole image at contain
+  //     size. Pan is off here (the image fits), so this is a pure scale.
+  const renderContain = zoom < 1;
+  const fitClass = renderContain ? 'object-contain' : 'object-cover';
+  const effScale = renderContain ? zoom * coverRatio : zoom;
+  // Crossing the 100% boundary swaps object-fit (cover↔contain) instantly
+  // while the transform would animate — which flickers (shrink-then-grow),
+  // because the two render modes have different base sizes. The sizes MATCH
+  // exactly at the boundary, so skip the transition on just that frame: the
+  // step applies instantly and seamlessly.
+  const fitBoundaryCrossed = prevRenderContainRef.current !== renderContain;
+  prevRenderContainRef.current = renderContain;
+  const viewTransition = (panDragging || fitBoundaryCrossed)
+    ? undefined
+    : 'object-position 200ms, transform 200ms';
 
   const panBounds = computeBounds();
 
@@ -752,23 +861,27 @@ export function MediaViewer({
   // goes into translate. At zoom 1 the translate component is always
   // zero (because excess pan is impossible — bounds collapse to
   // cover-overflow).
-  const maxObjX = Math.max(0, (panBounds.cw - panBounds.vw) / 2);
-  const maxObjY = Math.max(0, (panBounds.ch - panBounds.vh) / 2);
+  // object-position can absorb pan ONLY in the cover render (zoom >= 1). On
+  // object-contain (the reveal range) it does nothing, so there we set the
+  // object-position capacity to 0 and route ALL pan through translate.
+  const maxObjX = renderContain ? 0 : Math.max(0, (panBounds.cw - panBounds.vw) / 2);
+  const maxObjY = renderContain ? 0 : Math.max(0, (panBounds.ch - panBounds.vh) / 2);
   const panObjX = Math.max(-maxObjX, Math.min(maxObjX, pan.x));
   const panObjY = Math.max(-maxObjY, Math.min(maxObjY, pan.y));
-  // Translate is in viewport pixels (post-scale). The remainder of pan
-  // is in cover-pixels, so multiply by zoom to convert.
+  // Translate carries the rest. 1 cover-pixel = `zoom` screen px (the
+  // displayed image is cw*zoom wide in BOTH render modes), so multiply by
+  // zoom. In the reveal range panObj is 0, so all of `pan` lands here.
   const panTransX = (pan.x - panObjX) * zoom;
   const panTransY = (pan.y - panObjY) * zoom;
 
   const opX = maxObjX > 0 ? 50 * (1 - panObjX / maxObjX) : 50;
   const opY = maxObjY > 0 ? 50 * (1 - panObjY / maxObjY) : 50;
-  const objectPosition = isPanEnabled ? `${opX}% ${opY}%` : undefined;
+  // object-position is a no-op on object-contain, so only emit it for cover.
+  const objectPosition = (!renderContain && isPanEnabled) ? `${opX}% ${opY}%` : undefined;
 
-  // Zoom layered on top via transform: scale; translate provides extra
-  // pan beyond cover-overflow. Wrapper has overflow-hidden so the
-  // scaled/translated element clips at viewport bounds.
-  const zoomActive = maxed && zoom !== 1;
+  // Wrapper has overflow-hidden so the scaled/translated element clips at the
+  // viewport bounds. Translate now applies in BOTH render modes.
+  const zoomActive = maxed && effScale !== 1;
   const translateActive = panTransX !== 0 || panTransY !== 0;
   const translatePart = translateActive
     ? `translate(${panTransX}px, ${panTransY}px) `
@@ -835,11 +948,9 @@ export function MediaViewer({
                 ['--kn-rotation' as string]: `${item.rotation ?? 0}deg`,
                 objectPosition,
                 transform: zoomActive || translateActive
-                  ? `${translatePart}rotate(var(--kn-rotation)) scale(${zoom})`
+                  ? `${translatePart}rotate(var(--kn-rotation)) scale(${effScale})`
                   : 'rotate(var(--kn-rotation))',
-                transition: panDragging
-                  ? undefined
-                  : 'object-position 200ms, transform 200ms',
+                transition: viewTransition,
                 ['WebkitUserDrag' as string]: 'none',
                 ['userDrag' as string]: 'none',
               } as React.CSSProperties}
@@ -859,11 +970,9 @@ export function MediaViewer({
               videoStyle={{
                 objectPosition,
                 transform: (zoomActive || translateActive)
-                  ? `${translatePart}scale(${zoom})`
+                  ? `${translatePart}scale(${effScale})`
                   : undefined,
-                transition: panDragging
-                  ? undefined
-                  : 'object-position 200ms, transform 200ms',
+                transition: viewTransition,
               }}
               onPrev={onPrev}
               onNext={onNext}
@@ -934,7 +1043,7 @@ export function MediaViewer({
                               kn-chrome-scaled">
                   <button
                     onClick={zoomOut}
-                    disabled={zoom <= MIN_ZOOM + 0.001}
+                    disabled={zoom <= fitFloorZoom + 0.001}
                     title="Zoom out (−)"
                     aria-label="Zoom out"
                     className="px-2 py-1.5 hover:bg-white/10 rounded-l-md transition
@@ -985,17 +1094,16 @@ export function MediaViewer({
                     <ZoomInIcon />
                   </button>
                   <button
-                    onClick={() => {
-                      setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
-                      setZoom(1);
-                      persistZoom(1);
-                    }}
-                    title={fit === 'cover' ? 'Fit (no crop) — C' : 'Fill (crop edges) — C'}
-                    aria-label={fit === 'cover' ? 'Fit' : 'Fill'}
+                    onClick={toggleFitFill}
+                    disabled={fitFloorZoom >= 0.999}
+                    title={zoom <= fitFloorZoom + 0.01 ? 'Fill (crop edges) — C' : 'Fit (whole image) — C'}
+                    aria-label={zoom <= fitFloorZoom + 0.01 ? 'Fill' : 'Fit'}
                     className="px-2 py-1.5 hover:bg-white/10 transition
-                               rounded-r-md border-l border-zinc-700/60"
+                               rounded-r-md border-l border-zinc-700/60
+                               disabled:opacity-40 disabled:cursor-not-allowed
+                               disabled:hover:bg-transparent"
                   >
-                    {fit === 'cover' ? <FitContainIcon /> : <FitCoverIcon />}
+                    {zoom <= fitFloorZoom + 0.01 ? <FitCoverIcon /> : <FitContainIcon />}
                   </button>
                 </div>
 
@@ -1050,18 +1158,9 @@ export function MediaViewer({
                   zoom={zoom}
                   onPanChange={handleMinimapPan}
                   onPanCommit={handleMinimapCommit}
-                  // Click toggles fit symmetrically: cover ↔ contain.
-                  //   • In contain (inactive minimap): switch to cover
-                  //     to give the user something to pan.
-                  //   • In cover (active minimap): switch to contain
-                  //     to see the whole image.
-                  // Zoom resets to 1 either way so the new fit is the
-                  // baseline framing.
-                  onActivate={() => {
-                    setFit((f) => (f === 'cover' ? 'contain' : 'cover'));
-                    setZoom(1);
-                    persistZoom(1);
-                  }}
+                  // Clicking the (inactive) minimap snaps fill↔whole-image,
+                  // same as the pill's Fit/Fill button.
+                  onActivate={toggleFitFill}
                 />
             </div>
           )}
