@@ -129,10 +129,10 @@ No separate search server. No Elasticsearch. SQLite handles libraries up to ~500
 
 ## Status & support
 
-KenNook is **early and built by one person**. It's free to self-host, forever.
-Bug reports are welcome, but support is best-effort and I'm not taking feature
-requests yet while the core stabilizes. Please use **Discussions** for questions
-and **Issues** for reproducible bugs.
+KenNook is **early and built by [Moises Romero](https://moisesromero.com)**. 
+It's free to self-host, forever. Bug reports are welcome, but support is
+best-effort and I'm not taking feature requests yet while the core stabilizes.
+Please use **Discussions** for questions and **Issues** for reproducible bugs.
 
 ## License
 
