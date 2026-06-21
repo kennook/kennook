@@ -1,10 +1,12 @@
-# Kennook
+# KenNook
 
 Your personal media library, smarter.
 
 Self-hosted, AI-native, privacy-first. Drop it on a folder of photos and videos and search them like you'd search Google — *"beach trips with the kids"*, *"the dog when he was a puppy"* — without uploading a single byte to anyone's cloud.
 
-> **Status:** v0.1 — first runnable cut. Photos + videos, local CLIP embeddings, hybrid search, web UI.
+> **Status:** early (pre-1.0) but self-hostable today. See the
+> [latest release](https://github.com/kennook/kennook/releases) and
+> [CHANGELOG](CHANGELOG.md) for what's current.
 
 ## Prerequisites
 
@@ -95,37 +97,34 @@ Hybrid: vector similarity (semantic) + BM25 full-text + recency, all in one SQL 
 
 No separate search server. No Elasticsearch. SQLite handles libraries up to ~500K items comfortably; Postgres + pgvector is the upgrade path beyond that.
 
-## v0.1 scope
+## Features
 
-**Included:**
-- Photo + video indexing
-- CLIP image embeddings (512-dim, `Xenova/clip-vit-base-patch32`)
-- EXIF extraction (date, GPS, camera)
-- Video metadata via ffprobe; one-frame thumbnail via ffmpeg
-- SHA-256 deduplication
-- Hybrid semantic + full-text search
-- Web UI with grid + viewer modal
-- Video playback with HTTP range requests
+- **Photos + video** indexed from any folder — EXIF (date/GPS/camera), video
+  metadata, generated thumbnails/previews, SHA-256 dedup.
+- **Semantic + full-text search** — CLIP image embeddings combined with FTS
+  into a single ranked result.
+- **On-device AI, no cloud** — speech-to-text transcription (whisper.cpp),
+  text-in-video/OCR, face detection + people clustering, and automatic
+  sensitive-content classification, all run locally.
+- **Library UI** — Pinterest-style masonry grid, a fast viewer with zoom/pan
+  and slideshow, playlists, saved searches, and people browsing.
+- **Multi-device** — real-time sync across devices on your network, a
+  walk-away screensaver, and **zero-config access**: KenNook advertises
+  `kennook.local` over mDNS and shows a QR to connect any device.
+- **Self-hosted & private** — runs entirely on your own machine; optional
+  login passwords and an admin Configuration panel.
 
-**Deferred to later:**
-- Multi-frame video embeddings → v0.2
-- Audio transcription (Whisper) → v0.2
-- Auto-captioning (Moondream / Florence-2) → v0.3
-- Face clustering → v0.4 (privacy-sensitive)
-- Collections / albums → v0.3
-- Multi-user / family mode → v0.5
-- Native mobile apps → post-PMF
-- Plugin SDK → v2+
+See [CHANGELOG.md](CHANGELOG.md) and the
+[releases](https://github.com/kennook/kennook/releases) for what's new.
 
 ## Roadmap
 
-| Version | Focus |
-|---|---|
-| 0.1 | Single-folder photo+video, semantic search, web UI (this) |
-| 0.2 | Whisper transcription, multi-frame video embeddings, watch mode |
-| 0.3 | Smart albums, auto-tagging, collections |
-| 0.5 | Multi-user, BYOC (S3/R2 backends) |
-| 1.0 | Polished UI, PWA, paid Pro tier |
+Directional, not dated — track specifics in Issues / Discussions:
+
+- A packaged, double-click desktop app (no terminal required).
+- Deeper auto-organization: smart albums, richer tagging, dedup review.
+- Fuller multi-user / family mode with real per-user accounts.
+- Bring-your-own-storage backends.
 
 ## Status & support
 

@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+### Changed
+- Documentation: refreshed the README — an accurate current feature list and a
+  short directional roadmap, replacing the stale v0.1-era scope and roadmap
+  sections.
+
 ## [0.2.0] - 2026-06-21
 
 ### Added
