@@ -1,6 +1,6 @@
 {
   "name": "kennook",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Your personal media library, smarter.",
   "scripts": {
@@ -10,6 +10,7 @@
     "build:prod": "KENNOOK_PROD=1 next build",
     "start:prod": "KENNOOK_PROD=1 next start -H 0.0.0.0 -p 3001",
     "prod": "pnpm build:prod && pnpm start:prod",
+    "commit": "tsx scripts/commit.ts",
     "release": "tsx scripts/release.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint",

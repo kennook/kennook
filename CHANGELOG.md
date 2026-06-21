@@ -12,6 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-21
+
+- Add pnpm commit: one-command commit, release, and deploy
+
 ## [0.2.1] - 2026-06-21
 
 ### Changed

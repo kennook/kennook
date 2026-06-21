@@ -1,7 +1,28 @@
 # Releasing KenNook
 
-The short version: keep `CHANGELOG.md` current as you work, then run
-`pnpm release <patch|minor|major>`.
+**Everyday flow — one command does everything:**
+
+```bash
+pnpm commit "what you changed"            # patch release (default)
+pnpm commit "added a thing" --minor       # minor release
+pnpm commit "broke a thing" --major       # major release
+pnpm commit "wip" --dry-run               # preview, change nothing
+pnpm commit "small fix" --no-deploy       # release but don't deploy now
+```
+
+`pnpm commit` stages everything, bumps the version, rolls the changelog
+(your `[Unreleased]` entries if present, else the message becomes the note),
+makes one commit, tags, pushes, cuts the GitHub Release, and triggers the
+cloud deploy that republishes `kennook.com/version.json`. It's safe to run
+constantly: a **pre-flight** (on `main`, origin reachable, not behind) runs
+*before* any change, so it can't leave a half-cut release.
+
+Use `pnpm release <patch|minor|major>` instead when the work is **already
+committed** and you just want to cut the release.
+
+> The cloud deploy (`cdk deploy`) is heavyweight — it redeploys the whole
+> marketing site to publish one JSON file. For rapid iteration use
+> `--no-deploy` and deploy periodically.
 
 ## Versioning policy
 
