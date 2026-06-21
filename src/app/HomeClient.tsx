@@ -101,6 +101,18 @@ function HomeContent() {
   // uses this as a fallback selection while React Query is fetching, so the
   // user sees a seamless transition (no flash of empty viewer).
   const [postLoadIntent, setPostLoadIntent] = useState<'first' | 'last' | null>(null);
+  // Collapsible filters/facets sidebar. Default open; persisted per-browser.
+  // Hydrated from localStorage after mount to avoid an SSR/client mismatch.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  useEffect(() => {
+    const v = localStorage.getItem('kennook.sidebar-open');
+    if (v !== null) setSidebarOpen(v === '1');
+  }, []);
+  const toggleSidebar = () => setSidebarOpen((v) => {
+    const next = !v;
+    try { localStorage.setItem('kennook.sidebar-open', next ? '1' : '0'); } catch { /* private mode */ }
+    return next;
+  });
 
   const selectedKeys = useMemo(
     () => new Set(selection.map((s) => selectionKey(s.librarySlug, s.itemUuid))),
@@ -116,12 +128,22 @@ function HomeContent() {
   // (sync.tsx filters by sessionId).
   const sync = useSync();
 
+  // Instance config (admin Configuration page). `screensaver.enabled` gates
+  // whether the walk-away screensaver can be triggered at all. Refetched live
+  // when an admin flips a toggle (config.changed sync event).
+  const config = trpc.config.list.useQuery(undefined, { staleTime: 30_000 });
+  const screensaverEnabled =
+    config.data?.find((c) => c.key === 'screensaver.enabled')?.value ?? true;
+  const utils = trpc.useUtils();
+  useSyncEvent('config.changed', () => { void utils.config.list.invalidate(); });
+
   // Timestamp of the last LOCAL screensaver toggle. The cross-process poll
   // below trusts local intent for a short window after a toggle so a stale
   // in-flight poll can't briefly re-open/close the screensaver under us.
   const lastLocalScreensaverChangeRef = useRef(0);
 
   const triggerScreensaver = () => {
+    if (!screensaverEnabled) return; // disabled in admin Configuration
     lastLocalScreensaverChangeRef.current = Date.now();
     setScreensaverOpen(true);
     sync.publish({ type: 'screensaver', open: true });
@@ -138,7 +160,7 @@ function HomeContent() {
   // Instant path: same-process devices get the toggle live via SSE.
   useSyncEvent('screensaver', (e) => {
     lastLocalScreensaverChangeRef.current = Date.now();
-    setScreensaverOpen(e.open);
+    setScreensaverOpen(e.open && screensaverEnabled);
   });
 
   // Cross-process path: caddy fronts a prod build (:3001) AND the dev server
@@ -817,7 +839,17 @@ function HomeContent() {
   return (
     <main className="min-h-screen">
       <header className={`sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-4">
+        <div className="px-5 py-4 flex items-center gap-4">
+          <button
+            onClick={toggleSidebar}
+            aria-pressed={sidebarOpen}
+            title={sidebarOpen ? 'Hide filters' : 'Show filters'}
+            aria-label="Toggle filters sidebar"
+            className="hidden md:flex items-center justify-center text-zinc-400 hover:text-zinc-100
+                       hover:bg-zinc-800 rounded px-2 py-1.5 transition shrink-0"
+          >
+            <SidebarToggleIcon />
+          </button>
           <h1 className="shrink-0">
             <KenNookLogo height={26} />
             <span className="sr-only">KenNook</span>
@@ -861,9 +893,9 @@ function HomeContent() {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-6 flex gap-8">
+      <div className="px-4 py-5 flex gap-6">
         <aside
-          className={`hidden md:block w-56 shrink-0 sticky top-20 self-start
+          className={`${sidebarOpen ? 'hidden md:block' : 'hidden'} w-56 shrink-0 sticky top-20 self-start
                      max-h-[calc(100vh-6rem)] overflow-y-auto pr-2 ${chromeQuietClass}`}
         >
           <PlaylistsSection
@@ -1254,6 +1286,17 @@ function SelectIcon() {
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="2.5" y="2.5" width="11" height="11" rx="2" strokeDasharray="2 1.5" />
       <path d="M5.5 8 L7.5 10 L11 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SidebarToggleIcon() {
+  // Panel-with-left-rail glyph — reads as "show/hide the side panel".
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <line x1="6" y1="3" x2="6" y2="13" />
     </svg>
   );
 }

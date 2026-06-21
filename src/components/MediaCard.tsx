@@ -24,6 +24,9 @@ interface MediaCardProps {
   selected?: boolean;
   selectionMode?: boolean;
   likeCount: number;
+  /** Natural pixel dimensions — drive the masonry tile's aspect ratio. */
+  width?: number | null;
+  height?: number | null;
   /** Client-applied rotation override in degrees (0/90/180/270). */
   rotation?: number;
   nsfwScore?: number;
@@ -52,6 +55,8 @@ export function MediaCard({
   selected,
   selectionMode,
   likeCount,
+  width,
+  height,
   rotation = 0,
   nsfwScore = 0,
   violenceScore = 0,
@@ -112,9 +117,22 @@ export function MediaCard({
     selected || selectionMode ? 'opacity-100' : 'opacity-0 group-hover:opacity-100';
   const heartVisible = displayCount > 0 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100';
 
+  // Masonry tile aspect ratio from the item's natural dimensions, clamped so
+  // panoramas / very tall shots stay tidy. A 90°/270° rotation swaps the
+  // displayed aspect — but since the rotate transform on a non-square tile is
+  // fiddly to fill cleanly, we keep those (rare) tiles square; object-cover +
+  // rotate already handles a square correctly. Missing dims → square.
+  const rotatedQuarter = rotation % 180 !== 0;
+  const aspectRatio =
+    width && height && !rotatedQuarter
+      ? Math.min(2, Math.max(0.5, width / height))
+      : 1;
+
   return (
     <div
-      className={`group relative aspect-square overflow-hidden rounded-lg bg-zinc-900 transition
+      style={{ aspectRatio: String(aspectRatio) }}
+      className={`group relative overflow-hidden rounded-lg bg-zinc-900 transition
+                  break-inside-avoid mb-2
                   ${selected ? 'ring-2 ring-emerald-400' : 'hover:ring-2 hover:ring-zinc-500'}`}
     >
       <button

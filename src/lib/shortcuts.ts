@@ -26,14 +26,14 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: 'nav.prevItem',
     label: 'Previous item',
     category: 'navigation',
-    defaultKeys: ['Shift+ArrowLeft', 'j', 'J'],
+    defaultKeys: ['Shift+ArrowLeft', 'ArrowUp', 'j', 'J'],
     description: 'Plain ←/→ stay video seek',
   },
   {
     id: 'nav.nextItem',
     label: 'Next item',
     category: 'navigation',
-    defaultKeys: ['Shift+ArrowRight', 'k', 'K'],
+    defaultKeys: ['Shift+ArrowRight', 'ArrowDown', 'k', 'K'],
   },
 
   // Viewer

@@ -19,7 +19,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Storage',       href: '/admin/storage' },
-  { label: 'Feature flags', href: '/admin/flags' },
+  { label: 'Configuration', href: '/admin/configuration' },
   { label: 'Settings',      href: '/admin/settings' },
   { label: 'Users',         href: '/admin/users' },
   { label: 'Theme',         href: '/admin/theme' },

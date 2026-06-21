@@ -67,10 +67,16 @@ export function MediaGrid({
   items, onSelect, onToggleSelection, selectedKeys, selectionMode, onSetLikes, loading,
 }: Props) {
   if (loading) {
+    // Varied-height skeletons so the masonry shape reads while loading.
+    const heights = [1, 0.72, 1.4, 1, 0.66, 1.25];
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
-        {Array.from({ length: 18 }).map((_, i) => (
-          <div key={i} className="aspect-square rounded-lg bg-zinc-900 animate-pulse" />
+      <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
+        {Array.from({ length: 24 }).map((_, i) => (
+          <div
+            key={i}
+            style={{ aspectRatio: String(heights[i % heights.length]) }}
+            className="break-inside-avoid mb-2 rounded-lg bg-zinc-900 animate-pulse"
+          />
         ))}
       </div>
     );
@@ -86,7 +92,7 @@ export function MediaGrid({
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+    <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
       {items.map((item) => (
         <MediaCard
           key={item.id}
@@ -97,6 +103,8 @@ export function MediaGrid({
           kind={item.kind}
           filename={item.filename}
           durationMs={item.durationMs}
+          width={item.width}
+          height={item.height}
           score={item.scores?.final}
           selected={selectedKeys?.has(selectionKey(item.librarySlug, item.uuid)) ?? false}
           selectionMode={selectionMode}

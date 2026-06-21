@@ -9,6 +9,7 @@ import { savedSearchRouter } from './savedSearch';
 import { screensaverLockRouter } from './screensaverLock';
 import { usersRouter } from './users';
 import { mediaViewRouter } from './mediaView';
+import { configRouter } from './config';
 
 export const appRouter = router({
   media: mediaRouter,
@@ -21,6 +22,7 @@ export const appRouter = router({
   screensaverLock: screensaverLockRouter,
   users: usersRouter,
   mediaView: mediaViewRouter,
+  config: configRouter,
 });
 
 export type AppRouter = typeof appRouter;
