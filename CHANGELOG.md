@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-21
+
 ### Added
 - Pinterest-style masonry library grid — thumbnails render at their natural
   aspect ratio and fill the page edge-to-edge.
