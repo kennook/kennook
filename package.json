@@ -10,6 +10,7 @@
     "build:prod": "KENNOOK_PROD=1 next build",
     "start:prod": "KENNOOK_PROD=1 next start -H 0.0.0.0 -p 3001",
     "prod": "pnpm build:prod && pnpm start:prod",
+    "release": "tsx scripts/release.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint",
     "indexer": "tsx src/indexer/index.ts",
