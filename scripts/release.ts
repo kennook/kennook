@@ -98,6 +98,15 @@ if (sh('git status --porcelain')) {
   die('working tree is dirty — commit or stash first.');
 }
 
+// Pre-flight: make sure origin hasn't moved. Done BEFORE any version bump or
+// tag, so a diverged remote aborts cleanly instead of leaving a half-cut
+// release (committed + tagged locally, push rejected).
+try { sh('git fetch --quiet origin'); } catch { die('could not reach origin — check your network/remote.'); }
+const behind = sh(`git rev-list --count HEAD..origin/${DEFAULT_BRANCH}`);
+if (behind !== '0') {
+  die(`origin/${DEFAULT_BRANCH} has ${behind} commit(s) you don't have. Run "git pull --rebase" first, then re-run.`);
+}
+
 const pkg = JSON.parse(readFileSync(PKG, 'utf8'));
 const cur: string = pkg.version;
 const version = nextVersion(cur, bump!);
