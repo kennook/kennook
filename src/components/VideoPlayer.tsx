@@ -46,6 +46,14 @@ interface Props {
    *  is held paused; when it clears we resume ONLY if the video was playing
    *  when the gate engaged — a user-initiated pause is preserved. */
   forcePaused?: boolean;
+  /** Loop the video natively. With this on the element never reaches its
+   *  natural end, so `onEnded` doesn't fire — the slideshow uses it to pin
+   *  the current video on repeat instead of advancing. */
+  loop?: boolean;
+  /** When provided, the controls bar shows a loop toggle button next to the
+   *  timer. `loop` drives its active (highlighted) state; clicking fires this.
+   *  Omitted outside the slideshow, so the button only appears there. */
+  onToggleLoop?: () => void;
 }
 
 /**
@@ -77,6 +85,8 @@ export function VideoPlayer({
   progressKey,
   initialTimeMs,
   forcePaused = false,
+  loop = false,
+  onToggleLoop,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playedRef = useRef<HTMLDivElement>(null);
@@ -347,6 +357,7 @@ export function VideoPlayer({
         ref={videoRef}
         src={src}
         autoPlay={autoPlay}
+        loop={loop}
         playsInline
         // Mute starts on for every new element (fresh load / item swap / maxed
         // remount); the user unmutes deliberately.
@@ -460,6 +471,16 @@ export function VideoPlayer({
             <span>{duration ? formatTime(duration) : '0:00'}</span>
           </span>
 
+          {onToggleLoop && (
+            <ControlButton
+              onClick={onToggleLoop}
+              active={loop}
+              title={loop ? 'Looping — click to stop (R)' : 'Loop this video (R)'}
+            >
+              <LoopIcon />
+            </ControlButton>
+          )}
+
           <div className="flex-1" />
 
           <div className="flex items-center gap-1.5">
@@ -489,7 +510,7 @@ export function VideoPlayer({
 
 // ─── Bits ──────────────────────────────────────────────────────────────────
 
-function ControlButton({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
+function ControlButton({ onClick, title, children, active = false }: { onClick: () => void; title: string; children: React.ReactNode; active?: boolean }) {
   return (
     <button
       onClick={(e) => { e.stopPropagation(); onClick(); }}
@@ -499,10 +520,25 @@ function ControlButton({ onClick, title, children }: { onClick: () => void; titl
       onDoubleClick={(e) => e.stopPropagation()}
       title={title}
       aria-label={title}
-      className="text-zinc-100 hover:text-white p-1.5 rounded transition hover:bg-white/10"
+      aria-pressed={active}
+      className={`p-1.5 rounded transition hover:bg-white/10 ${
+        active ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-100 hover:text-white'
+      }`}
     >
       {children}
     </button>
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"
+         stroke="currentColor" strokeWidth="1.5"
+         strokeLinecap="round" strokeLinejoin="round">
+      {/* Two arcs + arrowheads — the repeat glyph. */}
+      <path d="M2 8a6 6 0 0 1 10-4.5L14 5M14 8a6 6 0 0 1-10 4.5L2 11" />
+      <path d="M14 2.5V5h-2.5M2 13.5V11h2.5" />
+    </svg>
   );
 }
 

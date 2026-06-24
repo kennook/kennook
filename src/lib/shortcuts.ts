@@ -46,6 +46,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'viewer.voiceTag',   label: 'Voice-tag (hold)',        category: 'viewer', defaultKeys: ['v', 'V'], description: 'Hold to record; release to auto-tag from speech', holdable: true },
   { id: 'viewer.slideshowSlower', label: 'Slideshow: slow down', category: 'viewer', defaultKeys: [','], description: 'Slideshow mode only · +1s per photo' },
   { id: 'viewer.slideshowFaster', label: 'Slideshow: speed up',  category: 'viewer', defaultKeys: ['.'], description: 'Slideshow mode only · −1s per photo' },
+  { id: 'viewer.loopVideo', label: 'Slideshow: loop video', category: 'viewer', defaultKeys: ['r', 'R'], description: 'Slideshow mode only · repeat the current video instead of advancing' },
 
   // Video playback
   { id: 'video.playPause',     label: 'Play / pause',          category: 'video', defaultKeys: [' '] },

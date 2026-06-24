@@ -12,6 +12,9 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- Slideshow: loop the current video on repeat instead of advancing — toggle with
+  `R` or the loop button in the video controls bar; a chip shows while active.
+
 ## [0.2.2] - 2026-06-21
 
 - Add pnpm commit: one-command commit, release, and deploy

@@ -496,6 +496,9 @@ export function MediaViewer({
   //    photo-only. Pause stops scheduling. Duration is the user's
   //    slideshow preference (adjustable via , / . in slideshow mode).
   const [slideshowPhotoMs, setSlideshowPhotoMs] = usePreference('slideshowPhotoMs');
+  // Sticky "loop the current video" toggle (R). When on, a video in the
+  // slideshow repeats natively instead of advancing when it ends.
+  const [loopSlideshowVideo, setLoopSlideshowVideo] = usePreference('loopSlideshowVideo');
   useEffect(() => {
     if (!slideshow || paused || !item) return;
     if (item.kind !== 'photo') return;
@@ -683,6 +686,17 @@ export function MediaViewer({
   useShortcut('viewer.slideshowFaster', () => {
     adjustSlideshowSpeed(-SLIDESHOW_STEP_MS);
   }, { enabled: !!item && slideshow });
+
+  // Loop the current video on repeat — only meaningful for a video in
+  // slideshow. Sticky preference, so it persists until toggled back off.
+  // Shared by the R shortcut and the controls-bar button.
+  const toggleLoopVideo = () => {
+    setLoopSlideshowVideo(!loopSlideshowVideo);
+    pulseChrome();
+  };
+  useShortcut('viewer.loopVideo', toggleLoopVideo, {
+    enabled: !!item && slideshow && item?.kind === 'video',
+  });
 
   // Up/Down navigates between items regardless of kind. Left/Right are
   // now reserved for video seek (handled inside VideoPlayer); for a
@@ -976,9 +990,16 @@ export function MediaViewer({
               }}
               onPrev={onPrev}
               onNext={onNext}
+              // Slideshow loop: pin this video on repeat instead of advancing.
+              // (Native loop already suppresses `ended`; the guard below is
+              // belt-and-suspenders so advance never fires while looping.)
+              loop={slideshow && loopSlideshowVideo}
+              // Controls-bar loop button — only in slideshow (the toggle is a
+              // no-op elsewhere). Absent → button hidden in the preview modal.
+              onToggleLoop={slideshow ? toggleLoopVideo : undefined}
               // Pause respects: if user paused the slideshow during a
               // video, end-of-video does NOT auto-advance to next.
-              onEnded={slideshow && !paused ? onNext : undefined}
+              onEnded={slideshow && !paused && !loopSlideshowVideo ? onNext : undefined}
               // Scale the bottom controls bar on large displays, but only
               // in maxed mode — the preview-modal video stays compact.
               scaled={maxed}
@@ -1019,6 +1040,25 @@ export function MediaViewer({
                          rounded-full px-4 py-2 ring-1 ring-zinc-700 kn-speed-notice"
             >
               Slideshow: {(speedNotice.ms / 1000).toFixed(0)} s / photo
+            </div>
+          )}
+
+          {/* Persistent "looping" chip — explains why the slideshow is
+              holding on this video. Fades with the rest of the chrome.
+              Toggled with R (viewer.loopVideo). */}
+          {slideshow && loopSlideshowVideo && item.kind === 'video' && (
+            <div
+              className={`absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none
+                          flex items-center gap-1.5 bg-black/90 text-zinc-100 text-sm font-medium
+                          rounded-full px-4 py-2 ring-1 ring-zinc-700 ${chromeFadeClass}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" strokeWidth="1.5"
+                   strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                <path d="M2 8a6 6 0 0 1 10-4.5L14 5M14 8a6 6 0 0 1-10 4.5L2 11" />
+                <path d="M14 2.5V5h-2.5M2 13.5V11h2.5" />
+              </svg>
+              Looping video
             </div>
           )}
 
