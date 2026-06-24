@@ -6,7 +6,7 @@ import { getRawSqlite } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
 import { embedText, floatArrayToBuffer } from '@/ai/embeddings';
 import type { Context } from '@/server/trpc';
-import { publishToUser } from '@/server/sync-broker';
+import { publishToUser, publishToAll } from '@/server/sync-broker';
 import { NSFW_THRESHOLD, VIOLENCE_THRESHOLD } from '@/lib/sensitive-thresholds';
 import { getLibraryBySlug } from '@/server/libraries';
 import { getStorageRootPath, resolveMediaPath } from '@/server/storage';
@@ -197,8 +197,10 @@ interface FilterClauses {
 }
 
 function buildFilterClauses(filters: MediaFilters, ctx: Context): FilterClauses {
+  // media_items belong to the SHARED library (same for everyone); likes/views
+  // below are scoped to the real signed-in user.
   const where: string[] = ['m.user_id = ?', 'm.deleted_at IS NULL'];
-  const params: SqlParam[] = [ctx.userId];
+  const params: SqlParam[] = [ctx.sharedUserId];
 
   if (filters.kind) {
     where.push('m.kind = ?');
@@ -282,7 +284,7 @@ function buildFilterClauses(filters: MediaFilters, ctx: Context): FilterClauses 
     const userDb = getUserSqlite();
     const p = userDb.prepare(
       'SELECT id FROM people WHERE uuid = ? AND user_id = ?',
-    ).get(filters.person, ctx.userId) as { id: number } | undefined;
+    ).get(filters.person, ctx.sharedUserId) as { id: number } | undefined;
     if (p) {
       where.push(`EXISTS (
         SELECT 1 FROM media_faces mf
@@ -357,7 +359,7 @@ async function getCandidateIds(
     if (isAssetId(opts.query)) {
       const row = sqlite.prepare(
         'SELECT id FROM media_items WHERE uuid = ? AND user_id = ? AND deleted_at IS NULL',
-      ).get(opts.query.trim(), ctx.userId) as { id: number } | undefined;
+      ).get(opts.query.trim(), ctx.sharedUserId) as { id: number } | undefined;
       return row ? [row.id] : [];
     }
     const queryEmbed = await embedText(opts.query);
@@ -373,7 +375,7 @@ async function getCandidateIds(
   if (opts.similarToUuid) {
     const source = sqlite.prepare(`
       SELECT id FROM media_items WHERE uuid = ? AND user_id = ? AND deleted_at IS NULL
-    `).get(opts.similarToUuid, ctx.userId) as { id: number } | undefined;
+    `).get(opts.similarToUuid, ctx.sharedUserId) as { id: number } | undefined;
     if (!source) return [];
     const embRow = sqlite.prepare(
       'SELECT embedding FROM media_embeddings WHERE rowid = ?',
@@ -573,7 +575,7 @@ export const mediaRouter = router({
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE m.id = ? AND m.user_id = ? AND m.deleted_at IS NULL
-      `).get(ctx.userId, input.id, ctx.userId) as unknown as MediaRow | undefined;
+      `).get(ctx.userId, input.id, ctx.sharedUserId) as unknown as MediaRow | undefined;
       if (!row) throw new Error('Not found');
       return rowToDto(row, ctx.library.slug);
     }),
@@ -648,7 +650,7 @@ export const mediaRouter = router({
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
-      `).get(ctx.userId, input.uuid, ctx.userId) as unknown as MediaRow | undefined;
+      `).get(ctx.userId, input.uuid, ctx.sharedUserId) as unknown as MediaRow | undefined;
 
       if (!source) throw new Error('Source item not found');
 
@@ -742,7 +744,7 @@ export const mediaRouter = router({
                  ${LIKE_COUNT_EXPR}
           FROM media_items m
           WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
-        `).get(ctx.userId, input.query.trim(), ctx.userId) as unknown as MediaRow | undefined;
+        `).get(ctx.userId, input.query.trim(), ctx.sharedUserId) as unknown as MediaRow | undefined;
         type SearchMatch = { source: 'ocr' | 'transcript'; tStartMs: number | null; tEndMs: number | null; text: string };
         return {
           items: row
@@ -994,7 +996,7 @@ export const mediaRouter = router({
 
       // Cross-session fanout: other tabs/devices patch their caches with
       // the new rotation. Originating tab skips via the session id.
-      publishToUser(ctx.userId, {
+      publishToAll({
         sessionId: ctx.sessionId,
         event: {
           type: 'item.rotation',
@@ -1026,7 +1028,7 @@ export const mediaRouter = router({
       ).run(now, now, item.id);
 
       // Fan out so every other tab/device drops it from their grids/viewers.
-      publishToUser(ctx.userId, {
+      publishToAll({
         sessionId: ctx.sessionId,
         event: { type: 'item.excluded', librarySlug: slug, uuid: input.uuid },
       });
@@ -1053,7 +1055,7 @@ export const mediaRouter = router({
         'UPDATE media_items SET sensitive_override = ?, updated_at = ? WHERE id = ?',
       ).run(input.override, Date.now(), item.id);
 
-      publishToUser(ctx.userId, {
+      publishToAll({
         sessionId: ctx.sessionId,
         event: { type: 'item.sensitive', librarySlug: slug, uuid: input.uuid, override: input.override },
       });
@@ -1089,7 +1091,7 @@ export const mediaRouter = router({
       // One event per affected library — the handler just invalidates lists, so
       // a representative uuid is enough to refresh every changed item.
       for (const [slug, uuid] of touched) {
-        publishToUser(ctx.userId, {
+        publishToAll({
           sessionId: ctx.sessionId,
           event: { type: 'item.sensitive', librarySlug: slug, uuid, override: input.override },
         });
@@ -1190,7 +1192,7 @@ export const mediaRouter = router({
         ensureRunnerStarted();
         // Drop the moved items from every affected source grid/viewer.
         for (const sourceSlug of sourceSlugs) {
-          publishToUser(ctx.userId, {
+          publishToAll({
             sessionId: ctx.sessionId,
             event: {
               type: 'items.moved',
@@ -1245,7 +1247,7 @@ export const mediaRouter = router({
       // Tagging counts as an interaction.
       markViewed(sqlite, ctx.userId, item.id);
 
-      publishToUser(ctx.userId, {
+      publishToAll({
         sessionId: ctx.sessionId,
         event: { type: 'item.tag.changed', librarySlug: slug, uuid: input.uuid },
       });
@@ -1274,7 +1276,7 @@ export const mediaRouter = router({
           AND source = 'user'
       `).run(input.uuid, normalized);
 
-      publishToUser(ctx.userId, {
+      publishToAll({
         sessionId: ctx.sessionId,
         event: { type: 'item.tag.changed', librarySlug: slug, uuid: input.uuid },
       });

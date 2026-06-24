@@ -8,22 +8,26 @@ import {
 } from './libraries';
 import {
   getCurrentUser,
+  getSession,
   isAdmin as userIsAdmin,
-  isAuthenticated,
-  isAuthGateEnabled,
+  SHARED_DATA_USER_ID,
 } from './auth';
 
 export interface Context {
+  /** The signed-in user — drives PERSONAL data (likes, views, playlists,
+   *  saved searches). Anonymous visitors resolve to the Viewer id. */
   userId: number;
+  /** Owner of SHARED content (media, people, faces) — the operator's library,
+   *  the same for every user. Use this (not userId) for those queries. */
+  sharedUserId: number;
   library: Library;
   /** Per-tab id sent by the tRPC client. Used by mutations that publish
    *  sync events so the originating tab can skip its own echo on receipt. */
   sessionId: string | null;
-  /** Whether the caller's `kennook_user` cookie resolves to an admin.
-   *  Cookie-only (Phase 0 auth) — gates write procedures like setting the
-   *  screensaver lock; replaced wholesale when real AuthN lands. */
+  /** Whether the caller's `kennook_user` cookie resolves to an admin. */
   isAdmin: boolean;
-  /** Whether the caller carries a valid signed session (vs. anonymous). */
+  /** Whether the caller carries a valid signed session. "Continue anonymously"
+   *  also produces a signed session, so anonymous users are authenticated. */
   authenticated: boolean;
 }
 
@@ -46,21 +50,23 @@ export function createContext(opts: { req: Request }): Context {
   // Defensive: a DB hiccup resolving the role must never 500 every request —
   // degrade to non-admin (the safe default for write gating).
   let admin = false;
-  let authed = false;
+  let session = { userId: SHARED_DATA_USER_ID, authenticated: false };
   try { admin = userIsAdmin(getCurrentUser(cookieHeader)); } catch { admin = false; }
-  try { authed = isAuthenticated(cookieHeader); } catch { authed = false; }
+  try { session = getSession(cookieHeader); } catch { /* keep anonymous default */ }
   return {
-    userId: 1, // single-user v0.1
+    userId: session.userId,
+    sharedUserId: SHARED_DATA_USER_ID,
     library,
     sessionId: opts.req.headers.get('x-kennook-session'),
     isAdmin: admin,
-    authenticated: authed,
+    authenticated: session.authenticated,
   };
 }
 
 export function createContextWithSlug(slug: string = DEFAULT_LIBRARY_SLUG): Context {
   return {
-    userId: 1,
+    userId: SHARED_DATA_USER_ID,
+    sharedUserId: SHARED_DATA_USER_ID,
     library: resolveLibrary(slug),
     sessionId: null,
     isAdmin: false,
@@ -74,13 +80,12 @@ const t = initTRPC.context<Context>().create({
 
 export const router = t.router;
 
-// When the app-wide login gate is on (the default Viewer has a password),
-// every data procedure requires a valid signed session — otherwise an
-// unauthenticated client could read the library by hitting /api/trpc
-// directly, even though the page itself redirects to /login. Gate-off
-// instances are unaffected (open, as before).
+// Every data procedure requires a signed session. Visitors choose at /login:
+// sign in to a named account, or "Continue anonymously" (which still mints a
+// signed session as the shared Viewer). So an unauthenticated caller hitting
+// /api/trpc directly is rejected, matching the page-level redirect.
 const enforceAuthGate = t.middleware(({ ctx, next }) => {
-  if (!ctx.authenticated && isAuthGateEnabled()) {
+  if (!ctx.authenticated) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Sign in required.' });
   }
   return next();

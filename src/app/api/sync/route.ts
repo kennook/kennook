@@ -5,6 +5,7 @@ import {
   type Subscriber,
 } from '@/server/sync-broker';
 import { KENNOOK_VERSION, KENNOOK_BUILD_ID } from '@/lib/version';
+import { getSession, SHARED_DATA_USER_ID } from '@/server/auth';
 
 // Long-lived streaming response — needs the Node runtime (Edge has aggressive
 // connection limits and lacks `req.signal` semantics we rely on here).
@@ -24,7 +25,10 @@ export const dynamic = 'force-dynamic';
  * it's lighter to write and lighter at runtime.
  */
 export async function GET(req: NextRequest) {
-  const userId = 1; // single-user v0.1; will be derived from auth later
+  // Register the stream under the real signed-in user so per-user events
+  // (likes, playlists, saved searches) reach the right tabs. Global events
+  // fan out to every stream via publishToAll regardless of this.
+  const userId = getSession(req.headers.get('cookie')).userId;
 
   const encoder = new TextEncoder();
   let sub: Subscriber | null = null;
@@ -51,7 +55,7 @@ export async function GET(req: NextRequest) {
       // every client processes it.
       send(`data: ${JSON.stringify({
         sessionId: 'server-snapshot',
-        event: { type: 'screensaver', open: getScreensaverState(userId) },
+        event: { type: 'screensaver', open: getScreensaverState(SHARED_DATA_USER_ID) },
       })}\n\n`);
 
       // Per-tab screensaver assignment — monotonic per user, so the first
@@ -59,7 +63,7 @@ export async function GET(req: NextRequest) {
       // the client knows). Sent once per connection.
       send(`data: ${JSON.stringify({
         sessionId: 'server-snapshot',
-        event: { type: 'screensaver.assignment', index: assignScreensaverIndex(userId) },
+        event: { type: 'screensaver.assignment', index: assignScreensaverIndex(SHARED_DATA_USER_ID) },
       })}\n\n`);
 
       // Build version of THIS process — baked at build time, so it's the

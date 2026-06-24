@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
-import { publishToUser, setScreensaverState } from '@/server/sync-broker';
+import { publishToAll, setScreensaverState } from '@/server/sync-broker';
+import { SHARED_DATA_USER_ID } from '@/server/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,19 +17,18 @@ export const dynamic = 'force-dynamic';
  * on/off.
  */
 export async function POST(req: NextRequest) {
-  const userId = 1; // single-user v0.1
   let payload: unknown;
   try { payload = await req.json(); }
   catch { return new Response('Invalid JSON', { status: 400 }); }
 
-  // Pre-publish state capture: screensaver is the one event whose state we
-  // need to remember server-side, so any (re)connecting tab can sync to
-  // the current truth on the GET stream's snapshot frame.
+  // The client-published events (screensaver, audio.unmuted) are GLOBAL — they
+  // affect every window/device — so broadcast to all streams. Screensaver
+  // state persists under the shared id so a (re)connecting tab syncs to truth.
   const evt = (payload as { event?: { type?: string; open?: boolean } })?.event;
   if (evt?.type === 'screensaver' && typeof evt.open === 'boolean') {
-    setScreensaverState(userId, evt.open);
+    setScreensaverState(SHARED_DATA_USER_ID, evt.open);
   }
 
-  publishToUser(userId, payload);
+  publishToAll(payload);
   return new Response(null, { status: 204 });
 }

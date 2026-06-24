@@ -77,13 +77,29 @@ export function removeSubscriber(s: Subscriber): void {
  * the originating tab can skip its own event on receipt.
  */
 export function publishToUser(userId: number, payload: unknown): void {
-  let frame: string;
-  try {
-    frame = `data: ${JSON.stringify(payload)}\n\n`;
-  } catch {
-    return; // unserializable payload — skip rather than throw in a mutation
-  }
+  const frame = serialize(payload);
+  if (!frame) return;
   for (const s of subscribers) {
     if (s.userId === userId) s.send(frame);
+  }
+}
+
+/**
+ * Fan out to EVERY active stream, regardless of user — for GLOBAL events that
+ * everyone shares: the screensaver, instance config, and shared-media changes
+ * (rotation, sensitivity, exclude, move, tags, per-asset framing). Personal
+ * events (likes, playlists, saved searches) use `publishToUser` instead.
+ */
+export function publishToAll(payload: unknown): void {
+  const frame = serialize(payload);
+  if (!frame) return;
+  for (const s of subscribers) s.send(frame);
+}
+
+function serialize(payload: unknown): string | null {
+  try {
+    return `data: ${JSON.stringify(payload)}\n\n`;
+  } catch {
+    return null; // unserializable — skip rather than throw in a mutation
   }
 }

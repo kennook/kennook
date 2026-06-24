@@ -30,6 +30,23 @@ export const CONFIG_SCHEMA: ConfigItem[] = [
       'When off, the S shortcut and the screensaver are disabled everywhere.',
     default: true,
   },
+  {
+    key: 'auth.anonymousViewing',
+    label: 'Anonymous viewing',
+    description:
+      'Offer a "Continue anonymously" option on the login page. Anonymous ' +
+      'users all share one pooled account — their likes, view history, and ' +
+      'saved searches are visible to each other.',
+    default: true,
+  },
+  {
+    key: 'auth.selfSignup',
+    label: 'Self-service signup',
+    description:
+      'Let visitors create their own account from the login page. Off → only ' +
+      'an admin can add accounts in Admin → Users.',
+    default: false,
+  },
 ];
 
 const SCHEMA_BY_KEY = new Map(CONFIG_SCHEMA.map((c) => [c.key, c]));

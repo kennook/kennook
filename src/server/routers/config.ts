@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, publicProcedure, adminProcedure } from '@/server/trpc';
 import { listConfig, setConfigValue } from '@/server/app-config';
-import { publishToUser } from '@/server/sync-broker';
+import { publishToAll } from '@/server/sync-broker';
 
 /**
  * Instance configuration. `list` is public (the app reads toggles like
@@ -15,7 +15,8 @@ export const configRouter = router({
     .input(z.object({ key: z.string(), value: z.boolean() }))
     .mutation(({ input, ctx }) => {
       setConfigValue(input.key, input.value); // throws on unknown key
-      publishToUser(ctx.userId, {
+      // Instance config is global — every user's clients should refetch.
+      publishToAll({
         sessionId: ctx.sessionId,
         event: { type: 'config.changed' },
       });

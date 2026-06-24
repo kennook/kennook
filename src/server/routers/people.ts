@@ -113,7 +113,7 @@ export const peopleRouter = router({
                created_at, updated_at
         FROM people
         WHERE user_id = ? AND face_count > 0
-      `).all(ctx.userId) as unknown as PersonRow[];
+      `).all(ctx.sharedUserId) as unknown as PersonRow[];
 
       const toDto = (p: PersonRow, faceCount: number) => ({
         uuid: p.uuid,
@@ -179,7 +179,7 @@ export const peopleRouter = router({
         SELECT id, uuid, name, cover_face_id, cover_library_slug, face_count,
                created_at, updated_at
         FROM people WHERE uuid = ? AND user_id = ?
-      `).get(input.uuid, ctx.userId) as unknown as PersonRow | undefined;
+      `).get(input.uuid, ctx.sharedUserId) as unknown as PersonRow | undefined;
       if (!person) throw new Error('Person not found');
 
       const aggregated: Array<{
@@ -201,7 +201,7 @@ export const peopleRouter = router({
             FROM media_items m
             JOIN media_faces mf ON mf.media_item_id = m.id
             WHERE mf.person_id = ? AND m.deleted_at IS NULL
-          `).all(ctx.userId, person.id) as unknown as MediaItemRow[];
+          `).all(ctx.sharedUserId, person.id) as unknown as MediaItemRow[];
 
           for (const r of items) {
             aggregated.push({
@@ -249,7 +249,7 @@ export const peopleRouter = router({
       db.prepare(`
         UPDATE people SET name = ?, updated_at = ?
         WHERE uuid = ? AND user_id = ?
-      `).run(final, Date.now(), input.uuid, ctx.userId);
+      `).run(final, Date.now(), input.uuid, ctx.sharedUserId);
       return { uuid: input.uuid, name: final };
     }),
 
@@ -267,10 +267,10 @@ export const peopleRouter = router({
       const db = getUserSqlite();
       const src = db.prepare(
         'SELECT id FROM people WHERE uuid = ? AND user_id = ?',
-      ).get(input.srcUuid, ctx.userId) as { id: number } | undefined;
+      ).get(input.srcUuid, ctx.sharedUserId) as { id: number } | undefined;
       const dst = db.prepare(
         'SELECT id FROM people WHERE uuid = ? AND user_id = ?',
-      ).get(input.dstUuid, ctx.userId) as { id: number } | undefined;
+      ).get(input.dstUuid, ctx.sharedUserId) as { id: number } | undefined;
       if (!src || !dst) throw new Error('Person not found');
 
       let moved = 0;
@@ -327,7 +327,7 @@ export const peopleRouter = router({
 
       const from = userDb.prepare(
         'SELECT id FROM people WHERE uuid = ? AND user_id = ?',
-      ).get(input.fromPersonUuid, ctx.userId) as { id: number } | undefined;
+      ).get(input.fromPersonUuid, ctx.sharedUserId) as { id: number } | undefined;
       if (!from) throw new Error('Source person not found');
 
       // Resolve target person_id (or null to unassign). For 'new' we
@@ -381,7 +381,7 @@ export const peopleRouter = router({
           VALUES (?, ?, 0, ?, ?)
           RETURNING id
         `).get(
-          newUuid, ctx.userId,
+          newUuid, ctx.sharedUserId,
           firstCover!.faceId, firstCover!.librarySlug,
         ) as { id: number };
         toPersonId = res.id;
@@ -392,7 +392,7 @@ export const peopleRouter = router({
         }
         const to = userDb.prepare(
           'SELECT id FROM people WHERE uuid = ? AND user_id = ?',
-        ).get(input.to.uuid, ctx.userId) as { id: number } | undefined;
+        ).get(input.to.uuid, ctx.sharedUserId) as { id: number } | undefined;
         if (!to) throw new Error('Target person not found');
         toPersonId = to.id;
       }
@@ -474,7 +474,7 @@ export const peopleRouter = router({
       const db = getUserSqlite();
       const p = db.prepare(
         'SELECT id FROM people WHERE uuid = ? AND user_id = ?',
-      ).get(input.uuid, ctx.userId) as { id: number } | undefined;
+      ).get(input.uuid, ctx.sharedUserId) as { id: number } | undefined;
       if (!p) throw new Error('Person not found');
 
       for (const ws of listLibraries()) {

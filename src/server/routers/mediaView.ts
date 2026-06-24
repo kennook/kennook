@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { router, publicProcedure } from '@/server/trpc';
 import { getRawSqlite } from '@/db/client';
 import { occWrite } from '@/server/occ';
-import { publishToUser } from '@/server/sync-broker';
+import { publishToAll } from '@/server/sync-broker';
 
 /**
  * Per-asset viewer framing (pan + zoom), stored in the asset's own library
@@ -84,9 +84,9 @@ export const mediaViewRouter = router({
       });
 
       if (result.ok) {
-        // Fan out so other open clients refresh this key's cache. Originating
-        // tab skips its own echo via the session id.
-        publishToUser(ctx.userId, {
+        // Per-asset framing is SHARED across users, so fan out to everyone's
+        // clients (they invalidate the key). Originating tab skips its echo.
+        publishToAll({
           sessionId: ctx.sessionId,
           event: {
             type: 'mediaView.changed',

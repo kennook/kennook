@@ -25,9 +25,19 @@ import { getUserSqlite } from '@/db/user-client';
 import { hashSecret, verifySecret } from '@/server/secret-hash';
 
 export const AUTH_COOKIE_NAME = 'kennook_user';
-/** Default user id when no cookie is present — every visitor is the
- *  anonymous Viewer until they pick a different account at /login. */
+/** The anonymous/shared Viewer. Every visitor is this user until they sign in,
+ *  and "Continue anonymously" signs them in AS this user. */
 export const DEFAULT_USER_ID = 1;
+/** The seeded operator account (gates /admin). */
+export const ADMIN_USER_ID = 2;
+/**
+ * Owner of SHARED content — media, people, faces — which is the operator's
+ * library, the same for everyone. Personal overlays (likes, views, playlists,
+ * saved searches) are scoped to the real signed-in user instead. Shared data
+ * lives under the anonymous Viewer's id, so anonymous users see the full
+ * library and their own activity pooled together.
+ */
+export const SHARED_DATA_USER_ID = DEFAULT_USER_ID;
 
 export type UserRole = 'viewer' | 'admin';
 
@@ -50,8 +60,19 @@ export interface AppUser {
 // dev Node processes (which share user.db) sign/verify identically; the
 // INSERT-OR-IGNORE fallback covers any DB that somehow lacks it.
 let _secretCache: Buffer | null = null;
+let _secretCacheAt = 0;
+/**
+ * How long a process trusts its cached secret before re-reading user.db.
+ * This bounds how long a *different* Node process (prod :3001 and dev :3000
+ * share one user.db) keeps honoring old cookies after a rotation — the
+ * process that handled the rotate drops its cache immediately; others
+ * converge within this window. One indexed single-row read per window.
+ */
+const SECRET_TTL_MS = 10_000;
+
 function getSessionSecret(): Buffer {
-  if (_secretCache) return _secretCache;
+  const now = Date.now();
+  if (_secretCache && now - _secretCacheAt < SECRET_TTL_MS) return _secretCache;
   const db = getUserSqlite();
   const read = () =>
     (db.prepare('SELECT value FROM user_settings WHERE user_id = 1 AND key = ?')
@@ -65,7 +86,26 @@ function getSessionSecret(): Buffer {
     hex = read(); // re-read so a concurrent writer's value wins consistently
   }
   _secretCache = Buffer.from(hex ?? randomBytes(32).toString('hex'), 'hex');
+  _secretCacheAt = now;
   return _secretCache;
+}
+
+/**
+ * Rotate the per-instance session secret. Every existing signed cookie
+ * instantly fails verification, so every user — including the admin who
+ * triggers this — is forced back to /login. Other Node processes sharing
+ * this user.db pick up the new secret within SECRET_TTL_MS.
+ */
+export function rotateSessionSecret(): void {
+  const db = getUserSqlite();
+  db.prepare(
+    `INSERT INTO user_settings (user_id, key, value, updated_at)
+       VALUES (1, ?, ?, unixepoch() * 1000)
+     ON CONFLICT(user_id, key) DO UPDATE
+       SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run('auth.session_secret', randomBytes(32).toString('hex'));
+  _secretCache = null;
+  _secretCacheAt = 0;
 }
 
 /** Build the signed cookie value for a user id. */
@@ -206,6 +246,35 @@ export function setUserPassword(userId: number, password: string | null | undefi
   const trimmed = (password ?? '').trim();
   const hash = trimmed ? hashSecret(trimmed) : null;
   db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(hash, userId);
+}
+
+/**
+ * Create a new account (signup or admin-created). Names are unique
+ * (case-insensitive). Throws on a blank/taken name. New users get their own
+ * per-user data scope (likes, views, playlists, saved searches); shared
+ * content (media, people) stays under SHARED_DATA_USER_ID.
+ */
+export function createUser(name: string, password: string, role: UserRole = 'viewer'): AppUser {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('A name is required.');
+  if (!password.trim()) throw new Error('A password is required.');
+  const db = getUserSqlite();
+  const taken = db.prepare('SELECT 1 FROM users WHERE name = ? COLLATE NOCASE').get(trimmed);
+  if (taken) throw new Error('That name is already taken.');
+  const info = db.prepare(
+    `INSERT INTO users (name, role, password_hash, created_at)
+       VALUES (?, ?, ?, unixepoch() * 1000)`,
+  ).run(trimmed, role, hashSecret(password));
+  return { id: Number(info.lastInsertRowid), name: trimmed, role };
+}
+
+/** Delete a user. The seeded Viewer (anonymous) and Admin accounts are
+ *  protected — they anchor shared data and admin access. */
+export function deleteUser(userId: number): void {
+  if (userId === DEFAULT_USER_ID || userId === ADMIN_USER_ID) {
+    throw new Error('The built-in Viewer and Admin accounts cannot be deleted.');
+  }
+  getUserSqlite().prepare('DELETE FROM users WHERE id = ?').run(userId);
 }
 
 /**
