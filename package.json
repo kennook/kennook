@@ -4,11 +4,11 @@
   "private": true,
   "description": "Your personal media library, smarter.",
   "scripts": {
-    "dev": "next dev -H 0.0.0.0",
+    "dev": "next dev -H ::",
     "build": "next build",
     "start": "next start",
     "build:prod": "KENNOOK_PROD=1 next build",
-    "start:prod": "KENNOOK_PROD=1 next start -H 0.0.0.0 -p 3001",
+    "start:prod": "KENNOOK_PROD=1 next start -H :: -p 3001",
     "prod": "pnpm build:prod && pnpm start:prod",
     "commit": "tsx scripts/commit.ts",
     "release": "tsx scripts/release.ts",

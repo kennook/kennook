@@ -12,6 +12,9 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- Server binds dual-stack (`-H ::`) so it answers both IPv6 and IPv4 clients —
+  fixes connection latency on devices that resolve/prefer IPv6 first.
+
 - Screensaver lock: signed-in users now dismiss the walk-away screensaver with
   their own account password; anonymous / kiosk displays use a 4-digit passcode
   (entered as four boxes), replacing the old shared passphrase.
