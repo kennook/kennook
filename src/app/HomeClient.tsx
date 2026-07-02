@@ -138,19 +138,12 @@ function HomeContent() {
   const utils = trpc.useUtils();
   useSyncEvent('config.changed', () => { void utils.config.list.invalidate(); });
 
-  // Timestamp of the last LOCAL screensaver toggle. The cross-process poll
-  // below trusts local intent for a short window after a toggle so a stale
-  // in-flight poll can't briefly re-open/close the screensaver under us.
-  const lastLocalScreensaverChangeRef = useRef(0);
-
   const triggerScreensaver = () => {
     if (!screensaverEnabled) return; // disabled in admin Configuration
-    lastLocalScreensaverChangeRef.current = Date.now();
     setScreensaverOpen(true);
     sync.publish({ type: 'screensaver', open: true });
   };
   const dismissScreensaver = () => {
-    lastLocalScreensaverChangeRef.current = Date.now();
     setScreensaverOpen(false);
     setQuietMode(true);
     sync.publish({ type: 'screensaver', open: false });
@@ -158,35 +151,14 @@ function HomeContent() {
 
   useShortcut('global.screensaver', triggerScreensaver);
 
-  // Instant path: same-process devices get the toggle live via SSE.
+  // Screensaver toggles arrive here from every source: same-process devices via
+  // SSE, same-browser tabs via BroadcastChannel, and cross-process (caddy fronts
+  // the prod :3001 AND dev :3000 builds, whose in-memory brokers don't talk) via
+  // the sync broker's leader-only poll of the shared user.db — all normalized to
+  // this one `screensaver` event, so there's no per-tab poll here anymore.
   useSyncEvent('screensaver', (e) => {
-    lastLocalScreensaverChangeRef.current = Date.now();
     setScreensaverOpen(e.open && screensaverEnabled);
   });
-
-  // Cross-process path: caddy fronts a prod build (:3001) AND the dev server
-  // (:3000), so devices on different origins land on different Node processes
-  // whose in-memory SSE brokers don't talk to each other. They DO share one
-  // user.db, so poll the persisted state to converge. The guard window keeps
-  // a stale poll from clobbering a just-made local change.
-  useEffect(() => {
-    let alive = true;
-    const SCREENSAVER_POLL_MS = 2000;
-    const GUARD_MS = 3000;
-    const poll = async () => {
-      try {
-        const res = await fetch('/api/sync/state', { cache: 'no-store' });
-        if (!res.ok || !alive) return;
-        const data = await res.json() as { screensaver?: boolean };
-        if (typeof data.screensaver !== 'boolean') return;
-        if (Date.now() - lastLocalScreensaverChangeRef.current < GUARD_MS) return;
-        setScreensaverOpen((cur) => (cur === data.screensaver ? cur : data.screensaver!));
-      } catch { /* offline / transient — try again next tick */ }
-    };
-    const t = setInterval(poll, SCREENSAVER_POLL_MS);
-    void poll();
-    return () => { alive = false; clearInterval(t); };
-  }, []);
 
   // While quiet mode is on, any real user input wakes the page back up.
   // Listeners attach only when quietMode flips true so we're not paying for

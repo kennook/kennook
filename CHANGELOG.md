@@ -12,6 +12,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- Multi-window sync: each browser now holds a single `/api/sync` SSE stream and a
+  single cross-process state poll — a leader elected across same-origin windows
+  (via a localStorage lease) owns them and relays to the others over
+  BroadcastChannel. Many open windows no longer exhaust the browser's connection
+  pool, so multi-screen use works.
+
 - Server binds dual-stack (`-H ::`) so it answers both IPv6 and IPv4 clients —
   fixes connection latency on devices that resolve/prefer IPv6 first.
 
