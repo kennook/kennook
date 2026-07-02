@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useScreensaverIndex } from '@/lib/sync';
 import { trpc } from '@/lib/trpc-client';
+import { PinInput } from '@/components/PinInput';
 
 interface Props {
   open: boolean;
@@ -59,12 +60,13 @@ const SCREENSAVER_FILTER = 'brightness(0.2) contrast(1) saturate(0.8) blur(4px)'
  * the very mousemove/keyup that came from the launch press would
  * insta-dismiss it.
  *
- * Lock: when an admin has set a screensaver passphrase
- * (`screensaverLock.status` → enabled), a dismiss gesture reveals a
- * passphrase prompt instead of exiting; only a server-verified passphrase
- * calls `onExit`. This is a casual-passer-by deterrent, not real security
- * (a browser overlay can always be bypassed by someone with devtools) —
- * full device-trust auth is the planned replacement.
+ * Lock: when the lock applies (`screensaverLock.status` → mode !== 'none'), a
+ * dismiss gesture reveals an unlock prompt instead of exiting; only a
+ * server-verified credential calls `onExit`. The mode decides the credential:
+ * a signed-in named user enters their account password, anyone else enters
+ * the shared numeric passcode. A casual-passer-by deterrent — a browser
+ * overlay can be bypassed with devtools — but a real screen-lock for a
+ * signed-in session.
  */
 export function Screensaver({ open, onExit }: Props) {
   // Lazily resolve the video to play on first open. Two pieces of state
@@ -77,35 +79,39 @@ export function Screensaver({ open, onExit }: Props) {
   const [src, setSrc] = useState<string | null>(null);
   const assignedIndex = useScreensaverIndex();
 
-  // Lock state. Fetched eagerly (not just while open) so the passphrase
+  // Lock state. Fetched eagerly (not just while open) so the unlock
   // requirement is known before the first dismiss gesture.
   const lockStatus = trpc.screensaverLock.status.useQuery(undefined, {
     staleTime: 10_000,
   });
   // FAIL CLOSED: treat the screensaver as locked unless the server has
-  // positively told us the lock is OFF (`enabled === false`). While the
-  // status is loading or the request errors (e.g. a stale build without the
-  // endpoint, or a dropped session), `data` is undefined — and we must NOT
-  // let a click dismiss in that window. Safe for genuinely-unlocked
-  // instances too: `verify` returns ok for any input when no passphrase is
-  // set, so the prompt can't trap anyone.
-  const locked = lockStatus.data?.enabled !== false;
+  // positively told us the mode is 'none'. While the status is loading or the
+  // request errors (e.g. a stale build without the endpoint, or a dropped
+  // session), `mode` is undefined — and we must NOT let a click dismiss in
+  // that window. Safe for genuinely-unlocked instances too: `verify` returns
+  // ok for any input when nothing is required, so the prompt can't trap anyone.
+  //
+  // `mode` also picks the credential: 'password' → the signed-in user's
+  // account password; 'passcode' → the shared numeric PIN.
+  const mode = lockStatus.data?.mode;
+  const locked = mode !== 'none';
+  const isPasscode = mode === 'passcode';
   const verify = trpc.screensaverLock.verify.useMutation();
 
-  // Refetch the lock state each time the screensaver opens, so a passphrase
-  // set after this tab loaded takes effect on the very next walk-away.
+  // Refetch the lock state each time the screensaver opens, so a passcode (or
+  // sign-in/out, which changes the mode) takes effect on the very next walk-away.
   const refetchLock = lockStatus.refetch;
   useEffect(() => {
     if (open) void refetchLock();
   }, [open, refetchLock]);
 
-  // Passphrase prompt: shown after a dismiss gesture while locked. `lockedRef`
+  // Unlock prompt: shown after a dismiss gesture while locked. `lockedRef`
   // lets the window-level capture listeners read the latest value without
   // re-subscribing on every status refetch.
   const [prompting, setPrompting] = useState(false);
-  const [passphrase, setPassphrase] = useState('');
+  const [entry, setEntry] = useState('');
   const [authError, setAuthError] = useState(false);
-  // Drives a one-shot shake animation on a wrong passphrase; cleared on
+  // Drives a one-shot shake animation on a wrong entry; cleared on
   // animation end so the next wrong attempt can re-trigger it.
   const [shaking, setShaking] = useState(false);
   const promptInputRef = useRef<HTMLInputElement>(null);
@@ -113,11 +119,11 @@ export function Screensaver({ open, onExit }: Props) {
   lockedRef.current = locked;
 
   // Reset the prompt whenever the screensaver closes so the next open starts
-  // clean (no stale passphrase text / error).
+  // clean (no stale entry text / error).
   useEffect(() => {
     if (!open) {
       setPrompting(false);
-      setPassphrase('');
+      setEntry('');
       setAuthError(false);
       setShaking(false);
     }
@@ -132,28 +138,36 @@ export function Screensaver({ open, onExit }: Props) {
     return () => cancelAnimationFrame(raf);
   }, [prompting]);
 
-  const submitPassphrase = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (verify.isPending) return;
+  // Bumped on a wrong attempt to remount the PIN boxes — clears them and
+  // re-focuses the first box (the password field self-clears via state).
+  const [attemptKey, setAttemptKey] = useState(0);
+
+  const attemptUnlock = async (candidate: string) => {
+    if (verify.isPending || candidate.length === 0) return;
     const fail = () => {
       setAuthError(true);
-      setPassphrase('');
+      setEntry('');
       setShaking(true);
+      setAttemptKey((k) => k + 1);
       promptInputRef.current?.focus();
     };
     try {
-      const res = await verify.mutateAsync({ password: passphrase });
+      const res = await verify.mutateAsync({ value: candidate });
       if (res.ok) onExit();
       else fail();
     } catch {
       fail();
     }
   };
+  const submitUnlock = (e: React.FormEvent) => {
+    e.preventDefault();
+    void attemptUnlock(entry);
+  };
 
   // Cancel the prompt → back to the bare screensaver (does NOT dismiss).
   const cancelPrompt = useCallback(() => {
     setPrompting(false);
-    setPassphrase('');
+    setEntry('');
     setAuthError(false);
   }, []);
 
@@ -228,7 +242,7 @@ export function Screensaver({ open, onExit }: Props) {
   // doesn't also close the underlying viewer or fire other shortcuts.
   // Autorepeat keydowns are ignored — holding `S` to launch shouldn't
   // immediately re-trigger dismissal on the very next autorepeat tick.
-  // While the passphrase prompt is up, the listeners stand down so the user
+  // While the unlock prompt is up, the listeners stand down so the user
   // can type into / click the form without each keystroke being read as a
   // dismiss gesture. (`prompting` is in the deps so the effect re-runs and
   // detaches when the prompt appears, re-attaches when it's canceled.)
@@ -294,7 +308,7 @@ export function Screensaver({ open, onExit }: Props) {
           onMouseDown={(e) => { if (e.target === e.currentTarget) cancelPrompt(); }}
         >
           <form
-            onSubmit={submitPassphrase}
+            onSubmit={submitUnlock}
             onAnimationEnd={() => setShaking(false)}
             className={`relative w-full max-w-xs bg-zinc-950/90 backdrop-blur ring-1
                        rounded-xl p-5 flex flex-col gap-3 shadow-2xl
@@ -312,20 +326,37 @@ export function Screensaver({ open, onExit }: Props) {
             </button>
 
             <div className="text-sm text-zinc-300 text-center pt-1">
-              Enter passphrase to unlock
+              {isPasscode ? 'Enter passcode to unlock' : 'Enter your password to unlock'}
             </div>
-            <input
-              ref={promptInputRef}
-              type="password"
-              value={passphrase}
-              onChange={(e) => { setPassphrase(e.target.value); setAuthError(false); }}
-              placeholder="Passphrase"
-              aria-label="Screensaver passphrase"
-              className={`bg-zinc-900 border rounded-md px-3 py-2 text-sm outline-none
-                          ${authError ? 'border-red-500/70' : 'border-zinc-700 focus:border-zinc-500'}`}
-            />
+            {isPasscode ? (
+              // Four-box numeric PIN; auto-submits on the 4th digit.
+              <PinInput
+                key={attemptKey}
+                value={entry}
+                onChange={(v) => { setEntry(v); setAuthError(false); }}
+                onComplete={(v) => void attemptUnlock(v)}
+                error={authError}
+                disabled={verify.isPending}
+                autoFocus
+                ariaLabel="Screensaver passcode"
+              />
+            ) : (
+              <input
+                ref={promptInputRef}
+                type="password"
+                autoComplete="current-password"
+                value={entry}
+                onChange={(e) => { setEntry(e.target.value); setAuthError(false); }}
+                placeholder="Password"
+                aria-label="Account password"
+                className={`bg-zinc-900 border rounded-md px-3 py-2 text-sm outline-none
+                            ${authError ? 'border-red-500/70' : 'border-zinc-700 focus:border-zinc-500'}`}
+              />
+            )}
             {authError && (
-              <div className="text-xs text-red-400 text-center">Incorrect passphrase</div>
+              <div className="text-xs text-red-400 text-center">
+                {isPasscode ? 'Incorrect passcode' : 'Incorrect password'}
+              </div>
             )}
             <div className="flex gap-2">
               <button
@@ -338,7 +369,7 @@ export function Screensaver({ open, onExit }: Props) {
               </button>
               <button
                 type="submit"
-                disabled={verify.isPending || passphrase.length === 0}
+                disabled={verify.isPending || entry.length === 0}
                 className="flex-1 bg-zinc-200 text-zinc-900 rounded-md py-2 text-sm font-medium
                            hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition"
               >

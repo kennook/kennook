@@ -1,5 +1,5 @@
 /**
- * Salted scrypt hashing for secrets (passwords, the screensaver passphrase).
+ * Salted scrypt hashing for secrets (passwords, the screensaver passcode).
  *
  * Pure crypto — deliberately imports no DB module so any layer can use it
  * without risking an import cycle. Format: `scrypt$<saltHex>$<hashHex>`.

@@ -12,8 +12,17 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- Screensaver lock: signed-in users now dismiss the walk-away screensaver with
+  their own account password; anonymous / kiosk displays use a 4-digit passcode
+  (entered as four boxes), replacing the old shared passphrase.
+
 - Slideshow: loop the current video on repeat instead of advancing — toggle with
   `R` or the loop button in the video controls bar; a chip shows while active.
+
+### Upgrade notes
+
+- The screensaver lock is now a 4-digit numeric passcode. On upgrade, an existing
+  lock is reset to the default `1234` — change it in Admin → Settings.
 
 ## [0.2.2] - 2026-06-21
 

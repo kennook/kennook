@@ -32,7 +32,7 @@ export function getUserSqlite(): DatabaseSync {
   return db;
 }
 
-const LATEST_USER_SCHEMA_VERSION = 12;
+const LATEST_USER_SCHEMA_VERSION = 13;
 
 function initUserSchema(db: DatabaseSync) {
   // Base tables (idempotent — IF NOT EXISTS). For new DBs the column set is
@@ -251,6 +251,20 @@ function initUserSchema(db: DatabaseSync) {
          VALUES (1, 'screensaver.lock.hash', ?, unixepoch() * 1000)`,
     ).run(hashSecret('password'));
     version = 12;
+  }
+
+  // v12 → v13: the screensaver lock is now a numeric passcode (was an
+  // alphanumeric passphrase). Any existing value is in the old format and
+  // can't be typed into the new numeric prompt, so reset a still-present lock
+  // to the numeric default "1234". UPDATE only — if the admin cleared the lock
+  // the row is gone and we leave it off (don't silently re-enable it). Change
+  // it in /admin/settings.
+  if (version < 13) {
+    db.prepare(
+      `UPDATE user_settings SET value = ?, updated_at = unixepoch() * 1000
+         WHERE user_id = 1 AND key = 'screensaver.lock.hash'`,
+    ).run(hashSecret('1234'));
+    version = 13;
   }
 
   if (version !== LATEST_USER_SCHEMA_VERSION) {
