@@ -339,7 +339,7 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     .prepare('INSERT INTO media_embeddings (rowid, embedding) VALUES (?, ?)')
     .run(BigInt(mediaId), floatArrayToBuffer(embedding));
 
-  return { status: 'indexed' as const, id: mediaId };
+  return { status: 'indexed' as const, id: mediaId, uuid };
 }
 
 // ─── Run modes ────────────────────────────────────────────────────────────
@@ -361,16 +361,24 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
   // count + the file currently being processed.
   const PROGRESS_EVERY = 10;
   let processedSoFar = 0;
+  // The uuid of the most-recently-indexed item. Emitted as the progress
+  // currentItem (kind='uuid') so the admin panel resolves its freshly-made
+  // thumbnail — and so the "recent" strip stays thumbnailed rather than
+  // showing path placeholders during runs of skips/failures.
+  let lastUuid: string | null = null;
 
   for await (const ctx of walkDirectory(absTarget)) {
     if (ctx.kind === 'video' && !ffmpegOk) {
       skipped++;
       continue;
     }
+    let indexedUuid: string | null = null;
     try {
       const result = await processOne(ctx, library.slug, router);
       if (result.status === 'indexed') {
         indexed++;
+        indexedUuid = result.uuid;
+        lastUuid = result.uuid;
         process.stdout.write(`\r✓ ${indexed} indexed, ${skipped} skipped, ${failed} failed   `);
       } else {
         skipped++;
@@ -387,13 +395,17 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
       process.stdout.write(`\n✗ ${ctx.filename}: ${msg}\n`);
     }
     processedSoFar++;
-    if (processedSoFar % PROGRESS_EVERY === 0) {
+    // Emit on every freshly-indexed item (its thumbnail exists now) plus a
+    // periodic tick so counts stay live through skip/fail stretches.
+    if (indexedUuid || processedSoFar % PROGRESS_EVERY === 0) {
+      const showUuid = indexedUuid ?? lastUuid;
       emitProgress({
         step: 'Indexing',
         current: processedSoFar,
         label: `scanning files (${indexed} indexed, ${skipped} skipped, ${failed} failed)`,
-        currentItem: ctx.filepath,
-        currentItemKind: 'path',
+        currentItem: showUuid ?? ctx.filepath,
+        currentItemKind: showUuid ? 'uuid' : 'path',
+        currentItemLibrary: showUuid ? library.slug : undefined,
       });
     }
   }
@@ -538,7 +550,12 @@ async function runSingleFile(absTarget: string, library: Library, ffmpegOk: bool
   try {
     const result = await processOne(ctx, library.slug, router);
     const done = result.status === 'indexed' ? 'indexed' : 'skipped (duplicate)';
-    emitProgress({ step: 'Indexing', current: 1, total: 1, label: `done — ${done}` });
+    emitProgress({
+      step: 'Indexing', current: 1, total: 1, label: `done — ${done}`,
+      ...(result.status === 'indexed'
+        ? { currentItem: result.uuid, currentItemKind: 'uuid' as const, currentItemLibrary: library.slug }
+        : {}),
+    });
     console.log(result.status === 'indexed'
       ? `✓ Indexed ${ctx.filename}`
       : `↷ Skipped ${ctx.filename} (duplicate of item #${result.id})`);
