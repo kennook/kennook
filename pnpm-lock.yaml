@@ -50,6 +50,9 @@ importers:
       nsfwjs:
         specifier: ^4.3.0
         version: 4.3.0(@tensorflow/tfjs@4.22.0(seedrandom@3.0.5))(buffer@6.0.3)
+      onnxruntime-node:
+        specifier: 1.21.0
+        version: 1.21.0
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0

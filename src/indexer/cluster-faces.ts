@@ -1,9 +1,12 @@
 // Cluster face embeddings into people. Cross-library.
 //
 // Algorithm: union-find with a same-person edge whenever Euclidean
-// distance between two 128-d face-api descriptors falls below
-// FACE_SAME_PERSON_THRESHOLD (0.6 — the convention from the face-api docs;
-// descriptors are unit-norm so distances span 0 … 2).
+// distance between two 512-d ArcFace embeddings falls below
+// FACE_SAME_PERSON_THRESHOLD. Embeddings are L2-normalized, so Euclidean²
+// = 2·(1 − cosine): 1.0 corresponds to cosine similarity 0.5 — the standard
+// ArcFace "same person" line, and empirically the point where boundary-bridge
+// chaining stops (top cluster collapses 401→174 between 1.05 and 1.0, then
+// plateaus — the plateau is a real heavily-photographed person).
 //
 // Re-runnable: existing `person_id` assignments are seeded as same-component
 // before pairwise comparisons, so user labels survive subsequent runs and
@@ -27,8 +30,8 @@ import { getRawSqlite, type Statement } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
 import { emitProgress } from './progress';
 
-const FACE_SAME_PERSON_THRESHOLD = 0.6;
-const EMBEDDING_DIM = 128;
+const FACE_SAME_PERSON_THRESHOLD = 1.0; // Euclidean on unit-norm ArcFace (= cosine similarity 0.5)
+const EMBEDDING_DIM = 512;
 const USER_ID = 1;
 
 interface Args {
@@ -83,7 +86,12 @@ async function main() {
 
   emitProgress({ step: 'Enrich: people', label: 'loading face embeddings' });
 
-  // ── Load every face across every library ─────────────────────────
+  // ── Load every PHOTO face across every library ───────────────────
+  // Video faces (t_ms IS NOT NULL) are intentionally excluded: face crops from
+  // video frames (motion, angles, partial faces) embed too unreliably to
+  // cluster — the same person fragments into many near-duplicate "people".
+  // Photo clustering works well; video face recognition needs a different
+  // approach (temporal tracking) and is not wired into the app.
   const faces: FaceRow[] = [];
   for (const ws of listLibraries()) {
     const sqlite = getRawSqlite(ws.slug);
@@ -94,6 +102,7 @@ async function main() {
              mfe.embedding  AS embedding
       FROM media_faces mf
       JOIN media_face_embeddings mfe ON mfe.rowid = mf.id
+      WHERE mf.t_ms IS NULL
     `).all() as Array<{
       face_id: number;
       person_id: number | null;

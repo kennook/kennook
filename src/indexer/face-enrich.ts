@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 import { getRawSqlite } from '@/db/client';
 import { parseRootPath, resolveMediaPath } from '@/server/storage';
-import { detectFaces, faceEmbeddingToBuffer } from '@/ai/face';
+import { detectFaces, faceEmbeddingToBuffer, FRONTAL_MAX_ASYMMETRY } from '@/ai/face';
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 
@@ -25,12 +25,14 @@ interface Args {
   librarySlug: string;
   reset: boolean;
   limit: number | null;
+  minFace: number;
 }
 
 function parseArgs(argv: string[]): Args {
   let librarySlug = DEFAULT_LIBRARY_SLUG;
   let reset = false;
   let limit: number | null = null;
+  let minFace = 40; // px; drop tiny detections (unreliable embeddings, often false positives)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--library' || a === '-w') {
@@ -43,9 +45,13 @@ function parseArgs(argv: string[]): Args {
       const v = argv[++i]; if (v) limit = parseInt(v, 10);
     } else if (a.startsWith('--limit=')) {
       limit = parseInt(a.split('=')[1], 10);
+    } else if (a === '--min-face') {
+      const v = argv[++i]; if (v) minFace = Number(v);
+    } else if (a.startsWith('--min-face=')) {
+      minFace = Number(a.split('=')[1]);
     }
   }
-  return { librarySlug, reset, limit };
+  return { librarySlug, reset, limit, minFace };
 }
 
 interface PendingRow {
@@ -128,7 +134,13 @@ async function main() {
       continue;
     }
     try {
-      const detected = await detectFaces(absPath);
+      const allDetected = await detectFaces(absPath);
+      // Quality gates before storing: (1) size — tiny crops give unreliable
+      // embeddings and are disproportionately false positives; (2) frontality —
+      // ArcFace embeds profiles poorly, and those vectors merge different people.
+      const detected = allDetected.filter((f) =>
+        Math.min(f.bbox.width, f.bbox.height) >= args.minFace
+        && f.yawAsym <= FRONTAL_MAX_ASYMMETRY);
       // INSERT face rows + their embeddings inside a transaction so a
       // crash mid-write doesn't leave the item half-enriched.
       sqlite.exec('BEGIN');
