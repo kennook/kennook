@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useShortcut } from '@/lib/shortcuts';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
@@ -54,6 +55,30 @@ interface Props {
    *  timer. `loop` drives its active (highlighted) state; clicking fires this.
    *  Omitted outside the slideshow, so the button only appears there. */
   onToggleLoop?: () => void;
+  /** Bookmarks to show as ticks on the scrubber (click a tick to seek). */
+  bookmarks?: Array<{ id: number; timestampMs: number; label: string }>;
+  /** When provided, the controls bar shows an "add bookmark" button; it fires
+   *  with the current playback position in ms. */
+  onAddBookmark?: (timeMs: number) => void;
+  /** Called once on mount with an imperative handle, so an outside panel (the
+   *  bookmark list / trim editor) can seek or read the position without a ref. */
+  onApi?: (api: { seek: (ms: number) => void; currentMs: () => number }) => void;
+  /** Autoplay trim window (ms). Applied ONLY when `enforceTrim` is true (the
+   *  slideshow): playback starts at `trimStartMs` and stops/advances at
+   *  `trimEndMs`. Both nullable. Shown as a shaded region on the scrubber
+   *  regardless, so the trim is visible while editing. */
+  trimStartMs?: number | null;
+  trimEndMs?: number | null;
+  enforceTrim?: boolean;
+  /** When provided, a drag-to-trim handle track is shown below the scrubber.
+   *  Fires on release with the new bounds (null = that end is untrimmed). */
+  onTrimChange?: (startMs: number | null, endMs: number | null) => void;
+  /** Scrub-preview sprite: montage URL + grid manifest. When present, hovering
+   *  the scrubber shows the video frame at that moment. */
+  scrubSprite?: {
+    url: string; intervalMs: number; cols: number; rows: number;
+    tileW: number; tileH: number; count: number;
+  } | null;
 }
 
 /**
@@ -85,6 +110,14 @@ export function VideoPlayer({
   progressKey,
   initialTimeMs,
   forcePaused = false,
+  bookmarks,
+  onAddBookmark,
+  onApi,
+  trimStartMs,
+  trimEndMs,
+  enforceTrim = false,
+  onTrimChange,
+  scrubSprite,
   loop = false,
   onToggleLoop,
 }: Props) {
@@ -103,6 +136,13 @@ export function VideoPlayer({
   const [muted, setMuted] = useState(true);
   const [volume, setVolume] = usePreference('videoVolume');
   const [duration, setDuration] = useState<number | null>(null);
+  // Hovered bookmark → a tooltip portaled to <body> (escapes the controls
+  // bar's stacking context so it can't hide behind the reel/chrome). Null when
+  // nothing is hovered. Reset on src change so a stale tip can't linger.
+  const [hoverBm, setHoverBm] = useState<{ label: string; timeMs: number; x: number; y: number } | null>(null);
+  // Scrubber hover → the sprite-sheet frame preview (portaled). Viewport coords.
+  const [scrubHover, setScrubHover] = useState<{ x: number; y: number; timeMs: number } | null>(null);
+  useEffect(() => { setHoverBm(null); setScrubHover(null); }, [src]);
 
   // Solo-audio coordination over the sync layer (same-browser via
   // BroadcastChannel + cross-device via SSE): unmuting THIS window broadcasts
@@ -207,6 +247,59 @@ export function VideoPlayer({
     return () => persistProgress(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progressKey]);
+
+  // Hand an imperative handle to the parent (bookmark jumps, trim editor) once
+  // on mount. videoRef is stable across item swaps, so the closures stay valid.
+  useEffect(() => {
+    onApi?.({
+      seek: (ms: number) => {
+        const v = videoRef.current;
+        if (v) v.currentTime = Math.max(0, ms / 1000);
+      },
+      currentMs: () => Math.round((videoRef.current?.currentTime ?? 0) * 1000),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Effective trim window in seconds — only when the slideshow enforces it.
+  const trimStartS = enforceTrim && trimStartMs != null ? trimStartMs / 1000 : null;
+  const trimEndS = enforceTrim && trimEndMs != null ? trimEndMs / 1000 : null;
+  // Fire the trim-end advance only once per playthrough (reset on (re)load).
+  const trimFiredRef = useRef(false);
+
+  // ── Drag-to-trim handles (below the scrubber) ────────────────────────────
+  const trimTrackRef = useRef<HTMLDivElement>(null);
+  const [trimDrag, setTrimDrag] = useState<{ which: 'start' | 'end'; startMs: number; endMs: number } | null>(null);
+  const durMs = duration ? Math.round(duration * 1000) : 0;
+  // Effective handle positions: the live drag if any, else the props (a null
+  // bound shows at the very edge — 0 for start, full duration for end).
+  const effStartMs = trimDrag ? trimDrag.startMs : (trimStartMs ?? 0);
+  const effEndMs = trimDrag ? trimDrag.endMs : (trimEndMs ?? durMs);
+  const pct = (ms: number) => (durMs ? Math.max(0, Math.min(100, (ms / durMs) * 100)) : 0);
+
+  const trimDown = (which: 'start' | 'end') => (e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setTrimDrag({ which, startMs: trimStartMs ?? 0, endMs: trimEndMs ?? durMs });
+  };
+  const trimMove = (e: React.PointerEvent) => {
+    if (!trimDrag || !trimTrackRef.current || !durMs) return;
+    const rect = trimTrackRef.current.getBoundingClientRect();
+    const ms = Math.round(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * durMs);
+    const GAP = 250; // keep at least 0.25s between in and out
+    setTrimDrag((d) => d && (d.which === 'start'
+      ? { ...d, startMs: Math.min(ms, d.endMs - GAP) }
+      : { ...d, endMs: Math.max(ms, d.startMs + GAP) }));
+  };
+  const trimUp = (e: React.PointerEvent) => {
+    if (!trimDrag) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    // A bound dragged to the very edge clears it (untrimmed on that side).
+    const startMs = trimDrag.startMs <= 0 ? null : trimDrag.startMs;
+    const endMs = durMs > 0 && trimDrag.endMs >= durMs ? null : trimDrag.endMs;
+    onTrimChange?.(startMs, endMs);
+    setTrimDrag(null);
+  };
 
   // Also flush before the tab unloads / hides.
   useEffect(() => {
@@ -357,7 +450,9 @@ export function VideoPlayer({
         ref={videoRef}
         src={src}
         autoPlay={autoPlay}
-        loop={loop}
+        // Native loop only when there's no enforced trim-end; with a trim-end
+        // we loop manually within [start, end] via onTimeUpdate instead.
+        loop={loop && trimEndS == null}
         playsInline
         // Mute starts on for every new element (fresh load / item swap / maxed
         // remount); the user unmutes deliberately.
@@ -371,12 +466,19 @@ export function VideoPlayer({
         onLoadedMetadata={(e) => {
           const dur = e.currentTarget.duration;
           setDuration(dur);
-          // Initial seek wins over saved progress — search-result deep-links
-          // (?t=ms) explicitly point at a moment the user wants to see; the
-          // resume-progress UX would otherwise yank them elsewhere.
+          trimFiredRef.current = false;
+          // Initial seek wins over saved progress AND trim — search-result
+          // deep-links (?t=ms) explicitly point at a moment the user wants to
+          // see; the resume-progress UX would otherwise yank them elsewhere.
           if (initialTimeMs != null && Number.isFinite(initialTimeMs)) {
             const target = Math.max(0, Math.min(dur - 0.1, initialTimeMs / 1000));
             e.currentTarget.currentTime = target;
+            return;
+          }
+          // Autoplay trim: start at the trim-in point (skips the intro). Takes
+          // precedence over resume-progress during a slideshow.
+          if (trimStartS != null) {
+            e.currentTarget.currentTime = Math.max(0, Math.min(dur - 0.1, trimStartS));
             return;
           }
           // Resume position, if any, and if it falls within sane bounds.
@@ -390,7 +492,21 @@ export function VideoPlayer({
             }
           }
         }}
-        onTimeUpdate={() => persistProgress(false)}
+        onTimeUpdate={(e) => {
+          persistProgress(false);
+          // Autoplay trim-out: at the trim-end, loop back to the start if the
+          // slideshow is looping this clip, otherwise advance to the next item.
+          if (trimEndS != null && e.currentTarget.currentTime >= trimEndS) {
+            const v = e.currentTarget;
+            if (loop) {
+              v.currentTime = trimStartS ?? 0;
+            } else if (!trimFiredRef.current) {
+              trimFiredRef.current = true;
+              v.pause();
+              onEnded?.();
+            }
+          }
+        }}
         onEnded={() => {
           // Finished naturally — clear so the next time the user opens it
           // they start from the beginning rather than 2s before the end.
@@ -419,38 +535,133 @@ export function VideoPlayer({
                     ${scaled ? 'kn-video-controls-scaled' : ''}`}
       >
         <div
+          ref={trimTrackRef}
           onMouseDown={startSeekDrag}
+          onMouseMove={(e) => {
+            if (!scrubSprite || !durMs) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            setScrubHover({ x: e.clientX, y: rect.top, timeMs: ratio * durMs });
+          }}
+          onMouseLeave={() => setScrubHover(null)}
           // ::before extends the clickable area 15px above/below the visible
           // bar — events on the pseudo bubble to this host, so the existing
           // handler catches them, and getBoundingClientRect() still reports
-          // the visible bar's width so seek math is unchanged. `mb-5` widens
-          // the gap to the button row so the 15px slop doesn't intrude on
-          // button hit areas.
-          // Grow on hover via scaleY (transform — GPU, no layout) instead of a
-          // height change (which forced Layout + Paint each frame of the
-          // transition). transition-transform also avoids the property-spew of
-          // transition-all. The thumb + fills inside scale along with the bar,
-          // which on a 6→9px track is visually indistinguishable.
-          className="relative h-1.5 hover:scale-y-150 origin-center cursor-pointer mb-6
-                     bg-zinc-700/60 rounded-full transition-transform
+          // the visible bar's width so seek math is unchanged. Trim grips
+          // measure against this same rect, so they map to seek positions 1:1.
+          //
+          // Only the thin inner bar grows on hover (scaleY — GPU, no layout).
+          // The thumb, trim markers, and bookmark strips/tooltips live OUTSIDE
+          // it so they DON'T inherit the vertical stretch (which otherwise
+          // squashed the round thumb into an ellipse and stretched tooltips).
+          className="group/scrub relative h-1.5 cursor-pointer mb-6
                      before:content-[''] before:absolute before:-inset-y-[20px] before:inset-x-0"
         >
-          <div
-            ref={bufferedRef}
-            className="absolute inset-y-0 left-0 w-full bg-zinc-400/40 rounded-full origin-left"
-            style={{ transform: 'scaleX(0)' }}
-          />
-          <div
-            ref={playedRef}
-            className="absolute inset-y-0 left-0 w-full bg-emerald-400 rounded-full origin-left"
-            style={{ transform: 'scaleX(0)' }}
-          />
+          <div className="absolute inset-0 rounded-full bg-zinc-700/60 origin-center
+                          transition-transform group-hover/scrub:scale-y-150">
+            <div
+              ref={bufferedRef}
+              className="absolute inset-y-0 left-0 w-full bg-zinc-400/40 rounded-full origin-left"
+              style={{ transform: 'scaleX(0)' }}
+            />
+            <div
+              ref={playedRef}
+              className="absolute inset-y-0 left-0 w-full bg-emerald-400 rounded-full origin-left"
+              style={{ transform: 'scaleX(0)' }}
+            />
+          </div>
+
           <div
             ref={thumbRef}
             className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full
                        bg-emerald-400 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ left: '0%' }}
           />
+
+
+          {/* Bookmark strips — white marker per tagged moment. Hover shows the
+              tags (tooltip is portaled to <body>, see below, so it can't get
+              trapped under the reel/chrome by a stacking context); click jumps
+              there. The ::before widens the hover/click target beyond the thin
+              strip. stopPropagation so the click seeks rather than scrub-drags. */}
+          {duration != null && bookmarks?.map((b) => (
+            <div
+              key={b.id}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                const v = videoRef.current;
+                if (v) { recordSeekPoint(); v.currentTime = b.timestampMs / 1000; }
+              }}
+              onMouseEnter={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setHoverBm({ label: b.label, timeMs: b.timestampMs, x: r.left + r.width / 2, y: r.top });
+              }}
+              onMouseLeave={() => setHoverBm(null)}
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[3px] h-3.5 rounded-sm
+                         bg-white/90 hover:bg-white cursor-pointer shadow ring-1 ring-black/30
+                         before:content-[''] before:absolute before:-inset-x-[5px] before:-inset-y-1.5"
+              style={{ left: `${Math.max(0, Math.min(100, (b.timestampMs / 1000 / duration) * 100))}%` }}
+            />
+          ))}
+
+          {/* Drag-to-trim, ON the bar. Trimmed-out spans are dimmed; the green
+              (in) / red (out) grips straddle the bar. Grips stopPropagation so
+              grabbing one doesn't seek; drop a grip at the far edge to clear it.
+              pointer-events-none on the dim overlays so seeking still works. */}
+          {onTrimChange && duration != null && (
+            <>
+              {effStartMs > 0 && (
+                <div
+                  className="absolute inset-y-0 left-0 bg-black/55 rounded-l-full pointer-events-none"
+                  style={{ width: `${pct(effStartMs)}%` }}
+                />
+              )}
+              {effEndMs < durMs && (
+                <div
+                  className="absolute inset-y-0 right-0 bg-black/55 rounded-r-full pointer-events-none"
+                  style={{ left: `${pct(effEndMs)}%` }}
+                />
+              )}
+              {trimDrag && (
+                <div
+                  className="absolute -top-5 -translate-x-1/2 text-[10px] tabular-nums text-zinc-100
+                             bg-zinc-900/95 rounded px-1 pointer-events-none z-10"
+                  style={{ left: `${pct(trimDrag.which === 'start' ? effStartMs : effEndMs)}%` }}
+                >
+                  {formatTime((trimDrag.which === 'start' ? effStartMs : effEndMs) / 1000)}
+                </div>
+              )}
+              <div
+                role="slider" aria-label="Trim start"
+                title={`Trim start — ${formatTime(effStartMs / 1000)}`}
+                onPointerDown={trimDown('start')} onPointerMove={trimMove} onPointerUp={trimUp}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[7px] h-4 rounded-[3px]
+                           bg-emerald-400 ring-1 ring-zinc-950 shadow cursor-ew-resize touch-none hover:bg-emerald-300"
+                style={{ left: `${pct(effStartMs)}%` }}
+              />
+              <div
+                role="slider" aria-label="Trim stop"
+                title={`Trim stop — ${formatTime(effEndMs / 1000)}`}
+                onPointerDown={trimDown('end')} onPointerMove={trimMove} onPointerUp={trimUp}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[7px] h-4 rounded-[3px]
+                           bg-red-400 ring-1 ring-zinc-950 shadow cursor-ew-resize touch-none hover:bg-red-300"
+                style={{ left: `${pct(effEndMs)}%` }}
+              />
+              {(trimStartMs != null || trimEndMs != null) && (
+                <button
+                  onClick={() => onTrimChange(null, null)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  title="Clear trim"
+                  className="absolute right-0 -top-6 text-[10px] text-zinc-400 hover:text-zinc-100"
+                >
+                  clear trim
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-3 text-zinc-100">
@@ -470,6 +681,15 @@ export function VideoPlayer({
             <span className="text-zinc-500"> / </span>
             <span>{duration ? formatTime(duration) : '0:00'}</span>
           </span>
+
+          {onAddBookmark && (
+            <ControlButton
+              onClick={() => onAddBookmark(Math.round((videoRef.current?.currentTime ?? 0) * 1000))}
+              title="Add a bookmark at the current moment (B)"
+            >
+              <BookmarkIcon />
+            </ControlButton>
+          )}
 
           {onToggleLoop && (
             <ControlButton
@@ -504,6 +724,50 @@ export function VideoPlayer({
           </div>
         </div>
       </div>
+
+      {/* Bookmark tooltip — portaled to <body> so no ancestor stacking context
+          (the controls bar's will-change, the strip's transform) can trap it
+          under the reel/chrome. Positioned over the hovered strip. */}
+      {hoverBm && typeof document !== 'undefined' && createPortal(
+        <div
+          className="pointer-events-none fixed z-[200] whitespace-nowrap max-w-[260px] overflow-hidden text-ellipsis
+                     bg-zinc-950/95 text-zinc-100 text-[11px] leading-none rounded px-2 py-1.5 ring-1 ring-zinc-700 shadow-lg"
+          style={{ left: hoverBm.x, top: hoverBm.y - 8, transform: 'translate(-50%, -100%)' }}
+        >
+          <span className="text-amber-300 tabular-nums mr-1.5">{formatTime(hoverBm.timeMs / 1000)}</span>
+          {hoverBm.label || <span className="text-zinc-500">(no tags)</span>}
+        </div>,
+        document.body,
+      )}
+
+      {/* Scrub preview — the sprite-sheet frame at the hovered time, portaled to
+          <body> so it floats above everything. One tile clipped from the grid. */}
+      {scrubHover && scrubSprite && scrubSprite.count > 0 && typeof document !== 'undefined' && (() => {
+        const idx = Math.max(0, Math.min(scrubSprite.count - 1, Math.floor(scrubHover.timeMs / scrubSprite.intervalMs)));
+        const col = idx % scrubSprite.cols;
+        const row = Math.floor(idx / scrubSprite.cols);
+        return createPortal(
+          <div
+            className="pointer-events-none fixed z-[200] flex flex-col items-center gap-1"
+            style={{ left: scrubHover.x, top: scrubHover.y - 10, transform: 'translate(-50%, -100%)' }}
+          >
+            <div
+              className="rounded-md overflow-hidden ring-1 ring-zinc-600 shadow-2xl bg-black"
+              style={{
+                width: scrubSprite.tileW,
+                height: scrubSprite.tileH,
+                backgroundImage: `url(${scrubSprite.url})`,
+                backgroundPosition: `-${col * scrubSprite.tileW}px -${row * scrubSprite.tileH}px`,
+                backgroundRepeat: 'no-repeat',
+              }}
+            />
+            <div className="text-[11px] tabular-nums text-zinc-100 bg-zinc-950/90 rounded px-1.5 py-0.5 ring-1 ring-zinc-700">
+              {formatTime(scrubHover.timeMs / 1000)}
+            </div>
+          </div>,
+          document.body,
+        );
+      })()}
     </div>
   );
 }
@@ -538,6 +802,18 @@ function LoopIcon() {
       {/* Two arcs + arrowheads — the repeat glyph. */}
       <path d="M2 8a6 6 0 0 1 10-4.5L14 5M14 8a6 6 0 0 1-10 4.5L2 11" />
       <path d="M14 2.5V5h-2.5M2 13.5V11h2.5" />
+    </svg>
+  );
+}
+
+function BookmarkIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"
+         stroke="currentColor" strokeWidth="1.5"
+         strokeLinecap="round" strokeLinejoin="round">
+      {/* Bookmark ribbon with a "+" to signal "add". */}
+      <path d="M4 2.5h8v11l-4-2.5-4 2.5v-11Z" />
+      <path d="M8 5v3M6.5 6.5h3" />
     </svg>
   );
 }

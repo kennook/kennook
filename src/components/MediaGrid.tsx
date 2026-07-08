@@ -6,7 +6,7 @@ import { MediaCard } from './MediaCard';
  *  the "match at 0:45" tile + viewer auto-seek. Photos with OCR text have
  *  tStartMs=null (no timeline). */
 export interface TextMatch {
-  source: 'ocr' | 'transcript';
+  source: 'ocr' | 'transcript' | 'bookmark';
   tStartMs: number | null;
   tEndMs: number | null;
   text: string;
@@ -25,7 +25,13 @@ export interface MediaItemDto {
   cameraMake: string | null;
   cameraModel: string | null;
   sizeBytes: number | null;
+  /** The CURRENT user's rating, 0-5. */
   likeCount: number;
+  /** Community rating: the average across everyone who's rated this item
+   *  (0-5), null when nobody has — "what others think". */
+  communityLikeAvg: number | null;
+  /** How many users have rated it (context for the average). */
+  communityLikeCount: number;
   /** Client-applied rotation override in degrees (0/90/180/270). */
   rotation: number;
   /** Raw sensitive-content scores in [0, 1]. Client compares against the
@@ -109,6 +115,8 @@ export function MediaGrid({
           selected={selectedKeys?.has(selectionKey(item.librarySlug, item.uuid)) ?? false}
           selectionMode={selectionMode}
           likeCount={item.likeCount}
+          communityLikeAvg={item.communityLikeAvg}
+          communityLikeCount={item.communityLikeCount}
           rotation={item.rotation}
           nsfwScore={item.nsfwScore}
           violenceScore={item.violenceScore}

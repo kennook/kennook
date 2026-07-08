@@ -82,6 +82,58 @@ export async function extractFrame(
   });
 }
 
+export interface SpriteSheetSpec {
+  /** Seconds between sampled frames. */
+  intervalSec: number;
+  tileW: number;
+  tileH: number;
+  cols: number;
+  rows: number;
+  /** ffmpeg -q:v (2 best … 31 worst). Default 4. */
+  quality?: number;
+}
+
+/**
+ * Render a scrub-preview sprite sheet in ONE ffmpeg pass: sample a frame every
+ * `intervalSec`, fit-and-pad each into a fixed tileW×tileH box (robust to any
+ * aspect / rotation — letterboxes instead of distorting), and pack cols×rows of
+ * them into a single JPEG at `outPath`. cols*rows must be ≥ the frame count so
+ * the whole video lands in the first emitted montage (`-frames:v 1`).
+ */
+export async function generateSpriteSheet(
+  videoPath: string,
+  outPath: string,
+  spec: SpriteSheetSpec,
+): Promise<void> {
+  const { intervalSec, tileW, tileH, cols, rows, quality = 4 } = spec;
+  const vf = [
+    `fps=1/${intervalSec}`,
+    `scale=${tileW}:${tileH}:force_original_aspect_ratio=decrease`,
+    `pad=${tileW}:${tileH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    `tile=${cols}x${rows}`,
+  ].join(',');
+
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-v', 'error',
+      '-i', videoPath,
+      '-frames:v', '1',
+      '-vf', vf,
+      '-q:v', String(quality),
+      '-y',
+      outPath,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    const errChunks: Buffer[] = [];
+    ffmpeg.stderr.on('data', (c) => errChunks.push(c));
+    ffmpeg.on('error', reject);
+    ffmpeg.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg sprite generation failed (code ${code}): ${Buffer.concat(errChunks).toString('utf8').slice(0, 200)}`));
+    });
+  });
+}
+
 /**
  * Decode a video's audio track to 16 kHz mono signed-16-bit PCM as a single
  * Buffer. Whisper expects this exact sample-rate + format. Returns an empty

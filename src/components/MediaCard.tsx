@@ -24,6 +24,10 @@ interface MediaCardProps {
   selected?: boolean;
   selectionMode?: boolean;
   likeCount: number;
+  /** Community rating: average across all raters (0-5), null when none. */
+  communityLikeAvg?: number | null;
+  /** How many users have rated it. */
+  communityLikeCount?: number;
   /** Natural pixel dimensions — drive the masonry tile's aspect ratio. */
   width?: number | null;
   height?: number | null;
@@ -55,6 +59,8 @@ export function MediaCard({
   selected,
   selectionMode,
   likeCount,
+  communityLikeAvg = null,
+  communityLikeCount = 0,
   width,
   height,
   rotation = 0,
@@ -82,6 +88,12 @@ export function MediaCard({
     }
   }, [likeCount, optimisticCount]);
   const displayCount = optimisticCount ?? likeCount;
+
+  // "Overall" score = the community average across ALL raters. Only surface it
+  // when someone OTHER than the current user has rated (raters minus yourself),
+  // so a single-user library doesn't just mirror your own heart back at you.
+  const othersRated = communityLikeCount - (likeCount > 0 ? 1 : 0);
+  const showCommunity = communityLikeAvg != null && othersRated > 0;
 
   // Sparkle burst — re-mounted (via the `key` prop) when the leading-edge
   // cooldown allows it. Starts at 0 so the initial paint doesn't fire an
@@ -180,33 +192,49 @@ export function MediaCard({
         </button>
       )}
 
-      {onSetLikes && (
-        <button
-          onClick={handleHeartClick}
-          aria-label={`Set likes (currently ${displayCount})`}
-          title={
-            displayCount === 0 ? 'Like (click to add)'
-            : displayCount >= MAX_LIKES ? `${MAX_LIKES} likes — click to reset`
-            : `${displayCount} like${displayCount === 1 ? '' : 's'} — click for more`
-          }
-          className={`absolute bottom-2 left-2 z-10 transition
-                      flex items-center gap-1 px-1.5 py-0.5 rounded-full
-                      bg-black/55 backdrop-blur hover:bg-black/80
-                      ${heartVisible}`}
-        >
-          <span className="relative inline-flex items-center justify-center">
-            <Heart count={displayCount} />
-            {sparkleKey > 0 && <SparkleBurst key={sparkleKey} />}
-          </span>
-          {displayCount > 0 && (
-            <span
-              className="text-[10px] font-semibold tabular-nums"
-              style={{ color: likeFillColor(displayCount) ?? undefined }}
+      {/* Bottom-left rating cluster. Community average (hollow heart — "what
+          others think") is always visible when others have rated; the personal
+          heart (filled, colored) sits to its right, hover-revealed until you
+          rate. So an unrated item still shows the community score. */}
+      {(onSetLikes || showCommunity) && (
+        <div className="absolute bottom-2 left-2 z-10 flex items-center gap-1">
+          {showCommunity && communityLikeAvg != null && (
+            <div
+              title={`Community: ${communityLikeAvg.toFixed(1)} of ${MAX_LIKES} — ${communityLikeCount} rating${communityLikeCount === 1 ? '' : 's'}`}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-black/55 backdrop-blur
+                         text-[10px] font-semibold tabular-nums text-zinc-100"
             >
-              {displayCount}
-            </span>
+              <HollowHeart />
+              {communityLikeAvg.toFixed(1)}
+            </div>
           )}
-        </button>
+          {onSetLikes && (
+            <button
+              onClick={handleHeartClick}
+              aria-label={`Set likes (currently ${displayCount})`}
+              title={
+                displayCount === 0 ? 'Like (click to add)'
+                : displayCount >= MAX_LIKES ? `${MAX_LIKES} likes — click to reset`
+                : `${displayCount} like${displayCount === 1 ? '' : 's'} — click for more`
+              }
+              className={`transition flex items-center gap-1 px-1.5 py-0.5 rounded-full
+                          bg-black/55 backdrop-blur hover:bg-black/80 ${heartVisible}`}
+            >
+              <span className="relative inline-flex items-center justify-center">
+                <Heart count={displayCount} />
+                {sparkleKey > 0 && <SparkleBurst key={sparkleKey} />}
+              </span>
+              {displayCount > 0 && (
+                <span
+                  className="text-[10px] font-semibold tabular-nums"
+                  style={{ color: likeFillColor(displayCount) ?? undefined }}
+                >
+                  {displayCount}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
       )}
 
       {kind === 'video' && (
@@ -276,6 +304,19 @@ function Heart({ count }: { count: number }) {
   );
 }
 
+/** Outline heart for the community score — visually distinct from the filled,
+ *  color-coded personal Heart so "others' rating" never reads as "mine". */
+function HollowHeart() {
+  return (
+    <svg
+      width="11" height="11" viewBox="0 0 16 16"
+      fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.6" strokeLinejoin="round"
+    >
+      <path d="M8 14s-5-3.5-5-7a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 7-5 7z" />
+    </svg>
+  );
+}
+
 function formatDuration(ms: number): string {
   const total = Math.round(ms / 1000);
   const min = Math.floor(total / 60);
@@ -293,7 +334,9 @@ function TextMatchBadge({ matches }: { matches: TextMatch[] }) {
   const extra = matches.length - 1;
   const tone = first.source === 'ocr'
     ? 'bg-amber-500/85 text-zinc-950'
-    : 'bg-sky-500/85 text-zinc-950';
+    : first.source === 'bookmark'
+      ? 'bg-fuchsia-500/90 text-white'
+      : 'bg-sky-500/85 text-zinc-950';
   const label = first.tStartMs !== null
     ? formatDuration(first.tStartMs)
     : first.source === 'ocr'

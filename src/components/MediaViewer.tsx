@@ -13,8 +13,12 @@ import { RatingFlash } from './RatingFlash';
 import { VoiceTagButton, useVoiceTagger, VoiceTagStatusLine, MicIcon } from './VoiceTagButton';
 import { FEATURES } from '@/lib/feature-flags';
 import { usePreference } from '@/lib/preferences';
+import { useSessionFlag } from '@/lib/use-session-flag';
 import { ViewportMinimap } from './ViewportMinimap';
 import { useSyncEvent } from '@/lib/sync';
+import { useIsAdmin } from '@/lib/current-user';
+import { VideoBookmarks } from './VideoBookmarks';
+import { VideoTags } from './VideoTags';
 
 const CHROME_IDLE_MS = 2500;
 
@@ -238,6 +242,45 @@ export function MediaViewer({
   );
   const viewUtils = trpc.useUtils();
   const { mutateAsync: setView } = trpc.mediaView.set.useMutation();
+
+  // ── Bookmarks (videos) ───────────────────────────────────────────────────
+  const isAdmin = useIsAdmin();
+  const bookmarksQuery = trpc.media.listBookmarks.useQuery(
+    { uuid: item?.uuid ?? '', librarySlug: item?.librarySlug ?? '' },
+    { enabled: !!item && item.kind === 'video' },
+  );
+  // Non-null → the add form is open, pre-set to this timestamp (ms).
+  const [addBookmarkAtMs, setAddBookmarkAtMs] = useState<number | null>(null);
+  // Imperative handle from VideoPlayer — jump to a bookmark / read the position.
+  const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number } | null>(null);
+  // Close the add form when the item changes.
+  useEffect(() => { setAddBookmarkAtMs(null); }, [item?.uuid]);
+  // Converge when any client edits this item's bookmarks.
+  useSyncEvent('item.bookmark.changed', (e) => {
+    if (item && e.uuid === item.uuid) {
+      void viewUtils.media.listBookmarks.invalidate({ uuid: item.uuid, librarySlug: item.librarySlug });
+    }
+  });
+
+  // ── Autoplay trim (videos) ───────────────────────────────────────────────
+  const trimQuery = trpc.media.getTrim.useQuery(
+    { uuid: item?.uuid ?? '', librarySlug: item?.librarySlug ?? '' },
+    { enabled: !!item && item.kind === 'video' },
+  );
+  // Scrub-preview sprite (videos). Static once generated → cache long.
+  const scrubSpriteQuery = trpc.media.scrubSprite.useQuery(
+    { uuid: item?.uuid ?? '', librarySlug: item?.librarySlug ?? '' },
+    { enabled: !!item && item.kind === 'video', staleTime: 60 * 60 * 1000 },
+  );
+  useSyncEvent('item.trim.changed', (e) => {
+    if (item && e.uuid === item.uuid) {
+      void viewUtils.media.getTrim.invalidate({ uuid: item.uuid, librarySlug: item.librarySlug });
+    }
+  });
+  // Shared with the I/O shortcuts (VideoTrimControls has its own copy).
+  const setTrimMutation = trpc.media.setTrim.useMutation({
+    onSuccess: (_d, vars) => viewUtils.media.getTrim.invalidate({ uuid: vars.uuid, librarySlug: vars.librarySlug }),
+  });
 
   // OCC version (ETag) the next write is based on. Seeded from the restore
   // effect and updated on every successful write / conflict convergence.
@@ -497,8 +540,10 @@ export function MediaViewer({
   //    slideshow preference (adjustable via , / . in slideshow mode).
   const [slideshowPhotoMs, setSlideshowPhotoMs] = usePreference('slideshowPhotoMs');
   // Sticky "loop the current video" toggle (R). When on, a video in the
-  // slideshow repeats natively instead of advancing when it ends.
-  const [loopSlideshowVideo, setLoopSlideshowVideo] = usePreference('loopSlideshowVideo');
+  // slideshow repeats natively instead of advancing when it ends. Per-WINDOW
+  // (sessionStorage) so a screen looping a clip doesn't flip every other window
+  // in a multi-screen setup — unlike the cross-tab Preferences store.
+  const [loopSlideshowVideo, setLoopSlideshowVideo] = useSessionFlag('kennook.loopSlideshowVideo');
   useEffect(() => {
     if (!slideshow || paused || !item) return;
     if (item.kind !== 'photo') return;
@@ -573,6 +618,10 @@ export function MediaViewer({
   // looks like a bug. Tracked via a ref so the chrome-hover handlers
   // can read/write it without triggering renders.
   const chromeHoveredRef = useRef(false);
+  // Pins the chrome open (idle fade suspended) while a focused input must stay
+  // visible — e.g. the bookmark tag field. Mouse-hover tracking can't cover
+  // this: typing produces no pointer movement to keep the chrome alive.
+  const chromePinnedRef = useRef(false);
 
   // Show chrome and (re-)arm the idle timer. Used by both mouse movement
   // and by shortcut handlers — pressing a key in fullscreen now reveals
@@ -583,7 +632,7 @@ export function MediaViewer({
     if (!maxed) return;
     if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     setChromeVisible(true);
-    if (chromeHoveredRef.current) return;
+    if (chromeHoveredRef.current || chromePinnedRef.current) return;
     idleTimerRef.current = window.setTimeout(
       () => setChromeVisible(false),
       CHROME_IDLE_MS,
@@ -623,6 +672,37 @@ export function MediaViewer({
       chromeHoveredRef.current = !!target?.closest?.('[data-kn-chrome]');
     }
     pulseChrome();
+  }, [maxed, pulseChrome]);
+
+  // Keep the chrome pinned open while a text field in it is focused (bookmark
+  // tags, video tags) — typing produces no pointer movement to keep it alive,
+  // and fading the field mid-type hides what the user is writing.
+  useEffect(() => {
+    if (!maxed) return;
+    const isTextField = (el: Element | null) =>
+      !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable);
+    const onFocusIn = () => {
+      if (isTextField(document.activeElement)) {
+        chromePinnedRef.current = true;
+        if (idleTimerRef.current) { window.clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
+        setChromeVisible(true);
+      }
+    };
+    const onFocusOut = () => {
+      // Let focus settle (it may be moving to another field) before deciding.
+      window.setTimeout(() => {
+        if (!isTextField(document.activeElement)) {
+          chromePinnedRef.current = false;
+          pulseChrome();
+        }
+      }, 0);
+    };
+    window.addEventListener('focusin', onFocusIn);
+    window.addEventListener('focusout', onFocusOut);
+    return () => {
+      window.removeEventListener('focusin', onFocusIn);
+      window.removeEventListener('focusout', onFocusOut);
+    };
   }, [maxed, pulseChrome]);
 
   // Minimap drives pan: continuous updates during drag, final commit on
@@ -697,6 +777,35 @@ export function MediaViewer({
   useShortcut('viewer.loopVideo', toggleLoopVideo, {
     enabled: !!item && slideshow && item?.kind === 'video',
   });
+
+  // Video bookmark + trim shortcuts. Enabled while a video is maximized (where
+  // the panel/controls + scrubber markers live). currentMs() reads the player.
+  const videoToolsEnabled = !!item && maxed && item?.kind === 'video';
+  useShortcut('viewer.addBookmark', (e) => {
+    // Cancel the keydown so its character isn't typed into the tag field that's
+    // about to auto-focus (otherwise it opens pre-filled with "b").
+    e.preventDefault();
+    setAddBookmarkAtMs(playerApiRef.current?.currentMs() ?? 0);
+    pulseChrome();
+  }, { enabled: videoToolsEnabled });
+  useShortcut('viewer.trimStart', () => {
+    if (!item) return;
+    setTrimMutation.mutate({
+      uuid: item.uuid, librarySlug: item.librarySlug,
+      startMs: playerApiRef.current?.currentMs() ?? 0,
+      endMs: trimQuery.data?.endMs ?? null,
+    });
+    pulseChrome();
+  }, { enabled: videoToolsEnabled });
+  useShortcut('viewer.trimEnd', () => {
+    if (!item) return;
+    setTrimMutation.mutate({
+      uuid: item.uuid, librarySlug: item.librarySlug,
+      startMs: trimQuery.data?.startMs ?? null,
+      endMs: playerApiRef.current?.currentMs() ?? 0,
+    });
+    pulseChrome();
+  }, { enabled: videoToolsEnabled });
 
   // Up/Down navigates between items regardless of kind. Left/Right are
   // now reserved for video seek (handled inside VideoPlayer); for a
@@ -990,6 +1099,20 @@ export function MediaViewer({
               }}
               onPrev={onPrev}
               onNext={onNext}
+              // Bookmarks: scrubber ticks always; the add button + panel only
+              // in maxed mode (where the panel is rendered).
+              bookmarks={bookmarksQuery.data?.bookmarks}
+              onAddBookmark={maxed ? (ms) => { setAddBookmarkAtMs(ms); pulseChrome(); } : undefined}
+              onApi={(api) => { playerApiRef.current = api; }}
+              // Autoplay trim: shaded on the scrubber always; enforced (start/
+              // stop) only during the slideshow.
+              trimStartMs={trimQuery.data?.startMs ?? null}
+              trimEndMs={trimQuery.data?.endMs ?? null}
+              enforceTrim={slideshow}
+              onTrimChange={maxed && item.kind === 'video'
+                ? (startMs, endMs) => setTrimMutation.mutate({ uuid: item.uuid, librarySlug: item.librarySlug, startMs, endMs })
+                : undefined}
+              scrubSprite={scrubSpriteQuery.data}
               // Slideshow loop: pin this video on repeat instead of advancing.
               // (Native loop already suppresses `ended`; the guard below is
               // belt-and-suspenders so advance never fires while looping.)
@@ -1059,6 +1182,27 @@ export function MediaViewer({
                 <path d="M14 2.5V5h-2.5M2 13.5V11h2.5" />
               </svg>
               Looping video
+            </div>
+          )}
+
+          {/* Left column for video tools — trim editor + bookmark panel. Video
+              + maxed only; fades with the chrome. */}
+          {maxed && item.kind === 'video' && (
+            <div
+              {...chromeHoverHandlers}
+              className={`absolute top-16 left-[var(--kn-chrome-pad)] z-30 flex flex-col gap-2 items-start ${chromeFadeClass}`}
+            >
+              <VideoTags uuid={item.uuid} librarySlug={item.librarySlug} />
+              <VideoBookmarks
+                uuid={item.uuid}
+                librarySlug={item.librarySlug}
+                bookmarks={bookmarksQuery.data?.bookmarks ?? []}
+                defaultShared={bookmarksQuery.data?.defaultShared ?? true}
+                isAdmin={isAdmin}
+                addAtMs={addBookmarkAtMs}
+                onCloseAdd={() => setAddBookmarkAtMs(null)}
+                onSeek={(ms) => playerApiRef.current?.seek(ms)}
+              />
             </div>
           )}
 

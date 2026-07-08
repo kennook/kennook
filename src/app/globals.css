@@ -230,11 +230,14 @@ body {
    "now scanning" thumbnail. Matches the green-laser feel of the
    reference image. */
 @keyframes kn-scan {
-  0%   { transform: translateY(0); }
-  50%  { transform: translateY(calc(7rem - 8px)); }
-  100% { transform: translateY(0); }
+  /* `top` is relative to the (positioned) tile, so the sweep spans the full
+     thumbnail height regardless of its size — 100% minus the bar's own 8px so
+     it lands flush at the bottom, not one bar-height past it. */
+  0%   { top: 0; }
+  50%  { top: calc(100% - 8px); }
+  100% { top: 0; }
 }
 .kn-scan-bar {
   animation: kn-scan 1.6s ease-in-out infinite;
-  will-change: transform;
+  will-change: top;
 }
