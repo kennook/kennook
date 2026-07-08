@@ -76,7 +76,13 @@ export async function extractFrame(
       if (code === 0 && chunks.length) {
         resolve(Buffer.concat(chunks));
       } else {
-        reject(new Error(`ffmpeg frame extraction failed (code ${code}): ${Buffer.concat(errChunks).toString('utf8').slice(0, 200)}`));
+        // ffmpeg's real error is at the END of stderr; the first lines are just
+        // the version/build banner. Keep the last few meaningful lines.
+        const detail = Buffer.concat(errChunks).toString('utf8')
+          .split('\n').map((l) => l.trim())
+          .filter((l) => l && !/^(ffmpeg version|built with|configuration:|lib(av|sw))/.test(l))
+          .slice(-3).join(' — ');
+        reject(new Error(`ffmpeg frame extraction failed (code ${code}): ${detail || 'no error output'}`));
       }
     });
   });

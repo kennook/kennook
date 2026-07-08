@@ -226,6 +226,11 @@ async function generateVideoThumbnail(srcPath: string, dstPath: string) {
 async function processOne(ctx: PipelineCtx, librarySlug: string, router: StorageRouter) {
   const sqlite = getRawSqlite(librarySlug);
 
+  // Empty (0-byte) files — usually failed/partial downloads — have no moov atom
+  // and can't be probed or thumbnailed. Skip them cleanly up front instead of
+  // letting ffmpeg fail per-file with a scary multi-line dump.
+  if (ctx.stat.size === 0) return { status: 'skip-empty' as const };
+
   // Route this file to the storage_location whose root_path is the longest
   // matching prefix. The seeded default storage at root_path="/" acts as a
   // catch-all so any abs path matches at least it.
@@ -369,6 +374,11 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
         process.stdout.write(`\r✓ ${indexed} indexed, ${skipped} skipped, ${failed} failed   `);
       } else {
         skipped++;
+        // Note empty files on their own line so it's clear WHY they were
+        // skipped (not silently, not as a "failed" ffmpeg error).
+        if (result.status === 'skip-empty') {
+          process.stdout.write(`\n⊘ ${ctx.filename}: empty file (0 bytes), skipped\n`);
+        }
       }
     } catch (err) {
       failed++;
@@ -461,7 +471,9 @@ async function runRetry(library: Library, ffmpegOk: boolean) {
 
     try {
       const result = await processOne(ctx, library.slug, router);
-      if (result.status === 'indexed' || result.status === 'skip-duplicate') {
+      // skip-empty resolves a prior failure (the file is 0 bytes — nothing to
+      // index), so it leaves the failing set rather than lingering forever.
+      if (result.status === 'indexed' || result.status === 'skip-duplicate' || result.status === 'skip-empty') {
         succeeded++;
         process.stdout.write(`\r✓ ${succeeded} succeeded, ${stillFailed.length} still failing   `);
       } else {
