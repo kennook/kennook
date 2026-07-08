@@ -92,6 +92,12 @@ export function SavedSearchesSection() {
     create.mutate({ name: name.trim(), librarySlug: url.library ?? undefined, search: payload });
   };
 
+  // Hidden unless there's something to show (saved searches) or something to do
+  // (a current search/filter set worth saving). Saving is discoverable via the
+  // "save current" affordance rather than a permanent hint.
+  const isEmpty = !list.data || list.data.length === 0;
+  if (isEmpty && !hasSaveableState && !saving) return null;
+
   return (
     <section className="mb-5">
       <h3 className="text-[10px] uppercase tracking-wider text-zinc-500 px-3 mb-1.5
@@ -136,12 +142,6 @@ export function SavedSearchesSection() {
             ×
           </button>
         </form>
-      )}
-
-      {list.data?.length === 0 && !saving && (
-        <div className="px-3 py-1.5 text-xs text-zinc-600 leading-relaxed">
-          Run a search or set filters, then “save current”.
-        </div>
       )}
 
       <div className="flex flex-col">

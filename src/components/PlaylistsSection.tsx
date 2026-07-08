@@ -14,6 +14,11 @@ interface Props {
 export function PlaylistsSection({ activePlaylistUuid, onSelectPlaylist }: Props) {
   const playlists = trpc.playlist.list.useQuery();
 
+  // Hidden until there's something to show — creating a playlist is a
+  // discoverable action (select items → "Add to playlist"), not a hint that
+  // needs permanent sidebar space.
+  if (!playlists.data || playlists.data.length === 0) return null;
+
   return (
     <section className="mb-5">
       <h3 className="text-[10px] uppercase tracking-wider text-zinc-500 px-3 mb-1.5
@@ -29,16 +34,6 @@ export function PlaylistsSection({ activePlaylistUuid, onSelectPlaylist }: Props
           </button>
         )}
       </h3>
-
-      {playlists.isLoading && (
-        <div className="px-3 py-1.5 text-sm text-zinc-500">Loading…</div>
-      )}
-
-      {playlists.data?.length === 0 && (
-        <div className="px-3 py-1.5 text-xs text-zinc-600 leading-relaxed">
-          Select items then click "Add to playlist" to create one.
-        </div>
-      )}
 
       <div className="flex flex-col">
         {playlists.data?.map((p) => {
