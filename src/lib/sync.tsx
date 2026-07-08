@@ -30,6 +30,10 @@ export type SyncEvent =
   | { type: 'screensaver.assignment'; index: number }
   | { type: 'item.like'; librarySlug: string; uuid: string; count: number }
   | { type: 'item.tag.changed'; librarySlug: string; uuid: string }
+  /** A video bookmark was added/removed/edited; open viewers refresh the list. */
+  | { type: 'item.bookmark.changed'; librarySlug: string; uuid: string }
+  /** A video's autoplay trim (start/stop) changed; open viewers refresh it. */
+  | { type: 'item.trim.changed'; librarySlug: string; uuid: string }
   | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
   /** Manual sensitivity override changed (1 sensitive / 0 safe / null auto). */
   | { type: 'item.sensitive'; librarySlug: string; uuid: string; override: number | null }
