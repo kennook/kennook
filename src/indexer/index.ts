@@ -271,26 +271,40 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
   // media_items.path is stored relative to the storage's root_path.
   const relPath = relativeMediaPath(storage.root_path, ctx.filepath);
 
-  // Fast path: an already-indexed, unchanged file (same storage + relative path
-  // + byte size) is skipped WITHOUT reading and hashing its full contents. This
-  // turns a re-scan of a large already-indexed drive from "re-hash everything"
-  // into a cheap stat-and-skip. (Content-hash dedup below still catches the same
-  // bytes appearing at a new path.)
-  const known = sqlite
-    .prepare(`SELECT id, uuid FROM media_items
-              WHERE storage_location_id = ? AND path = ? AND size_bytes = ? AND deleted_at IS NULL LIMIT 1`)
-    .get(storage.id, relPath, ctx.stat.size) as { id: number; uuid: string } | undefined;
-  if (known) return { status: 'skip-duplicate' as const, id: known.id, uuid: known.uuid };
+  // Fast path: any file the indexer has SEEN before — whether it was stored or
+  // skipped as a content-duplicate — is recorded in indexed_files by
+  // (storage, path, size). Match there and skip WITHOUT reading/hashing the
+  // file. This is what makes re-scans of a large drive fast, including the many
+  // "clip(1).mp4" duplicate downloads that never get their own media_items row.
+  const seen = sqlite
+    .prepare(`SELECT sha256 FROM indexed_files WHERE storage_location_id = ? AND path = ? AND size_bytes = ?`)
+    .get(storage.id, relPath, ctx.stat.size) as { sha256: string } | undefined;
+  if (seen) {
+    const item = sqlite.prepare('SELECT id, uuid FROM media_items WHERE sha256 = ? LIMIT 1')
+      .get(seen.sha256) as { id: number; uuid: string } | undefined;
+    // item carries the uuid so the progress panel can show its thumbnail. If it
+    // vanished (deleted), fall through and re-index.
+    if (item) return { status: 'skip-duplicate' as const, id: item.id, uuid: item.uuid };
+  }
 
+  // New or changed file — hash for content dedup. Record it in indexed_files
+  // (on success below) so future re-scans skip it on the cheap path above.
   const hash = await sha256OfFile(ctx.filepath);
+  const recordSeen = () => sqlite
+    .prepare(`INSERT OR REPLACE INTO indexed_files (storage_location_id, path, size_bytes, sha256) VALUES (?, ?, ?, ?)`)
+    .run(storage.id, relPath, ctx.stat.size, hash);
 
   const existing = sqlite
     .prepare('SELECT id, uuid FROM media_items WHERE sha256 = ? LIMIT 1')
     .get(hash) as { id: number; uuid: string } | undefined;
 
-  // Carry the existing item's uuid so re-index runs (all duplicates) can still
-  // show its already-generated thumbnail in the progress panel.
-  if (existing) return { status: 'skip-duplicate' as const, id: existing.id, uuid: existing.uuid };
+  // Content-duplicate of a stored item (same bytes, different name): record the
+  // path so it's skipped cheaply next time, and carry the stored uuid for the
+  // progress thumbnail.
+  if (existing) {
+    recordSeen();
+    return { status: 'skip-duplicate' as const, id: existing.id, uuid: existing.uuid };
+  }
 
   const uuid = crypto.randomUUID();
   const thumbDir = libraryThumbnailsDir(librarySlug);
@@ -378,6 +392,7 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     .prepare('INSERT INTO media_embeddings (rowid, embedding) VALUES (?, ?)')
     .run(BigInt(mediaId), floatArrayToBuffer(embedding));
 
+  recordSeen(); // remember this path so re-scans skip it without hashing
   return { status: 'indexed' as const, id: mediaId, uuid };
 }
 

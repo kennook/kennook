@@ -74,7 +74,7 @@ export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userI
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 27;
+const LATEST_SCHEMA_VERSION = 28;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -599,6 +599,32 @@ function applyMigrations(sqlite: DatabaseSync) {
   if (version < 27) {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS media_storage_path_idx ON media_items(storage_location_id, path)`);
     version = 27;
+  }
+
+  // ── v28: remember EVERY file the indexer has seen (by storage + relative
+  // path + size → its content hash), not just the ones stored in media_items.
+  // Content-duplicate downloads (e.g. "clip(1).mp4" identical to "clip.mp4")
+  // are skip-duplicated and never stored, so the v27 media_items path check
+  // missed them and re-hashed the full file every scan. This lets a re-scan
+  // skip them on a cheap path lookup instead. Backfilled from existing items.
+  if (version < 28) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS indexed_files (
+        storage_location_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        seen_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        PRIMARY KEY (storage_location_id, path)
+      ) WITHOUT ROWID;
+    `);
+    sqlite.exec(`
+      INSERT OR IGNORE INTO indexed_files (storage_location_id, path, size_bytes, sha256)
+      SELECT storage_location_id, path, size_bytes, sha256
+      FROM media_items
+      WHERE deleted_at IS NULL AND sha256 IS NOT NULL AND path IS NOT NULL;
+    `);
+    version = 28;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {
