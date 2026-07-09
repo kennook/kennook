@@ -165,9 +165,35 @@ async function sha256OfFile(p: string): Promise<string> {
   });
 }
 
+const NO_PHOTO_META = { capturedAt: null, capturedLat: null, capturedLon: null, cameraMake: null, cameraModel: null };
+
 async function readPhotoMetadata(p: string) {
+  // Read a bounded header ourselves and hand exifr a Buffer, rather than a path.
+  // Passing a path makes exifr open a FileHandle it doesn't reliably close on
+  // malformed files — and on Node 22+ a FileHandle GC'd without an explicit
+  // close throws ERR_INVALID_STATE, which aborts the whole indexer process.
+  // EXIF/TIFF lives at the very start of a JPEG, so 256 KB is ample.
+  let buf: Buffer | null = null;
+  const handle = await fs.promises.open(p, 'r').catch(() => null);
+  if (handle) {
+    try {
+      const { size } = await handle.stat();
+      const len = Math.min(256 * 1024, size);
+      if (len > 0) {
+        const b = Buffer.alloc(len);
+        await handle.read(b, 0, len, 0);
+        buf = b;
+      }
+    } catch {
+      // unreadable header — fall through to no-metadata
+    } finally {
+      await handle.close().catch(() => {});
+    }
+  }
+  if (!buf) return NO_PHOTO_META;
+
   try {
-    const exif = await exifr.parse(p, {
+    const exif = await exifr.parse(buf, {
       tiff: true, exif: true, gps: true, xmp: false, icc: false, jfif: false,
     });
     return {
@@ -180,7 +206,7 @@ async function readPhotoMetadata(p: string) {
       cameraModel: exif?.Model ?? null,
     };
   } catch {
-    return { capturedAt: null, capturedLat: null, capturedLon: null, cameraMake: null, cameraModel: null };
+    return NO_PHOTO_META;
   }
 }
 
