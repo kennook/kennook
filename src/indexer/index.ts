@@ -14,7 +14,8 @@ import {
 } from '@/server/libraries';
 import { ensureFfmpegAvailable, extractFrame, probeVideo } from './ffmpeg';
 import { emitProgress } from './progress';
-import { buildStorageRouter, relativeMediaPath, type StorageRouter } from '@/server/storage';
+import { buildStorageRouter, relativeMediaPath, isPathUnder, type StorageRouter } from '@/server/storage';
+import { absoluteIgnoredPaths } from '@/server/storage-browse';
 import { IMAGE_EXTS, VIDEO_EXTS, kindForExt } from './media-extensions';
 
 const DEFAULT_USER_ID = 1;
@@ -88,7 +89,10 @@ function shouldSkipDir(name: string): boolean {
   return false;
 }
 
-async function* walkDirectory(dir: string): AsyncGenerator<PipelineCtx> {
+async function* walkDirectory(
+  dir: string,
+  isIgnored: (abs: string) => boolean = () => false,
+): AsyncGenerator<PipelineCtx> {
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -99,9 +103,10 @@ async function* walkDirectory(dir: string): AsyncGenerator<PipelineCtx> {
   }
 
   for (const entry of entries) {
+    const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (shouldSkipDir(entry.name)) continue;
-      yield* walkDirectory(path.join(dir, entry.name));
+      if (shouldSkipDir(entry.name) || isIgnored(full)) continue;
+      yield* walkDirectory(full, isIgnored);
       continue;
     }
     if (!entry.isFile()) continue;
@@ -109,8 +114,8 @@ async function* walkDirectory(dir: string): AsyncGenerator<PipelineCtx> {
     const ext = path.extname(entry.name).toLowerCase();
     const kind = IMAGE_EXTS.has(ext) ? 'photo' : VIDEO_EXTS.has(ext) ? 'video' : null;
     if (!kind) continue;
+    if (isIgnored(full)) continue;
 
-    const full = path.join(dir, entry.name);
     let stat: fs.Stats;
     try {
       stat = await fs.promises.stat(full);
@@ -421,7 +426,13 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
   // showing path placeholders during runs of skips/failures.
   let lastUuid: string | null = null;
 
-  for await (const ctx of walkDirectory(absTarget)) {
+  // User ignore-list (storage file manager): skip these subtrees entirely.
+  const ignoredAbs = absoluteIgnoredPaths(getRawSqlite(library.slug));
+  const isIgnored = ignoredAbs.length
+    ? (abs: string) => ignoredAbs.some((ig) => abs === ig || isPathUnder(abs, ig))
+    : undefined;
+
+  for await (const ctx of walkDirectory(absTarget, isIgnored)) {
     if (ctx.kind === 'video' && !ffmpegOk) {
       skipped++;
       continue;

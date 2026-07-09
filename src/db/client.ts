@@ -74,7 +74,7 @@ export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userI
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 28;
+const LATEST_SCHEMA_VERSION = 29;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -625,6 +625,22 @@ function applyMigrations(sqlite: DatabaseSync) {
       WHERE deleted_at IS NULL AND sha256 IS NOT NULL AND path IS NOT NULL;
     `);
     version = 28;
+  }
+
+  // ── v29: user-managed ignore list for the storage file manager. A path
+  // (relative to a storage root) the indexer must skip on every scan — used to
+  // prune "garbage" folders that got swept into a library. Checked by the walk
+  // (skips the subtree) and used to hide already-indexed items underneath.
+  if (version < 29) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS ignored_paths (
+        storage_location_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        PRIMARY KEY (storage_location_id, path)
+      ) WITHOUT ROWID;
+    `);
+    version = 29;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {
