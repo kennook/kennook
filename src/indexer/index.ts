@@ -430,12 +430,18 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
     // indexed items and duplicate-skips (both have a thumbnail on disk), so the
     // panel shows a thumbnail even on all-duplicate re-index runs.
     let itemUuid: string | null = null;
+    // Only freshly-indexed items trigger a per-file progress emit — they're slow
+    // (thumbnail + embedding), so smooth thumbnails are worth it. Skips are fast
+    // and only emit on the periodic tick, so a fast re-scan isn't throttled by a
+    // progress line (→ runner DB write + SSE) per skipped file.
+    let freshlyIndexed = false;
     try {
       const result = await processOne(ctx, library.slug, router);
       if (result.status === 'indexed') {
         indexed++;
         itemUuid = result.uuid;
         lastUuid = result.uuid;
+        freshlyIndexed = true;
         process.stdout.write(`\r✓ ${indexed} indexed, ${skipped} skipped, ${failed} failed   `);
       } else {
         skipped++;
@@ -455,9 +461,10 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
       process.stdout.write(`\n✗ ${ctx.filename}: ${msg}\n`);
     }
     processedSoFar++;
-    // Emit on every item that has a thumbnail (indexed or duplicate) plus a
-    // periodic tick so counts stay live through empty/fail stretches.
-    if (itemUuid || processedSoFar % PROGRESS_EVERY === 0) {
+    // Per-file emit for freshly-indexed items (smooth thumbnails); otherwise a
+    // periodic tick — which still carries the latest item's uuid so the panel
+    // shows a thumbnail and the counts stay live through skip/fail stretches.
+    if (freshlyIndexed || processedSoFar % PROGRESS_EVERY === 0) {
       const showUuid = itemUuid ?? lastUuid;
       emitProgress({
         step: 'Indexing',
