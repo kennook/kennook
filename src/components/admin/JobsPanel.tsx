@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AdminJobRow } from '@/server/admin/job-store';
 import { JobAccordionRow } from './JobAccordionRow';
 
-export function JobsPanel() {
+export function JobsPanel({ onActiveChange }: { onActiveChange?: (active: boolean) => void } = {}) {
   const [jobs, setJobs] = useState<AdminJobRow[]>([]);
   const [paused, setPaused] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,6 +65,13 @@ export function JobsPanel() {
       document.removeEventListener('visibilitychange', onFocus);
     };
   }, [refreshJobs]);
+
+  // Tell the parent whether any job is running/queued, so it can live-refresh
+  // things a running job mutates (e.g. the storage "files indexed" counts).
+  const hasActiveWork = jobs.some((j) => j.status === 'running' || j.status === 'queued');
+  useEffect(() => {
+    onActiveChange?.(hasActiveWork);
+  }, [hasActiveWork, onActiveChange]);
 
   // Auto-expand:
   //   1. The most recently-started running job (so the user sees output

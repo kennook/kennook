@@ -6,7 +6,7 @@
  * mutation so the UI reflects the new state immediately.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { AddStorageDialog } from './AddStorageDialog';
 import { RelocateDialog } from './RelocateDialog';
@@ -31,7 +31,20 @@ function formatRelative(ms: number | null): string {
 
 export function StorageClient() {
   const utils = trpc.useUtils();
-  const list = trpc.storage.list.useQuery();
+  // While a job is running/queued its indexing/enrichment keeps changing the
+  // per-storage "files indexed" counts — poll the list so they update live
+  // instead of going stale until a manual refresh. No polling when idle.
+  const [jobActive, setJobActive] = useState(false);
+  const list = trpc.storage.list.useQuery(undefined, {
+    refetchInterval: jobActive ? 3000 : false,
+  });
+  // When work stops, do one final refetch so the counts snap to their exact
+  // final value (the last poll could be up to the interval stale).
+  const wasActive = useRef(false);
+  useEffect(() => {
+    if (wasActive.current && !jobActive) void utils.storage.list.invalidate();
+    wasActive.current = jobActive;
+  }, [jobActive, utils]);
   // Current library — needed to enqueue indexing/backfill/enrich jobs scoped
   // to this admin context. The Run menu pre-fills it so the user doesn't
   // re-select a library they already see in the sidebar.
@@ -198,7 +211,7 @@ export function StorageClient() {
         </table>
       </div>
 
-      <JobsPanel />
+      <JobsPanel onActiveChange={setJobActive} />
 
       {addOpen && (
         <AddStorageDialog
