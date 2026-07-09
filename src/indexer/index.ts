@@ -271,10 +271,12 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
   const hash = await sha256OfFile(ctx.filepath);
 
   const existing = sqlite
-    .prepare('SELECT id FROM media_items WHERE sha256 = ? LIMIT 1')
-    .get(hash) as { id: number } | undefined;
+    .prepare('SELECT id, uuid FROM media_items WHERE sha256 = ? LIMIT 1')
+    .get(hash) as { id: number; uuid: string } | undefined;
 
-  if (existing) return { status: 'skip-duplicate' as const, id: existing.id };
+  // Carry the existing item's uuid so re-index runs (all duplicates) can still
+  // show its already-generated thumbnail in the progress panel.
+  if (existing) return { status: 'skip-duplicate' as const, id: existing.id, uuid: existing.uuid };
 
   const uuid = crypto.randomUUID();
   const thumbDir = libraryThumbnailsDir(librarySlug);
@@ -398,19 +400,25 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
       skipped++;
       continue;
     }
-    let indexedUuid: string | null = null;
+    // The uuid of the item processed THIS iteration — set for both freshly
+    // indexed items and duplicate-skips (both have a thumbnail on disk), so the
+    // panel shows a thumbnail even on all-duplicate re-index runs.
+    let itemUuid: string | null = null;
     try {
       const result = await processOne(ctx, library.slug, router);
       if (result.status === 'indexed') {
         indexed++;
-        indexedUuid = result.uuid;
+        itemUuid = result.uuid;
         lastUuid = result.uuid;
         process.stdout.write(`\r✓ ${indexed} indexed, ${skipped} skipped, ${failed} failed   `);
       } else {
         skipped++;
-        // Note empty files on their own line so it's clear WHY they were
-        // skipped (not silently, not as a "failed" ffmpeg error).
-        if (result.status === 'skip-empty') {
+        if (result.status === 'skip-duplicate') {
+          itemUuid = result.uuid;
+          lastUuid = result.uuid;
+        } else if (result.status === 'skip-empty') {
+          // Note empty files on their own line so it's clear WHY they were
+          // skipped (not silently, not as a "failed" ffmpeg error).
           process.stdout.write(`\n⊘ ${ctx.filename}: empty file (0 bytes), skipped\n`);
         }
       }
@@ -421,10 +429,10 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
       process.stdout.write(`\n✗ ${ctx.filename}: ${msg}\n`);
     }
     processedSoFar++;
-    // Emit on every freshly-indexed item (its thumbnail exists now) plus a
-    // periodic tick so counts stay live through skip/fail stretches.
-    if (indexedUuid || processedSoFar % PROGRESS_EVERY === 0) {
-      const showUuid = indexedUuid ?? lastUuid;
+    // Emit on every item that has a thumbnail (indexed or duplicate) plus a
+    // periodic tick so counts stay live through empty/fail stretches.
+    if (itemUuid || processedSoFar % PROGRESS_EVERY === 0) {
+      const showUuid = itemUuid ?? lastUuid;
       emitProgress({
         step: 'Indexing',
         current: processedSoFar,
@@ -578,7 +586,7 @@ async function runSingleFile(absTarget: string, library: Library, ffmpegOk: bool
     const done = result.status === 'indexed' ? 'indexed' : 'skipped (duplicate)';
     emitProgress({
       step: 'Indexing', current: 1, total: 1, label: `done — ${done}`,
-      ...(result.status === 'indexed'
+      ...(result.status === 'indexed' || result.status === 'skip-duplicate'
         ? { currentItem: result.uuid, currentItemKind: 'uuid' as const, currentItemLibrary: library.slug }
         : {}),
     });
