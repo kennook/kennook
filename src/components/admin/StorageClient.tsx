@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { trpc } from '@/lib/trpc-client';
 import { AddStorageDialog } from './AddStorageDialog';
 import { RelocateDialog } from './RelocateDialog';
@@ -177,6 +178,15 @@ export function StorageClient() {
                           setErrorMsg(msg);
                         }}
                       />
+                    )}
+                    {s.exists !== null && s.root_path !== '/' && (
+                      <Link
+                        href={`/admin/storage/${s.id}`}
+                        className="ml-2 px-2.5 py-1 text-xs text-zinc-300 hover:text-zinc-100
+                                   ring-1 ring-zinc-800 hover:ring-zinc-700 rounded transition inline-block"
+                      >
+                        Browse
+                      </Link>
                     )}
                     <button
                       type="button"
