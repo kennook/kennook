@@ -268,6 +268,20 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     );
   }
 
+  // media_items.path is stored relative to the storage's root_path.
+  const relPath = relativeMediaPath(storage.root_path, ctx.filepath);
+
+  // Fast path: an already-indexed, unchanged file (same storage + relative path
+  // + byte size) is skipped WITHOUT reading and hashing its full contents. This
+  // turns a re-scan of a large already-indexed drive from "re-hash everything"
+  // into a cheap stat-and-skip. (Content-hash dedup below still catches the same
+  // bytes appearing at a new path.)
+  const known = sqlite
+    .prepare(`SELECT id, uuid FROM media_items
+              WHERE storage_location_id = ? AND path = ? AND size_bytes = ? AND deleted_at IS NULL LIMIT 1`)
+    .get(storage.id, relPath, ctx.stat.size) as { id: number; uuid: string } | undefined;
+  if (known) return { status: 'skip-duplicate' as const, id: known.id, uuid: known.uuid };
+
   const hash = await sha256OfFile(ctx.filepath);
 
   const existing = sqlite
@@ -320,9 +334,6 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
   }
 
   const embedding = await embedImage(thumbPath);
-
-  // media_items.path is stored relative to the storage's root_path.
-  const relPath = relativeMediaPath(storage.root_path, ctx.filepath);
 
   const insert = sqlite.prepare(`
     INSERT INTO media_items (

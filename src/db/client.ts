@@ -74,7 +74,7 @@ export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userI
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 26;
+const LATEST_SCHEMA_VERSION = 27;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -589,6 +589,16 @@ function applyMigrations(sqlite: DatabaseSync) {
     sqlite.exec(`UPDATE media_items SET face_status = 'pending' WHERE kind = 'photo'`);
     sqlite.exec(`UPDATE media_items SET video_face_status = 'n/a' WHERE kind = 'video'`);
     version = 26;
+  }
+
+  // ── v27: fast incremental re-index. An index on (storage_location_id, path)
+  // lets the indexer detect an already-indexed, unchanged file (matched by
+  // path + size) WITHOUT reading and SHA-256-hashing its full contents — so
+  // re-scanning a large drive becomes "stat and skip" instead of "re-hash
+  // everything".
+  if (version < 27) {
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS media_storage_path_idx ON media_items(storage_location_id, path)`);
+    version = 27;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {
