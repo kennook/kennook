@@ -9,7 +9,7 @@
  * you never have to scroll up to act.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc-client';
 import type { BrowseEntry } from '@/server/storage-browse';
@@ -66,8 +66,49 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
 
   const paths = [...selected];
   const busy = ignore.isPending || unignore.isPending || remove.isPending || del.isPending;
-  const toggleSelect = (p: string) => setSelected((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
   const toggleExpand = (p: string) => setExpanded((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
+
+  // The flattened, in-render-order list of currently-VISIBLE row paths — rebuilt
+  // from the browse cache using the same visibility rules as the tree. Powers
+  // shift+click range select and "select all (visible)".
+  const visiblePaths = (): string[] => {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      const data = utils.storage.browse.getData({ storageId, dir });
+      if (!data) return;
+      for (const e of data.entries) {
+        const hidden = e.name.startsWith('.');
+        if (hidden && !showHidden) continue;
+        const isDir = e.kind === 'dir';
+        const isOpen = expanded.has(e.path);
+        if (!matcher(e.name) && !(isDir && isOpen)) continue;
+        out.push(e.path);
+        if (isDir && isOpen) walk(e.path);
+      }
+    };
+    walk('');
+    return out;
+  };
+
+  // Click a row's checkbox. Shift extends a contiguous range from the last
+  // anchor through the clicked row (in visible order); plain click toggles and
+  // becomes the new anchor.
+  const anchorRef = useRef<string | null>(null);
+  const onSelect = (p: string, shift: boolean) => {
+    if (shift && anchorRef.current && anchorRef.current !== p) {
+      const order = visiblePaths();
+      const a = order.indexOf(anchorRef.current);
+      const b = order.indexOf(p);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelected((s) => { const n = new Set(s); for (let i = lo; i <= hi; i++) n.add(order[i]); return n; });
+        return;
+      }
+    }
+    setSelected((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
+    anchorRef.current = p;
+  };
+  const selectAllVisible = () => setSelected(new Set(visiblePaths()));
 
   const btn = 'px-2.5 py-1 text-xs rounded ring-1 disabled:opacity-40';
 
@@ -96,9 +137,12 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
           <label className="flex items-center gap-1.5 text-xs text-zinc-400 select-none">
             <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> hidden
           </label>
-          {selected.size > 0 && (
-            <button onClick={() => setSelected(new Set())} className="text-xs text-zinc-500 hover:text-zinc-300">clear ({selected.size})</button>
-          )}
+          <div className="flex items-center gap-2 text-xs">
+            <button onClick={selectAllVisible} className="text-zinc-400 hover:text-zinc-200">Select all</button>
+            <span className="text-zinc-700">·</span>
+            <button onClick={() => setSelected(new Set())} className="text-zinc-400 hover:text-zinc-200">Select none</button>
+          </div>
+          {selected.size > 0 && <span className="text-xs text-emerald-500/70">{selected.size} selected</span>}
         </div>
 
         {selected.size > 0 && (
@@ -119,7 +163,7 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
         {root.data && !root.data.exists && <div className="px-3 py-2 text-sm text-zinc-500">Storage folder not available.</div>}
         {root.data?.entries.map((e) => (
           <TreeNode key={e.path} storageId={storageId} entry={e} depth={0}
-            expanded={expanded} toggleExpand={toggleExpand} selected={selected} toggleSelect={toggleSelect}
+            expanded={expanded} toggleExpand={toggleExpand} selected={selected} onSelect={onSelect}
             showHidden={showHidden} matcher={matcher} onPreview={setPreview} />
         ))}
       </div>
@@ -144,11 +188,11 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 function TreeNode({
-  storageId, entry, depth, expanded, toggleExpand, selected, toggleSelect, showHidden, matcher, onPreview,
+  storageId, entry, depth, expanded, toggleExpand, selected, onSelect, showHidden, matcher, onPreview,
 }: {
   storageId: number; entry: BrowseEntry; depth: number;
   expanded: Set<string>; toggleExpand: (p: string) => void;
-  selected: Set<string>; toggleSelect: (p: string) => void;
+  selected: Set<string>; onSelect: (p: string, shift: boolean) => void;
   showHidden: boolean; matcher: Matcher; onPreview: (p: { uuid: string; name: string }) => void;
 }) {
   const isDir = entry.kind === 'dir';
@@ -169,7 +213,13 @@ function TreeNode({
         className={`group flex items-center gap-2 pr-3 py-1 text-sm hover:bg-zinc-900/50 ${isSelected ? 'bg-emerald-950/30' : ''}`}
         style={{ paddingLeft: `${depth * 18 + 8}px` }}
       >
-        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(entry.path)} className="shrink-0" />
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => { /* controlled via onClick to capture shift */ }}
+          onClick={(e) => { e.preventDefault(); onSelect(entry.path, e.shiftKey); }}
+          className="shrink-0 cursor-pointer"
+        />
         {isDir ? (
           <button onClick={() => toggleExpand(entry.path)} className="w-4 h-4 shrink-0 flex items-center justify-center hover:bg-zinc-800 rounded">
             <Chevron open={isOpen} />
@@ -198,7 +248,7 @@ function TreeNode({
           {children.isLoading && <div className="text-xs text-zinc-600 py-1" style={{ paddingLeft: `${(depth + 1) * 18 + 30}px` }}>loading…</div>}
           {children.data?.entries.map((c) => (
             <TreeNode key={c.path} storageId={storageId} entry={c} depth={depth + 1}
-              expanded={expanded} toggleExpand={toggleExpand} selected={selected} toggleSelect={toggleSelect}
+              expanded={expanded} toggleExpand={toggleExpand} selected={selected} onSelect={onSelect}
               showHidden={showHidden} matcher={matcher} onPreview={onPreview} />
           ))}
           {children.data && children.data.entries.length === 0 && (
