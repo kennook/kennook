@@ -24,6 +24,9 @@ export interface BrowseEntry {
   mediaKind?: 'photo' | 'video' | null;
   /** File: is it in the library? Dir: does it contain ≥1 indexed item? */
   indexed: boolean;
+  /** File: seen by the indexer but not stored — i.e. a content-duplicate of an
+   *  already-indexed file (skipped on purpose, so "not indexed" would mislead). */
+  duplicate?: boolean;
   /** Indexed files: the media_items uuid, for preview / open-in-app links. */
   uuid?: string;
   /** Dirs only: how many indexed items live under this subtree. */
@@ -109,6 +112,17 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
     else dirCounts.set(rest.slice(0, slash), (dirCounts.get(rest.slice(0, slash)) ?? 0) + 1);
   }
 
+  // Files the indexer has SEEN (indexed_files) but that aren't stored above are
+  // content-duplicates — track them so the UI can label them "duplicate".
+  const seenRows = sqlite
+    .prepare(`SELECT path FROM indexed_files WHERE storage_location_id = ? AND path >= ? AND path < ?`)
+    .all(storageId, lo, hi) as Array<{ path: string }>;
+  const seenFiles = new Set<string>();
+  for (const r of seenRows) {
+    const rest = r.path.slice(prefixLen);
+    if (rest.indexOf('/') === -1) seenFiles.add(r.path); // a file directly here
+  }
+
   const entries: BrowseEntry[] = [];
   for (const d of dirents) {
     const name = d.name;
@@ -119,10 +133,12 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
     } else if (d.isFile()) {
       let sizeBytes = 0;
       try { sizeBytes = fs.statSync(path.join(absDir, name)).size; } catch { /* unreadable */ }
+      const isIndexed = indexedFiles.has(relPath);
       entries.push({
         name, path: relPath, kind: 'file', sizeBytes,
         mediaKind: mediaKindFor(name),
-        indexed: indexedFiles.has(relPath),
+        indexed: isIndexed,
+        duplicate: !isIndexed && seenFiles.has(relPath),
         uuid: indexedFiles.get(relPath),
         ignored: isIgnored(relPath, ignored),
       });

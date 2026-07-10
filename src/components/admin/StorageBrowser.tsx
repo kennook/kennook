@@ -277,7 +277,14 @@ function TreeNode({
         <span className="ml-auto flex items-center gap-2 shrink-0 text-[11px] tabular-nums">
           {entry.ignored && <span className="text-amber-500/80">ignored</span>}
           {isDir && (entry.indexedCount ?? 0) > 0 && <span className="text-emerald-500/70">{entry.indexedCount!.toLocaleString()} indexed</span>}
-          {!isDir && entry.mediaKind && <span className={entry.indexed ? 'text-emerald-500/70' : 'text-zinc-600'}>{entry.indexed ? 'indexed' : 'not indexed'}</span>}
+          {!isDir && entry.mediaKind && (
+            <span
+              className={entry.indexed ? 'text-emerald-500/70' : entry.duplicate ? 'text-sky-500/70' : 'text-zinc-600'}
+              title={entry.duplicate ? 'Byte-identical duplicate of an already-indexed file — skipped on purpose' : undefined}
+            >
+              {entry.indexed ? 'indexed' : entry.duplicate ? 'duplicate' : 'not indexed'}
+            </span>
+          )}
           {!isDir && <span className="text-zinc-600 w-14 text-right">{formatBytes(entry.sizeBytes ?? 0)}</span>}
         </span>
       </div>
