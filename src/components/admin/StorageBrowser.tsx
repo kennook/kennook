@@ -260,8 +260,12 @@ function TreeNode({
         <input
           type="checkbox"
           checked={isSelected}
-          onChange={() => { /* controlled via onClick to capture shift */ }}
-          onClick={(e) => { e.preventDefault(); onSelect(entry.path, e.shiftKey); }}
+          // onChange keeps the checkbox controlled; onClick is where we read
+          // shiftKey (change events don't carry it). We must NOT preventDefault
+          // here — cancelling the native toggle desyncs React's input tracker
+          // and swallows every other click.
+          onChange={() => { /* selection handled in onClick */ }}
+          onClick={(e) => onSelect(entry.path, e.shiftKey)}
           className="shrink-0 cursor-pointer"
         />
         {isDir ? (
