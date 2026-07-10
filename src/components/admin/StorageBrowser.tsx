@@ -287,7 +287,15 @@ function TreeNode({
             entry.sizeBytes === 0 ? (
               <span className="text-zinc-600" title="0-byte file — nothing to index or view">empty</span>
             ) : entry.indexed ? (
-              <span className="text-emerald-500/70">indexed</span>
+              <>
+                {entry.damaged && (
+                  <span
+                    className="text-rose-500/80"
+                    title="Truncated / damaged download — only the first few seconds actually play, though the file claims a much longer duration"
+                  >damaged</span>
+                )}
+                <span className="text-emerald-500/70">indexed</span>
+              </>
             ) : entry.duplicate ? (
               entry.dupOf ? (
                 <button

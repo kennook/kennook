@@ -29,6 +29,10 @@ export interface BrowseEntry {
   duplicate?: boolean;
   /** For a duplicate: the stored original it's byte-identical to (same storage). */
   dupOf?: { uuid: string; path: string };
+  /** Indexed video that looks TRUNCATED — its byte size is a tiny fraction of
+   *  what its own duration × bitrate implies (a partial/damaged download). Only
+   *  ~40s of a claimed 33-min clip actually plays. */
+  damaged?: boolean;
   /** Indexed files: the media_items uuid, for preview / open-in-app links. */
   uuid?: string;
   /** Dirs only: how many indexed items live under this subtree. */
@@ -49,6 +53,17 @@ export interface BrowseResult {
 function mediaKindFor(name: string): 'photo' | 'video' | null {
   const ext = path.extname(name).toLowerCase();
   return IMAGE_EXTS.has(ext) ? 'photo' : VIDEO_EXTS.has(ext) ? 'video' : null;
+}
+
+/** A video is "damaged" (truncated download) when its byte size is a tiny
+ *  fraction of what its own duration × bitrate implies. Complete files land
+ *  near ratio 1.0; truncated ones ~0.0–0.05, so a 0.25 cutoff separates them
+ *  cleanly while leaving room for VBR variance. */
+const DAMAGED_MAX_RATIO = 0.25;
+function isDamagedVideo(kind: string, durationMs: number | null, bitrate: number | null, size: number): boolean {
+  if (kind !== 'video' || !durationMs || !bitrate || bitrate <= 0 || size <= 0) return false;
+  const expected = (durationMs / 1000) * (bitrate / 8);
+  return expected > 0 && size < expected * DAMAGED_MAX_RATIO;
 }
 
 /** The set of ignore-list paths for a storage (relative). */
@@ -102,16 +117,19 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
   // child so subdir counts + file-indexed flags come from a single scan.
   const [lo, hi] = subtreeRange(cleanDir);
   const indexedRows = sqlite
-    .prepare(`SELECT path, uuid FROM media_items WHERE storage_location_id = ? AND path >= ? AND path < ? AND deleted_at IS NULL`)
-    .all(storageId, lo, hi) as Array<{ path: string; uuid: string }>;
+    .prepare(`SELECT path, uuid, kind, duration_ms, video_bitrate, size_bytes FROM media_items WHERE storage_location_id = ? AND path >= ? AND path < ? AND deleted_at IS NULL`)
+    .all(storageId, lo, hi) as Array<{ path: string; uuid: string; kind: string; duration_ms: number | null; video_bitrate: number | null; size_bytes: number }>;
   const prefixLen = cleanDir === '' ? 0 : cleanDir.length + 1;
   const dirCounts = new Map<string, number>();   // immediate child dir → indexed count
-  const indexedFiles = new Map<string, string>(); // exact indexed file path → uuid
+  const indexedFiles = new Map<string, { uuid: string; damaged: boolean }>(); // exact indexed file path → info
   for (const r of indexedRows) {
     const rest = r.path.slice(prefixLen);
     const slash = rest.indexOf('/');
-    if (slash === -1) indexedFiles.set(r.path, r.uuid);  // a file directly here
-    else dirCounts.set(rest.slice(0, slash), (dirCounts.get(rest.slice(0, slash)) ?? 0) + 1);
+    if (slash === -1) {
+      indexedFiles.set(r.path, { uuid: r.uuid, damaged: isDamagedVideo(r.kind, r.duration_ms, r.video_bitrate, r.size_bytes) });
+    } else {
+      dirCounts.set(rest.slice(0, slash), (dirCounts.get(rest.slice(0, slash)) ?? 0) + 1);
+    }
   }
 
   // Files the indexer has SEEN (indexed_files) but that aren't stored above are
@@ -136,13 +154,15 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
     } else if (d.isFile()) {
       let sizeBytes = 0;
       try { sizeBytes = fs.statSync(path.join(absDir, name)).size; } catch { /* unreadable */ }
-      const isIndexed = indexedFiles.has(relPath);
+      const info = indexedFiles.get(relPath);
+      const isIndexed = info !== undefined;
       entries.push({
         name, path: relPath, kind: 'file', sizeBytes,
         mediaKind: mediaKindFor(name),
         indexed: isIndexed,
         duplicate: !isIndexed && seenSha.has(relPath),
-        uuid: indexedFiles.get(relPath),
+        damaged: info?.damaged,
+        uuid: info?.uuid,
         ignored: isIgnored(relPath, ignored),
       });
     }
