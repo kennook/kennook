@@ -34,7 +34,9 @@ interface Vis { showHidden: boolean; showIgnored: boolean; showIncompatible: boo
 function passesVisibility(e: BrowseEntry, v: Vis): boolean {
   if (e.name.startsWith('.') && !v.showHidden) return false;
   if (e.ignored && !v.showIgnored) return false;
-  if (e.kind === 'file' && !e.mediaKind && !v.showIncompatible) return false;
+  // Incompatible = KenNook can't view it: unsupported format, or a 0-byte
+  // (empty/broken) file.
+  if (e.kind === 'file' && (!e.mediaKind || e.sizeBytes === 0) && !v.showIncompatible) return false;
   if (e.kind === 'file' && e.duplicate && !v.showDuplicates) return false;
   return true;
 }
@@ -282,7 +284,9 @@ function TreeNode({
           {entry.ignored && <span className="text-amber-500/80">ignored</span>}
           {isDir && (entry.indexedCount ?? 0) > 0 && <span className="text-emerald-500/70">{entry.indexedCount!.toLocaleString()} indexed</span>}
           {!isDir && entry.mediaKind && (
-            entry.indexed ? (
+            entry.sizeBytes === 0 ? (
+              <span className="text-zinc-600" title="0-byte file — nothing to index or view">empty</span>
+            ) : entry.indexed ? (
               <span className="text-emerald-500/70">indexed</span>
             ) : entry.duplicate ? (
               entry.dupOf ? (

@@ -245,7 +245,17 @@ async function generatePhotoVariants(
 async function generateVideoThumbnail(srcPath: string, dstPath: string) {
   const probe = await probeVideo(srcPath);
   const ts = probe.durationMs ? Math.max(1, probe.durationMs / 1000 * 0.1) : 1;
-  const frame = await extractFrame(srcPath, ts);
+  // Truncated / partial downloads claim a long duration but only have data near
+  // the start, so a 10%-of-duration seek gets "no packets received". Fall back
+  // toward the beginning (1s, then 0) so such files still get a thumbnail and
+  // index instead of failing outright.
+  const seeks = [...new Set([ts, 1, 0])];
+  let frame: Buffer | undefined;
+  let lastErr: unknown;
+  for (const s of seeks) {
+    try { frame = await extractFrame(srcPath, s); break; } catch (e) { lastErr = e; }
+  }
+  if (!frame) throw lastErr;
   await sharp(frame)
     .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 82 })
