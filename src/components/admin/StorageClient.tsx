@@ -13,6 +13,7 @@ import { AddStorageDialog } from './AddStorageDialog';
 import { RelocateDialog } from './RelocateDialog';
 import { RunStorageMenu } from './RunStorageMenu';
 import { JobsPanel } from './JobsPanel';
+import { ProcessorLoadControl } from './ProcessorLoadControl';
 
 /** Compact relative-time string for the Last Indexed column. */
 function formatRelative(ms: number | null): string {
@@ -219,6 +220,10 @@ export function StorageClient() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-8 pt-6 border-t border-zinc-900">
+        <ProcessorLoadControl />
       </div>
 
       <JobsPanel onActiveChange={setJobActive} />

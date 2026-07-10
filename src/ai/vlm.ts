@@ -22,6 +22,7 @@ import {
   type PreTrainedTokenizer,
   type Tensor,
 } from '@huggingface/transformers';
+import { aiSessionOptions } from './throttle';
 
 // Florence-2's processor has a post_process_generation() method that the base
 // Processor type doesn't expose. Narrow shape we actually use:
@@ -62,7 +63,7 @@ function loadModel(): Promise<VlmState> {
     } as const;
 
     const [model, processor, tokenizer] = await Promise.all([
-      Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, { dtype }),
+      Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, { dtype, ...aiSessionOptions() }),
       AutoProcessor.from_pretrained(MODEL_ID),
       AutoTokenizer.from_pretrained(MODEL_ID),
     ]);

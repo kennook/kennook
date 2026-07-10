@@ -23,6 +23,7 @@
  */
 
 import { pipeline, env, type PipelineType } from '@huggingface/transformers';
+import { aiSessionOptions } from './throttle';
 
 if (process.env.TRANSFORMERS_CACHE) {
   env.cacheDir = process.env.TRANSFORMERS_CACHE;
@@ -67,7 +68,7 @@ function getGenerator(): Promise<TextGenerator> {
     generatorPromise = pipeline(
       'text-generation' as PipelineType,
       MODEL,
-      { dtype: DTYPE },
+      { dtype: DTYPE, ...aiSessionOptions() },
     ) as unknown as Promise<TextGenerator>;
   }
   return generatorPromise;

@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import { getRawSqlite } from '@/db/client';
 import { enrichImage } from '@/ai/vlm';
+import { pace } from '@/ai/throttle';
 import { emitProgress } from './progress';
 import {
   DEFAULT_LIBRARY_SLUG,
@@ -191,6 +192,10 @@ async function main() {
       const msg = err instanceof Error ? err.message : String(err);
       process.stdout.write(`\n✗ ${row.filename}: ${msg}\n`);
     }
+
+    // Duty-cycle pause (no-op unless throttled) — lets the CPU breathe between
+    // items. Re-reads the live setting, so a UI change applies mid-run.
+    await pace(Date.now() - itemStart);
   }
 
   emitProgress({

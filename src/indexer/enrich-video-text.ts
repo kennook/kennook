@@ -40,6 +40,7 @@ import {
   type OccurrenceInput,
 } from '@/server/text-occurrences';
 import { emitProgress } from './progress';
+import { pace } from '@/ai/throttle';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 
 interface Args {
@@ -183,6 +184,9 @@ async function main() {
       const msg = e instanceof Error ? e.message : String(e);
       process.stdout.write(`\n✗ ${row.filename}: ${msg}\n`);
     }
+
+    // Duty-cycle pause (no-op unless throttled), re-read live per item.
+    await pace(Date.now() - tStart);
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
