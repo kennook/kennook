@@ -24,6 +24,8 @@ export interface BrowseEntry {
   mediaKind?: 'photo' | 'video' | null;
   /** File: is it in the library? Dir: does it contain ≥1 indexed item? */
   indexed: boolean;
+  /** Indexed files: the media_items uuid, for preview / open-in-app links. */
+  uuid?: string;
   /** Dirs only: how many indexed items live under this subtree. */
   indexedCount?: number;
   /** This path (or an ancestor) is on the ignore list. */
@@ -95,15 +97,15 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
   // child so subdir counts + file-indexed flags come from a single scan.
   const [lo, hi] = subtreeRange(cleanDir);
   const indexedRows = sqlite
-    .prepare(`SELECT path FROM media_items WHERE storage_location_id = ? AND path >= ? AND path < ? AND deleted_at IS NULL`)
-    .all(storageId, lo, hi) as Array<{ path: string }>;
+    .prepare(`SELECT path, uuid FROM media_items WHERE storage_location_id = ? AND path >= ? AND path < ? AND deleted_at IS NULL`)
+    .all(storageId, lo, hi) as Array<{ path: string; uuid: string }>;
   const prefixLen = cleanDir === '' ? 0 : cleanDir.length + 1;
-  const dirCounts = new Map<string, number>(); // immediate child dir → indexed count
-  const indexedFiles = new Set<string>();       // exact indexed file paths (this level)
+  const dirCounts = new Map<string, number>();   // immediate child dir → indexed count
+  const indexedFiles = new Map<string, string>(); // exact indexed file path → uuid
   for (const r of indexedRows) {
     const rest = r.path.slice(prefixLen);
     const slash = rest.indexOf('/');
-    if (slash === -1) indexedFiles.add(r.path);          // a file directly here
+    if (slash === -1) indexedFiles.set(r.path, r.uuid);  // a file directly here
     else dirCounts.set(rest.slice(0, slash), (dirCounts.get(rest.slice(0, slash)) ?? 0) + 1);
   }
 
@@ -121,6 +123,7 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
         name, path: relPath, kind: 'file', sizeBytes,
         mediaKind: mediaKindFor(name),
         indexed: indexedFiles.has(relPath),
+        uuid: indexedFiles.get(relPath),
         ignored: isIgnored(relPath, ignored),
       });
     }

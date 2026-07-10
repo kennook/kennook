@@ -2,12 +2,14 @@
 
 /**
  * Full-page file manager for one storage. Lazily browses the real filesystem
- * (each folder fetched on expand), shows indexed / ignored status, and lets you
- * multi-select files/folders to Ignore, Remove from library, or Delete from
- * disk. Folder selection implies its whole subtree (the backend resolves it).
+ * (each folder fetched on expand), shows indexed / ignored status + a preview
+ * for indexed media, and lets you multi-select files/folders to Ignore, Remove
+ * from library, or Delete from disk. Folder selection implies its whole subtree
+ * (the backend resolves it). A pinned header carries the filter + action bar so
+ * you never have to scroll up to act.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc-client';
 import type { BrowseEntry } from '@/server/storage-browse';
@@ -20,15 +22,33 @@ function formatBytes(n: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
 }
 
+/** name → does it pass the current filter. */
+type Matcher = (name: string) => boolean;
+
 export function StorageBrowser({ storageId }: { storageId: number }) {
   const utils = trpc.useUtils();
+  const lib = trpc.library.current.useQuery();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showHidden, setShowHidden] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [useRegex, setUseRegex] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [preview, setPreview] = useState<{ uuid: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const root = trpc.storage.browse.useQuery({ storageId, dir: '' });
+
+  const { matcher, regexError } = useMemo<{ matcher: Matcher; regexError: boolean }>(() => {
+    const q = filter.trim();
+    if (!q) return { matcher: () => true, regexError: false };
+    if (useRegex) {
+      try { const re = new RegExp(q, 'i'); return { matcher: (n) => re.test(n), regexError: false }; }
+      catch { return { matcher: () => true, regexError: true }; }
+    }
+    const lc = q.toLowerCase();
+    return { matcher: (n) => n.toLowerCase().includes(lc), regexError: false };
+  }, [filter, useRegex]);
 
   const afterAction = () => {
     void utils.storage.browse.invalidate();
@@ -37,7 +57,6 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
     setError(null);
   };
   const onErr = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
-
   const ignore = trpc.storage.ignore.useMutation({ onSuccess: afterAction, onError: onErr });
   const unignore = trpc.storage.unignore.useMutation({ onSuccess: afterAction, onError: onErr });
   const remove = trpc.storage.removeFromLibrary.useMutation({ onSuccess: afterAction, onError: onErr });
@@ -47,13 +66,10 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
 
   const paths = [...selected];
   const busy = ignore.isPending || unignore.isPending || remove.isPending || del.isPending;
+  const toggleSelect = (p: string) => setSelected((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
+  const toggleExpand = (p: string) => setExpanded((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
 
-  const toggleSelect = (p: string) => setSelected((s) => {
-    const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n;
-  });
-  const toggleExpand = (p: string) => setExpanded((s) => {
-    const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n;
-  });
+  const btn = 'px-2.5 py-1 text-xs rounded ring-1 disabled:opacity-40';
 
   return (
     <div>
@@ -61,140 +77,129 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
         <Link href="/admin/storage" className="text-xs text-zinc-500 hover:text-zinc-300">← Storage</Link>
       </div>
       <h1 className="text-2xl font-semibold text-zinc-100 mb-1">Browse files</h1>
-      <p className="text-sm text-zinc-400 mb-4 font-mono truncate">{root.data?.root ?? ''}</p>
+      <p className="text-sm text-zinc-500 mb-4 font-mono truncate">{root.data?.root ?? ''}</p>
 
-      <div className="flex items-center justify-between mb-3">
-        <label className="flex items-center gap-2 text-xs text-zinc-400 select-none">
-          <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
-          Show hidden (dot-files)
-        </label>
+      {/* Pinned header: filter + toggles + action bar. Sticks to the top of the
+          scrolling <main> so actions are always reachable. */}
+      <div className="sticky top-0 z-20 -mx-8 px-8 py-3 bg-zinc-950/95 backdrop-blur border-b border-zinc-900 space-y-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={useRegex ? 'Filter by regex…' : 'Filter by name…'}
+            className={`flex-1 min-w-[12rem] bg-zinc-950 border rounded px-2.5 py-1.5 text-sm outline-none
+                        ${regexError ? 'border-red-800' : 'border-zinc-800 focus:border-zinc-600'}`}
+          />
+          <label className="flex items-center gap-1.5 text-xs text-zinc-400 select-none">
+            <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} /> regex
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-zinc-400 select-none">
+            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> hidden
+          </label>
+          {selected.size > 0 && (
+            <button onClick={() => setSelected(new Set())} className="text-xs text-zinc-500 hover:text-zinc-300">clear ({selected.size})</button>
+          )}
+        </div>
+
         {selected.size > 0 && (
-          <button onClick={() => setSelected(new Set())} className="text-xs text-zinc-500 hover:text-zinc-300">
-            clear selection ({selected.size})
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-400 mr-1">{selected.size} selected:</span>
+            <button disabled={busy} onClick={() => ignore.mutate({ storageId, paths })} className={`${btn} ring-amber-900/50 text-amber-200 hover:bg-amber-950/40`}>Ignore</button>
+            <button disabled={busy} onClick={() => unignore.mutate({ storageId, paths })} className={`${btn} ring-zinc-800 text-zinc-300 hover:bg-zinc-900`}>Un-ignore</button>
+            <button disabled={busy} onClick={() => remove.mutate({ storageId, paths })} className={`${btn} ring-zinc-800 text-zinc-300 hover:bg-zinc-900`}>Remove from library</button>
+            <button disabled={busy} onClick={() => setConfirmDelete(true)} className={`${btn} ring-red-900/60 text-red-300 hover:bg-red-950/40`}>Delete from disk…</button>
+          </div>
         )}
       </div>
 
-      {error && (
-        <div className="text-[11px] text-red-300 bg-red-950/30 ring-1 ring-red-900/40 rounded px-3 py-2 mb-3">{error}</div>
-      )}
+      {error && <div className="text-[11px] text-red-300 bg-red-950/30 ring-1 ring-red-900/40 rounded px-3 py-2 my-3">{error}</div>}
 
-      {/* Action bar */}
-      {selected.size > 0 && (
-        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-zinc-950/90 backdrop-blur ring-1 ring-zinc-800 rounded-lg px-3 py-2 mb-3">
-          <span className="text-xs text-zinc-400 mr-1">{selected.size} selected:</span>
-          <button disabled={busy} onClick={() => ignore.mutate({ storageId, paths })}
-            className="px-2.5 py-1 text-xs rounded ring-1 ring-amber-900/50 text-amber-200 hover:bg-amber-950/40 disabled:opacity-40">
-            Ignore
-          </button>
-          <button disabled={busy} onClick={() => unignore.mutate({ storageId, paths })}
-            className="px-2.5 py-1 text-xs rounded ring-1 ring-zinc-800 text-zinc-300 hover:bg-zinc-900 disabled:opacity-40">
-            Un-ignore
-          </button>
-          <button disabled={busy} onClick={() => remove.mutate({ storageId, paths })}
-            className="px-2.5 py-1 text-xs rounded ring-1 ring-zinc-800 text-zinc-300 hover:bg-zinc-900 disabled:opacity-40">
-            Remove from library
-          </button>
-          <button disabled={busy} onClick={() => setConfirmDelete(true)}
-            className="px-2.5 py-1 text-xs rounded ring-1 ring-red-900/60 text-red-300 hover:bg-red-950/40 disabled:opacity-40">
-            Delete from disk…
-          </button>
-        </div>
-      )}
-
-      {/* Tree */}
-      <div className="ring-1 ring-zinc-800 rounded-lg bg-zinc-950/40 py-1 min-h-[8rem]">
+      <div className="ring-1 ring-zinc-800 rounded-lg bg-zinc-950/40 py-1 min-h-[8rem] mt-3">
         {root.isLoading && <div className="px-3 py-2 text-sm text-zinc-500">Loading…</div>}
         {root.data && !root.data.exists && <div className="px-3 py-2 text-sm text-zinc-500">Storage folder not available.</div>}
         {root.data?.entries.map((e) => (
           <TreeNode key={e.path} storageId={storageId} entry={e} depth={0}
-            expanded={expanded} toggleExpand={toggleExpand}
-            selected={selected} toggleSelect={toggleSelect} showHidden={showHidden} />
+            expanded={expanded} toggleExpand={toggleExpand} selected={selected} toggleSelect={toggleSelect}
+            showHidden={showHidden} matcher={matcher} onPreview={setPreview} />
         ))}
       </div>
 
       {confirmDelete && (
-        <DeleteConfirm
-          count={selected.size}
-          pending={del.isPending}
-          onCancel={() => setConfirmDelete(false)}
-          onConfirm={() => del.mutate({ storageId, paths })}
-        />
+        <DeleteConfirm count={selected.size} pending={del.isPending}
+          onCancel={() => setConfirmDelete(false)} onConfirm={() => del.mutate({ storageId, paths })} />
+      )}
+      {preview && lib.data && (
+        <PreviewModal uuid={preview.uuid} name={preview.name} librarySlug={lib.data.slug} onClose={() => setPreview(null)} />
       )}
     </div>
   );
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" className={`transition-transform ${open ? 'rotate-90' : ''} text-zinc-500`}>
+      <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function TreeNode({
-  storageId, entry, depth, expanded, toggleExpand, selected, toggleSelect, showHidden,
+  storageId, entry, depth, expanded, toggleExpand, selected, toggleSelect, showHidden, matcher, onPreview,
 }: {
-  storageId: number;
-  entry: BrowseEntry;
-  depth: number;
-  expanded: Set<string>;
-  toggleExpand: (p: string) => void;
-  selected: Set<string>;
-  toggleSelect: (p: string) => void;
-  showHidden: boolean;
+  storageId: number; entry: BrowseEntry; depth: number;
+  expanded: Set<string>; toggleExpand: (p: string) => void;
+  selected: Set<string>; toggleSelect: (p: string) => void;
+  showHidden: boolean; matcher: Matcher; onPreview: (p: { uuid: string; name: string }) => void;
 }) {
   const isDir = entry.kind === 'dir';
   const isOpen = expanded.has(entry.path);
-  const children = trpc.storage.browse.useQuery(
-    { storageId, dir: entry.path },
-    { enabled: isDir && isOpen },
-  );
+  const children = trpc.storage.browse.useQuery({ storageId, dir: entry.path }, { enabled: isDir && isOpen });
   const isSelected = selected.has(entry.path);
   const hidden = entry.name.startsWith('.');
   if (hidden && !showHidden) return null;
+  // Filter hides non-matching files and COLLAPSED non-matching folders; an
+  // expanded folder stays visible so you can still drill in and filter its
+  // children (otherwise filtering would hide the folder you opened).
+  if (!matcher(entry.name) && !(isDir && isOpen)) return null;
+  const canPreview = !isDir && entry.indexed && entry.uuid && (entry.mediaKind === 'photo' || entry.mediaKind === 'video');
 
   return (
     <>
       <div
-        className={`flex items-center gap-2 pr-3 py-1 text-sm hover:bg-zinc-900/50
-                    ${isSelected ? 'bg-emerald-950/30' : ''}`}
+        className={`group flex items-center gap-2 pr-3 py-1 text-sm hover:bg-zinc-900/50 ${isSelected ? 'bg-emerald-950/30' : ''}`}
         style={{ paddingLeft: `${depth * 18 + 8}px` }}
       >
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={() => toggleSelect(entry.path)}
-          className="shrink-0"
-        />
+        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(entry.path)} className="shrink-0" />
         {isDir ? (
-          <button onClick={() => toggleExpand(entry.path)} className="w-4 shrink-0 text-zinc-500 hover:text-zinc-300">
-            {isOpen ? '▾' : '▸'}
+          <button onClick={() => toggleExpand(entry.path)} className="w-4 h-4 shrink-0 flex items-center justify-center hover:bg-zinc-800 rounded">
+            <Chevron open={isOpen} />
           </button>
         ) : (
           <span className="w-4 shrink-0" />
         )}
-        <span className="shrink-0 text-zinc-500">
-          {isDir ? '📁' : entry.mediaKind === 'photo' ? '🖼' : entry.mediaKind === 'video' ? '🎬' : '📄'}
-        </span>
-        <span className={`truncate ${entry.ignored ? 'text-zinc-600 line-through' : hidden ? 'text-zinc-600' : 'text-zinc-200'}`}>
-          {entry.name}
-        </span>
+        <span className="shrink-0">{isDir ? (isOpen ? '📂' : '📁') : entry.mediaKind === 'photo' ? '🖼' : entry.mediaKind === 'video' ? '🎬' : '📄'}</span>
+        <span className={`truncate ${entry.ignored ? 'text-zinc-600 line-through' : hidden ? 'text-zinc-600' : 'text-zinc-200'}`}>{entry.name}</span>
+        {canPreview && (
+          <button
+            onClick={() => onPreview({ uuid: entry.uuid!, name: entry.name })}
+            title="Preview / info"
+            className="shrink-0 opacity-0 group-hover:opacity-100 w-4 h-4 flex items-center justify-center text-[11px] rounded-full ring-1 ring-zinc-700 text-zinc-400 hover:text-zinc-100 hover:ring-zinc-500"
+          >i</button>
+        )}
         <span className="ml-auto flex items-center gap-2 shrink-0 text-[11px] tabular-nums">
-          {entry.ignored && <span className="text-amber-500/80 no-underline">ignored</span>}
-          {isDir && (entry.indexedCount ?? 0) > 0 && (
-            <span className="text-emerald-500/70">{entry.indexedCount!.toLocaleString()} indexed</span>
-          )}
-          {!isDir && entry.mediaKind && (
-            <span className={entry.indexed ? 'text-emerald-500/70' : 'text-zinc-600'}>
-              {entry.indexed ? 'indexed' : 'not indexed'}
-            </span>
-          )}
+          {entry.ignored && <span className="text-amber-500/80">ignored</span>}
+          {isDir && (entry.indexedCount ?? 0) > 0 && <span className="text-emerald-500/70">{entry.indexedCount!.toLocaleString()} indexed</span>}
+          {!isDir && entry.mediaKind && <span className={entry.indexed ? 'text-emerald-500/70' : 'text-zinc-600'}>{entry.indexed ? 'indexed' : 'not indexed'}</span>}
           {!isDir && <span className="text-zinc-600 w-14 text-right">{formatBytes(entry.sizeBytes ?? 0)}</span>}
         </span>
       </div>
       {isDir && isOpen && (
         <>
-          {children.isLoading && (
-            <div className="text-xs text-zinc-600 py-1" style={{ paddingLeft: `${(depth + 1) * 18 + 30}px` }}>loading…</div>
-          )}
+          {children.isLoading && <div className="text-xs text-zinc-600 py-1" style={{ paddingLeft: `${(depth + 1) * 18 + 30}px` }}>loading…</div>}
           {children.data?.entries.map((c) => (
             <TreeNode key={c.path} storageId={storageId} entry={c} depth={depth + 1}
-              expanded={expanded} toggleExpand={toggleExpand}
-              selected={selected} toggleSelect={toggleSelect} showHidden={showHidden} />
+              expanded={expanded} toggleExpand={toggleExpand} selected={selected} toggleSelect={toggleSelect}
+              showHidden={showHidden} matcher={matcher} onPreview={onPreview} />
           ))}
           {children.data && children.data.entries.length === 0 && (
             <div className="text-xs text-zinc-600 py-1" style={{ paddingLeft: `${(depth + 1) * 18 + 30}px` }}>empty</div>
@@ -205,9 +210,27 @@ function TreeNode({
   );
 }
 
-function DeleteConfirm({
-  count, pending, onCancel, onConfirm,
-}: { count: number; pending: boolean; onCancel: () => void; onConfirm: () => void }) {
+function PreviewModal({ uuid, name, librarySlug, onClose }: { uuid: string; name: string; librarySlug: string; onClose: () => void }) {
+  const thumb = `/api/thumbnails/${encodeURIComponent(uuid)}?lib=${encodeURIComponent(librarySlug)}`;
+  const appHref = `/?lib=${encodeURIComponent(librarySlug)}&q=${encodeURIComponent(uuid)}&item=${encodeURIComponent(uuid)}`;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="max-w-lg w-full bg-zinc-900 ring-1 ring-zinc-800 rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={thumb} alt={name} className="w-full max-h-[70vh] object-contain bg-black" />
+        <div className="p-3 flex items-center justify-between gap-3">
+          <span className="text-sm text-zinc-300 truncate font-mono">{name}</span>
+          <div className="flex items-center gap-3 shrink-0">
+            <a href={appHref} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-400 hover:text-emerald-300">Open in app ↗</a>
+            <button onClick={onClose} className="text-xs text-zinc-500 hover:text-zinc-300">close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteConfirm({ count, pending, onCancel, onConfirm }: { count: number; pending: boolean; onCancel: () => void; onConfirm: () => void }) {
   const [text, setText] = useState('');
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onCancel}>
@@ -215,20 +238,15 @@ function DeleteConfirm({
         <h2 className="text-lg font-semibold text-red-200 mb-2">Delete from disk — permanent</h2>
         <p className="text-sm text-zinc-400 mb-3">
           This removes {count} selected item{count === 1 ? '' : 's'} from the library <em>and permanently deletes the
-          files/folders on disk</em> (folders are removed recursively, including any non-media files inside). This cannot be undone.
+          files/folders on disk</em> (folders removed recursively, including non-media files). This cannot be undone.
         </p>
         <p className="text-xs text-zinc-500 mb-1">Type <span className="font-mono text-zinc-300">DELETE</span> to confirm:</p>
-        <input
-          autoFocus value={text} onChange={(e) => setText(e.target.value)}
-          className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm mb-4 focus:border-red-800 outline-none"
-        />
+        <input autoFocus value={text} onChange={(e) => setText(e.target.value)}
+          className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm mb-4 focus:border-red-800 outline-none" />
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200">Cancel</button>
-          <button
-            disabled={text !== 'DELETE' || pending}
-            onClick={onConfirm}
-            className="px-3 py-1.5 text-sm rounded bg-red-800 hover:bg-red-700 text-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
+          <button disabled={text !== 'DELETE' || pending} onClick={onConfirm}
+            className="px-3 py-1.5 text-sm rounded bg-red-800 hover:bg-red-700 text-red-50 disabled:opacity-40 disabled:cursor-not-allowed">
             {pending ? 'Deleting…' : 'Delete permanently'}
           </button>
         </div>
