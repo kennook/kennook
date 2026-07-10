@@ -27,6 +27,8 @@ export interface BrowseEntry {
   /** File: seen by the indexer but not stored — i.e. a content-duplicate of an
    *  already-indexed file (skipped on purpose, so "not indexed" would mislead). */
   duplicate?: boolean;
+  /** For a duplicate: the stored original it's byte-identical to (same storage). */
+  dupOf?: { uuid: string; path: string };
   /** Indexed files: the media_items uuid, for preview / open-in-app links. */
   uuid?: string;
   /** Dirs only: how many indexed items live under this subtree. */
@@ -113,14 +115,15 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
   }
 
   // Files the indexer has SEEN (indexed_files) but that aren't stored above are
-  // content-duplicates — track them so the UI can label them "duplicate".
+  // content-duplicates — track path→sha so the UI can label them "duplicate"
+  // and link to the stored original (same content hash).
   const seenRows = sqlite
-    .prepare(`SELECT path FROM indexed_files WHERE storage_location_id = ? AND path >= ? AND path < ?`)
-    .all(storageId, lo, hi) as Array<{ path: string }>;
-  const seenFiles = new Set<string>();
+    .prepare(`SELECT path, sha256 FROM indexed_files WHERE storage_location_id = ? AND path >= ? AND path < ?`)
+    .all(storageId, lo, hi) as Array<{ path: string; sha256: string }>;
+  const seenSha = new Map<string, string>(); // direct-file path → sha256
   for (const r of seenRows) {
     const rest = r.path.slice(prefixLen);
-    if (rest.indexOf('/') === -1) seenFiles.add(r.path); // a file directly here
+    if (rest.indexOf('/') === -1) seenSha.set(r.path, r.sha256);
   }
 
   const entries: BrowseEntry[] = [];
@@ -138,11 +141,24 @@ export function browseStorage(sqlite: Sqlite, storageId: number, relDir: string)
         name, path: relPath, kind: 'file', sizeBytes,
         mediaKind: mediaKindFor(name),
         indexed: isIndexed,
-        duplicate: !isIndexed && seenFiles.has(relPath),
+        duplicate: !isIndexed && seenSha.has(relPath),
         uuid: indexedFiles.get(relPath),
         ignored: isIgnored(relPath, ignored),
       });
     }
+  }
+
+  // Resolve each duplicate's stored original (byte-identical, same storage) in
+  // one batched query, so the UI can link to it.
+  const dupEntries = entries.filter((e) => e.duplicate);
+  if (dupEntries.length > 0) {
+    const shas = [...new Set(dupEntries.map((e) => seenSha.get(e.path)!))];
+    const placeholders = shas.map(() => '?').join(',');
+    const origs = sqlite
+      .prepare(`SELECT uuid, path, sha256 FROM media_items WHERE storage_location_id = ? AND sha256 IN (${placeholders}) AND deleted_at IS NULL`)
+      .all(storageId, ...shas) as Array<{ uuid: string; path: string; sha256: string }>;
+    const bySha = new Map(origs.map((o) => [o.sha256, { uuid: o.uuid, path: o.path }]));
+    for (const e of dupEntries) { const o = bySha.get(seenSha.get(e.path)!); if (o) e.dupOf = o; }
   }
 
   entries.sort((a, b) =>

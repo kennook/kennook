@@ -25,15 +25,17 @@ function formatBytes(n: number): string {
 /** name → does it pass the current filter. */
 type Matcher = (name: string) => boolean;
 
-interface Vis { showHidden: boolean; showIgnored: boolean; showIncompatible: boolean }
+interface Vis { showHidden: boolean; showIgnored: boolean; showIncompatible: boolean; showDuplicates: boolean }
 
-/** Does an entry pass the visibility toggles? Hidden (dot), ignored, and
- *  incompatible (a file KenNook can't view — no media kind) are all off by
- *  default so the user sees a clean list of usable, un-ignored media. */
+/** Does an entry pass the visibility toggles? Hidden (dot), ignored,
+ *  incompatible (a file KenNook can't view), and duplicate (byte-identical
+ *  copy of a stored file) are all off by default so the user sees a clean list
+ *  of usable, un-ignored, non-redundant media. */
 function passesVisibility(e: BrowseEntry, v: Vis): boolean {
   if (e.name.startsWith('.') && !v.showHidden) return false;
   if (e.ignored && !v.showIgnored) return false;
   if (e.kind === 'file' && !e.mediaKind && !v.showIncompatible) return false;
+  if (e.kind === 'file' && e.duplicate && !v.showDuplicates) return false;
   return true;
 }
 
@@ -45,8 +47,9 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
   const [showHidden, setShowHidden] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
   const [showIncompatible, setShowIncompatible] = useState(false);
+  const [showDuplicates, setShowDuplicates] = useState(false);
   const [visMenuOpen, setVisMenuOpen] = useState(false);
-  const vis: Vis = { showHidden, showIgnored, showIncompatible };
+  const vis: Vis = { showHidden, showIgnored, showIncompatible, showDuplicates };
   const [filter, setFilter] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -162,6 +165,7 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
                   <VisToggle label="Hidden files (dot-files)" checked={showHidden} onChange={setShowHidden} />
                   <VisToggle label="Ignored" checked={showIgnored} onChange={setShowIgnored} />
                   <VisToggle label="Incompatible (unviewable)" checked={showIncompatible} onChange={setShowIncompatible} />
+                  <VisToggle label="Duplicates" checked={showDuplicates} onChange={setShowDuplicates} />
                 </div>
               </>
             )}
@@ -278,12 +282,21 @@ function TreeNode({
           {entry.ignored && <span className="text-amber-500/80">ignored</span>}
           {isDir && (entry.indexedCount ?? 0) > 0 && <span className="text-emerald-500/70">{entry.indexedCount!.toLocaleString()} indexed</span>}
           {!isDir && entry.mediaKind && (
-            <span
-              className={entry.indexed ? 'text-emerald-500/70' : entry.duplicate ? 'text-sky-500/70' : 'text-zinc-600'}
-              title={entry.duplicate ? 'Byte-identical duplicate of an already-indexed file — skipped on purpose' : undefined}
-            >
-              {entry.indexed ? 'indexed' : entry.duplicate ? 'duplicate' : 'not indexed'}
-            </span>
+            entry.indexed ? (
+              <span className="text-emerald-500/70">indexed</span>
+            ) : entry.duplicate ? (
+              entry.dupOf ? (
+                <button
+                  onClick={() => onPreview({ uuid: entry.dupOf!.uuid, name: entry.dupOf!.path })}
+                  title={`Duplicate of ${entry.dupOf.path} — click to view the original`}
+                  className="text-sky-500/70 hover:text-sky-300 underline decoration-dotted underline-offset-2"
+                >duplicate</button>
+              ) : (
+                <span className="text-sky-500/70" title="Byte-identical duplicate of an already-indexed file">duplicate</span>
+              )
+            ) : (
+              <span className="text-zinc-600">not indexed</span>
+            )
           )}
           {!isDir && <span className="text-zinc-600 w-14 text-right">{formatBytes(entry.sizeBytes ?? 0)}</span>}
         </span>
