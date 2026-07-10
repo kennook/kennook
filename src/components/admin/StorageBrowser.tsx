@@ -25,12 +25,28 @@ function formatBytes(n: number): string {
 /** name → does it pass the current filter. */
 type Matcher = (name: string) => boolean;
 
+interface Vis { showHidden: boolean; showIgnored: boolean; showIncompatible: boolean }
+
+/** Does an entry pass the visibility toggles? Hidden (dot), ignored, and
+ *  incompatible (a file KenNook can't view — no media kind) are all off by
+ *  default so the user sees a clean list of usable, un-ignored media. */
+function passesVisibility(e: BrowseEntry, v: Vis): boolean {
+  if (e.name.startsWith('.') && !v.showHidden) return false;
+  if (e.ignored && !v.showIgnored) return false;
+  if (e.kind === 'file' && !e.mediaKind && !v.showIncompatible) return false;
+  return true;
+}
+
 export function StorageBrowser({ storageId }: { storageId: number }) {
   const utils = trpc.useUtils();
   const lib = trpc.library.current.useQuery();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showHidden, setShowHidden] = useState(false);
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [showIncompatible, setShowIncompatible] = useState(false);
+  const [visMenuOpen, setVisMenuOpen] = useState(false);
+  const vis: Vis = { showHidden, showIgnored, showIncompatible };
   const [filter, setFilter] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -77,8 +93,7 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
       const data = utils.storage.browse.getData({ storageId, dir });
       if (!data) return;
       for (const e of data.entries) {
-        const hidden = e.name.startsWith('.');
-        if (hidden && !showHidden) continue;
+        if (!passesVisibility(e, vis)) continue;
         const isDir = e.kind === 'dir';
         const isOpen = expanded.has(e.path);
         if (!matcher(e.name) && !(isDir && isOpen)) continue;
@@ -134,9 +149,23 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
           <label className="flex items-center gap-1.5 text-xs text-zinc-400 select-none">
             <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} /> regex
           </label>
-          <label className="flex items-center gap-1.5 text-xs text-zinc-400 select-none">
-            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> hidden
-          </label>
+          <div className="relative">
+            <button onClick={() => setVisMenuOpen((o) => !o)}
+              className="text-xs text-zinc-400 hover:text-zinc-200 ring-1 ring-zinc-800 hover:ring-zinc-700 rounded px-2 py-1.5">
+              Show ▾
+            </button>
+            {visMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setVisMenuOpen(false)} />
+                <div className="absolute left-0 mt-1 z-40 w-52 bg-zinc-900 ring-1 ring-zinc-800 rounded-lg p-2 space-y-0.5 shadow-xl">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-600 px-1.5 pb-1">Also show</div>
+                  <VisToggle label="Hidden files (dot-files)" checked={showHidden} onChange={setShowHidden} />
+                  <VisToggle label="Ignored" checked={showIgnored} onChange={setShowIgnored} />
+                  <VisToggle label="Incompatible (unviewable)" checked={showIncompatible} onChange={setShowIncompatible} />
+                </div>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-2 text-xs">
             <button onClick={selectAllVisible} className="text-zinc-400 hover:text-zinc-200">Select all</button>
             <span className="text-zinc-700">·</span>
@@ -164,7 +193,7 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
         {root.data?.entries.map((e) => (
           <TreeNode key={e.path} storageId={storageId} entry={e} depth={0}
             expanded={expanded} toggleExpand={toggleExpand} selected={selected} onSelect={onSelect}
-            showHidden={showHidden} matcher={matcher} onPreview={setPreview} />
+            vis={vis} matcher={matcher} onPreview={setPreview} />
         ))}
       </div>
 
@@ -179,6 +208,15 @@ export function StorageBrowser({ storageId }: { storageId: number }) {
   );
 }
 
+function VisToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-xs text-zinc-300 hover:bg-zinc-800/60 rounded px-1.5 py-1 cursor-pointer select-none">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" className={`transition-transform ${open ? 'rotate-90' : ''} text-zinc-500`}>
@@ -188,19 +226,19 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 function TreeNode({
-  storageId, entry, depth, expanded, toggleExpand, selected, onSelect, showHidden, matcher, onPreview,
+  storageId, entry, depth, expanded, toggleExpand, selected, onSelect, vis, matcher, onPreview,
 }: {
   storageId: number; entry: BrowseEntry; depth: number;
   expanded: Set<string>; toggleExpand: (p: string) => void;
   selected: Set<string>; onSelect: (p: string, shift: boolean) => void;
-  showHidden: boolean; matcher: Matcher; onPreview: (p: { uuid: string; name: string }) => void;
+  vis: Vis; matcher: Matcher; onPreview: (p: { uuid: string; name: string }) => void;
 }) {
   const isDir = entry.kind === 'dir';
   const isOpen = expanded.has(entry.path);
   const children = trpc.storage.browse.useQuery({ storageId, dir: entry.path }, { enabled: isDir && isOpen });
   const isSelected = selected.has(entry.path);
   const hidden = entry.name.startsWith('.');
-  if (hidden && !showHidden) return null;
+  if (!passesVisibility(entry, vis)) return null;
   // Filter hides non-matching files and COLLAPSED non-matching folders; an
   // expanded folder stays visible so you can still drill in and filter its
   // children (otherwise filtering would hide the folder you opened).
@@ -249,7 +287,7 @@ function TreeNode({
           {children.data?.entries.map((c) => (
             <TreeNode key={c.path} storageId={storageId} entry={c} depth={depth + 1}
               expanded={expanded} toggleExpand={toggleExpand} selected={selected} onSelect={onSelect}
-              showHidden={showHidden} matcher={matcher} onPreview={onPreview} />
+              vis={vis} matcher={matcher} onPreview={onPreview} />
           ))}
           {children.data && children.data.entries.length === 0 && (
             <div className="text-xs text-zinc-600 py-1" style={{ paddingLeft: `${(depth + 1) * 18 + 30}px` }}>empty</div>
