@@ -60,6 +60,30 @@ export function getScreensaverState(userId: number): boolean {
   return row?.value === '1';
 }
 
+// Solo-audio marker: the LAST window to unmute, as "<serverMs>:<sessionId>".
+// Persisted (like the screensaver) so cross-process devices — which never see
+// the in-memory SSE broadcast — converge via the /api/sync/state poll: a poller
+// mutes when it reads a marker whose session isn't its own.
+const AUDIO_SOLO_KEY = 'audio.solo';
+
+export function setAudioSolo(userId: number, token: string): void {
+  const db = getUserSqlite();
+  db.prepare(`
+    INSERT INTO user_settings (user_id, key, value, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (user_id, key) DO UPDATE
+      SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(userId, AUDIO_SOLO_KEY, token, Date.now());
+}
+
+export function getAudioSolo(userId: number): string | null {
+  const db = getUserSqlite();
+  const row = db.prepare(
+    'SELECT value FROM user_settings WHERE user_id = ? AND key = ?',
+  ).get(userId, AUDIO_SOLO_KEY) as { value: string | null } | undefined;
+  return row?.value ?? null;
+}
+
 export function addSubscriber(s: Subscriber): void {
   subscribers.add(s);
 }

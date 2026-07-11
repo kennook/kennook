@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { publishToUser, setScreensaverState } from '@/server/sync-broker';
+import { publishToUser, setScreensaverState, setAudioSolo } from '@/server/sync-broker';
 import { getSession } from '@/server/auth';
 
 export const runtime = 'nodejs';
@@ -26,9 +26,14 @@ export async function POST(req: NextRequest) {
   // own windows/devices, never other accounts. Screensaver additionally
   // persists under the user's id so a (re)connecting tab syncs to their truth.
   const userId = getSession(req.headers.get('cookie')).userId;
-  const evt = (payload as { event?: { type?: string; open?: boolean } })?.event;
+  const env = payload as { sessionId?: string; event?: { type?: string; open?: boolean } };
+  const evt = env?.event;
   if (evt?.type === 'screensaver' && typeof evt.open === 'boolean') {
     setScreensaverState(userId, evt.open);
+  } else if (evt?.type === 'audio.unmuted') {
+    // Persist the solo owner (origin session) so cross-process devices mute via
+    // the poll — the in-memory publishToUser below only reaches this process.
+    setAudioSolo(userId, `${Date.now()}:${env.sessionId ?? ''}`);
   }
   publishToUser(userId, payload);
   return new Response(null, { status: 204 });
