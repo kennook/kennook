@@ -34,24 +34,38 @@ async function yt<T = Record<string, unknown>>(endpoint: string, params: Record<
 }
 
 export interface ParsedYouTube {
-  kind: 'channel' | 'playlist';
-  /** channelId (UC…), a handle (@name), or a playlistId, depending on kind. */
+  kind: 'channel' | 'playlist' | 'video';
+  /** channelId (UC…), a handle (@name), a playlistId, or a videoId. */
   ref: string;
 }
 
-/** Parse a YouTube channel/playlist URL. Returns null if it isn't one. */
+/** Parse a YouTube channel / playlist / video URL. Returns null if it isn't
+ *  a recognizable YouTube link. A video resolves to its channel (see
+ *  resolveYouTubeSource). */
 export function parseYouTubeUrl(raw: string): ParsedYouTube | null {
   let u: URL;
   try { u = new URL(raw.trim()); } catch { return null; }
   const host = u.hostname.replace(/^www\.|^m\./, '');
   if (host !== 'youtube.com' && host !== 'youtu.be') return null;
 
+  // A playlist link (list=…) wins regardless of host / a video also being present.
   const list = u.searchParams.get('list');
   if (list) return { kind: 'playlist', ref: list };
+
+  // Short video link: youtu.be/<id>
+  if (host === 'youtu.be') {
+    const id = u.pathname.slice(1).split('/')[0];
+    return id ? { kind: 'video', ref: id } : null;
+  }
+
+  // youtube.com/watch?v=<id>
+  const v = u.searchParams.get('v');
+  if (v && u.pathname === '/watch') return { kind: 'video', ref: v };
 
   const p = u.pathname;
   let m: RegExpMatchArray | null;
   if ((m = p.match(/^\/channel\/(UC[\w-]+)/))) return { kind: 'channel', ref: m[1] };
+  if ((m = p.match(/^\/shorts\/([\w-]+)/))) return { kind: 'video', ref: m[1] };
   if ((m = p.match(/^\/@([\w.-]+)/))) return { kind: 'channel', ref: `@${m[1]}` };
   return null;
 }
@@ -70,6 +84,14 @@ async function fetchChannelMeta(ref: string): Promise<ChannelMeta> {
   return { channelId: item.id, title: item.snippet?.title ?? ref, uploadsPlaylistId: uploads };
 }
 
+/** Resolve a video to the id of the channel that published it. */
+async function fetchVideoChannelId(videoId: string): Promise<string> {
+  const data = await yt<{ items?: Array<{ snippet?: { channelId?: string } }> }>('videos', { part: 'snippet', id: videoId });
+  const cid = data.items?.[0]?.snippet?.channelId;
+  if (!cid) throw new Error(`YouTube video not found for "${videoId}".`);
+  return cid;
+}
+
 async function fetchPlaylistTitle(playlistId: string): Promise<string> {
   const data = await yt<{ items?: Array<{ snippet?: { title?: string } }> }>('playlists', { part: 'snippet', id: playlistId });
   const t = data.items?.[0]?.snippet?.title;
@@ -84,13 +106,17 @@ export interface ResolvedYouTubeSource {
   name: string;       // channel/playlist title
 }
 
-/** Turn a parsed URL into everything the registry needs to store. */
+/** Turn a parsed URL into everything the registry needs to store. A video link
+ *  resolves to its channel — you follow the source, not the single clip. */
 export async function resolveYouTubeSource(parsed: ParsedYouTube): Promise<ResolvedYouTubeSource> {
   if (parsed.kind === 'playlist') {
     const name = await fetchPlaylistTitle(parsed.ref);
     return { kind: 'playlist', ref: parsed.ref, playlistId: parsed.ref, name };
   }
-  const meta = await fetchChannelMeta(parsed.ref);
+  const channelRef = parsed.kind === 'video'
+    ? await fetchVideoChannelId(parsed.ref)
+    : parsed.ref;
+  const meta = await fetchChannelMeta(channelRef);
   return { kind: 'channel', ref: meta.channelId, playlistId: meta.uploadsPlaylistId, name: meta.title };
 }
 

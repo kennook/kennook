@@ -30,7 +30,7 @@ export const externalSourceRouter = router({
       if (!parsed) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Not a recognized YouTube channel or playlist URL.',
+          message: 'Not a recognized YouTube URL. Paste a channel, playlist, or video link.',
         });
       }
       let resolved;

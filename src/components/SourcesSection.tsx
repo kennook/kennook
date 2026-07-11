@@ -135,9 +135,10 @@ function AddSourceDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
       >
         <h2 className="text-base font-medium text-zinc-100">Add a YouTube source</h2>
         <p className="text-xs text-zinc-500">
-          Paste a channel or playlist URL — e.g.{' '}
-          <span className="text-zinc-400">youtube.com/@channel</span> or{' '}
-          <span className="text-zinc-400">youtube.com/playlist?list=…</span>
+          Paste a channel, playlist, or video link — e.g.{' '}
+          <span className="text-zinc-400">youtube.com/@channel</span>,{' '}
+          <span className="text-zinc-400">…/playlist?list=…</span>, or a{' '}
+          <span className="text-zinc-400">youtu.be/…</span> video (adds its channel).
         </p>
         <input
           autoFocus
