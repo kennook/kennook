@@ -258,6 +258,12 @@ export function MediaViewer({
   const [addBookmarkAtMs, setAddBookmarkAtMs] = useState<number | null>(null);
   // Imperative handle from VideoPlayer — jump to a bookmark / read the position.
   const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number } | null>(null);
+  // Cancelling a bookmark add (Esc / Cancel / after save) closes the info
+  // sidebar too — the add form lives inside it, and it opened for the add.
+  const closeBookmarkAdd = useCallback(() => {
+    setAddBookmarkAtMs(null);
+    setInfoOpen(false);
+  }, []);
   // Close the add form when the item changes.
   useEffect(() => { setAddBookmarkAtMs(null); }, [item?.uuid]);
   // Converge when any client edits this item's bookmarks.
@@ -734,7 +740,9 @@ export function MediaViewer({
   //   maxed           → close the viewer (there's no preview modal to drop to)
   // A second press repeats the same logic at the next level.
   const handleStepBack = useCallback(() => {
-    if (infoOpen) { setInfoOpen(false); return; }
+    // Closing the info sidebar also cancels any in-progress bookmark add (its
+    // form lives in the sidebar).
+    if (infoOpen) { setInfoOpen(false); setAddBookmarkAtMs(null); return; }
     if (slideshow) { onSlideshowExit?.(); return; }
     if (maxed) { setMaxed(false); return; }
     onClose();
@@ -793,6 +801,7 @@ export function MediaViewer({
     // about to auto-focus (otherwise it opens pre-filled with "b").
     e.preventDefault();
     setAddBookmarkAtMs(playerApiRef.current?.currentMs() ?? 0);
+    setInfoOpen(true); // the bookmark add form lives in the info sidebar now
     pulseChrome();
   }, { enabled: videoToolsEnabled });
   useShortcut('viewer.trimStart', () => {
@@ -1109,7 +1118,7 @@ export function MediaViewer({
               // Bookmarks: scrubber ticks always; the add button + panel only
               // in maxed mode (where the panel is rendered).
               bookmarks={bookmarksQuery.data?.bookmarks}
-              onAddBookmark={maxed ? (ms) => { setAddBookmarkAtMs(ms); pulseChrome(); } : undefined}
+              onAddBookmark={maxed ? (ms) => { setAddBookmarkAtMs(ms); setInfoOpen(true); pulseChrome(); } : undefined}
               onApi={(api) => { playerApiRef.current = api; }}
               // Autoplay trim: shaded on the scrubber always; enforced (start/
               // stop) only during the slideshow.
@@ -1192,24 +1201,14 @@ export function MediaViewer({
             </div>
           )}
 
-          {/* Left column for video tools — trim editor + bookmark panel. Video
-              + maxed only; fades with the chrome. */}
+          {/* Left column for video tools — tags. (Bookmarks moved into the
+              info sidebar.) Video + maxed only; fades with the chrome. */}
           {maxed && item.kind === 'video' && (
             <div
               {...chromeHoverHandlers}
               className={`absolute top-16 left-[var(--kn-chrome-pad)] z-30 flex flex-col gap-2 items-start ${chromeFadeClass}`}
             >
               <VideoTags uuid={item.uuid} librarySlug={item.librarySlug} />
-              <VideoBookmarks
-                uuid={item.uuid}
-                librarySlug={item.librarySlug}
-                bookmarks={bookmarksQuery.data?.bookmarks ?? []}
-                defaultShared={bookmarksQuery.data?.defaultShared ?? true}
-                isAdmin={isAdmin}
-                addAtMs={addBookmarkAtMs}
-                onCloseAdd={() => setAddBookmarkAtMs(null)}
-                onSeek={(ms) => playerApiRef.current?.seek(ms)}
-              />
             </div>
           )}
 
@@ -1412,6 +1411,21 @@ export function MediaViewer({
               <SensitiveBadge
                 nsfwScore={item.nsfwScore}
                 violenceScore={item.violenceScore}
+              />
+            )}
+
+            {/* Bookmarks (video) — moved here from the floating overlay. The
+                sidebar auto-opens when a bookmark add is requested. */}
+            {item.kind === 'video' && (
+              <VideoBookmarks
+                uuid={item.uuid}
+                librarySlug={item.librarySlug}
+                bookmarks={bookmarksQuery.data?.bookmarks ?? []}
+                defaultShared={bookmarksQuery.data?.defaultShared ?? true}
+                isAdmin={isAdmin}
+                addAtMs={addBookmarkAtMs}
+                onCloseAdd={closeBookmarkAdd}
+                onSeek={(ms) => playerApiRef.current?.seek(ms)}
               />
             )}
 
