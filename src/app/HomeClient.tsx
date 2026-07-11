@@ -126,6 +126,16 @@ function HomeContent() {
     return next;
   });
 
+  // Enable the sidebar slide transitions only AFTER the first paint, so the
+  // initial localStorage-driven open/closed state snaps into place without an
+  // unwanted animate-on-load. User toggles thereafter slide smoothly.
+  const [sidebarAnimate, setSidebarAnimate] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setSidebarAnimate(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const slideClass = sidebarAnimate ? 'transition-[width,margin] duration-300 ease-in-out' : '';
+
   const selectedKeys = useMemo(
     () => new Set(selection.map((s) => selectionKey(s.librarySlug, s.itemUuid))),
     [selection],
@@ -878,11 +888,19 @@ function HomeContent() {
         </div>
       </header>
 
-      <div className="px-4 py-5 flex gap-6">
+      <div className="px-4 py-5 flex">
+        {/* Collapse by ANIMATING width (not display:none) so the grid is pushed
+            smoothly instead of snapping. The inner wrapper stays a fixed w-56 so
+            its content clips/slides rather than reflowing while the outer shrinks.
+            Quiet-mode fade lives on the inner div so its opacity transition
+            doesn't collide with the width transition here. */}
         <aside
-          className={`${sidebarOpen ? 'hidden md:block' : 'hidden'} w-56 shrink-0 sticky top-20 self-start
-                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] overflow-y-auto pr-2 ${chromeQuietClass}`}
+          className={`shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
+                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
+                     ${sidebarOpen ? 'w-56 mr-6' : 'w-0 mr-0'}`}
         >
+          <div className="kn-sidebar-body" data-open={sidebarOpen}>
+          <div className={`w-56 pr-2 ${chromeQuietClass}`}>
           <PlaylistsSection
             activePlaylistUuid={url.playlist}
             onSelectPlaylist={handlePlaylistSelect}
@@ -920,6 +938,8 @@ function HomeContent() {
               onSensitiveChange={(v) => url.set({ sensitive: v })}
             />
           )}
+          </div>
+          </div>
         </aside>
 
         <div className="flex-1 min-w-0">
@@ -1144,10 +1164,15 @@ function HomeContent() {
         </div>
 
         <aside
-          className={`${rightbarOpen ? 'hidden md:block' : 'hidden'} w-56 shrink-0 sticky top-20 self-start
-                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] overflow-y-auto pl-2 ${chromeQuietClass}`}
+          className={`shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
+                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
+                     ${rightbarOpen ? 'w-56 ml-6' : 'w-0 ml-0'}`}
         >
-          <RightSidebar onOpenHelp={() => setHelpOpen(true)} />
+          <div className="kn-sidebar-body" data-open={rightbarOpen}>
+            <div className={`w-56 pl-2 ${chromeQuietClass}`}>
+              <RightSidebar onOpenHelp={() => setHelpOpen(true)} />
+            </div>
+          </div>
         </aside>
       </div>
       </div>{/* /kn-app-scaled */}

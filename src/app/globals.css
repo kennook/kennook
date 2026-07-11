@@ -39,6 +39,16 @@
    overlays sit outside it and keep their own independent --kn-chrome-scale. */
 .kn-app-scaled { zoom: var(--kn-chrome-scale, 1); }
 
+/* Collapsible sidebar body. The width/margin slide lives on Tailwind utilities
+   on the <aside>; this adds a visibility flip so a COLLAPSED sidebar's controls
+   also drop out of the keyboard tab order (the old display:none did this for
+   free). Delayed to fire only AFTER the 300ms slide, so the content stays
+   visible while it slides out; opening restores focusability instantly. On its
+   own wrapper so this `transition` shorthand doesn't clobber the quiet-mode
+   opacity transition on the inner content. */
+.kn-sidebar-body { transition: visibility 0s; }
+.kn-sidebar-body[data-open='false'] { visibility: hidden; transition-delay: 300ms; }
+
 /* Single fading container for the maxed viewer chrome (nav arrows, position
    pill, bottom toolbar, pan/zoom widget, reel). One opacity transition + one
    compositor layer instead of one per chrome cluster — bigly cheaper on the
