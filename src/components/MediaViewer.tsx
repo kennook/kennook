@@ -19,6 +19,7 @@ import { useSyncEvent } from '@/lib/sync';
 import { useIsAdmin } from '@/lib/current-user';
 import { VideoBookmarks } from './VideoBookmarks';
 import { VideoTags } from './VideoTags';
+import { ActionHud } from './ActionHud';
 
 const CHROME_IDLE_MS = 2500;
 
@@ -1055,6 +1056,9 @@ export function MediaViewer({
       }}
       onMouseMove={handleViewerMouseMove}
     >
+      {/* Transient action glyph (shortcuts + background sync events). */}
+      <ActionHud />
+
       {/* ── Media area — single mounted instance across modes ────────── */}
       <div
         className={maxed

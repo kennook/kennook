@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useShortcut } from '@/lib/shortcuts';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
+import { flashHud } from '@/lib/action-hud';
 import {
   clearVideoProgress,
   getVideoProgress,
@@ -149,9 +150,14 @@ export function VideoPlayer({
   // `audio.unmuted` so every other window/device mutes; receiving it mutes us.
   // Muting broadcasts nothing — everyone just stays muted until a manual unmute.
   const sync = useSync();
-  useSyncEvent('audio.unmuted', () => setMuted(true));
+  useSyncEvent('audio.unmuted', () => {
+    // Flash the HUD only when we actually LOSE audio (were unmuted) — so a
+    // background mute is visible, without flashing every already-muted window.
+    setMuted((m) => { if (!m) flashHud('mute'); return true; });
+  });
   const applyMute = (next: boolean) => {
     setMuted(next);
+    flashHud(next ? 'mute' : 'unmute');
     if (!next) sync.publish({ type: 'audio.unmuted' });
   };
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -317,8 +323,8 @@ export function VideoPlayer({
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) void video.play();
-    else video.pause();
+    if (video.paused) { void video.play(); flashHud('play'); }
+    else { video.pause(); flashHud('pause'); }
   }
 
   // External pause gate (screensaver). Pause while engaged; on release resume

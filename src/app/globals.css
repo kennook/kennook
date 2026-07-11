@@ -39,6 +39,18 @@
    overlays sit outside it and keep their own independent --kn-chrome-scale. */
 .kn-app-scaled { zoom: var(--kn-chrome-scale, 1); }
 
+/* Action HUD — a large ghosted glyph pops in and fades out over the media to
+   show what a shortcut (or a background sync event, e.g. a remote mute) just
+   did. Fill-mode forwards leaves it invisible at the end; <ActionHud> clears
+   itself on animationend, and a new flash remounts (key change) to replay. */
+@keyframes kn-hud-pop {
+  0%   { opacity: 0;    transform: scale(0.7); }
+  18%  { opacity: 0.9;  transform: scale(1); }
+  68%  { opacity: 0.9;  transform: scale(1); }
+  100% { opacity: 0;    transform: scale(1.12); }
+}
+.kn-hud { animation: kn-hud-pop 750ms ease-out forwards; will-change: opacity, transform; }
+
 /* Collapsible sidebar body. The width/margin slide lives on Tailwind utilities
    on the <aside>; this adds a visibility flip so a COLLAPSED sidebar's controls
    also drop out of the keyboard tab order (the old display:none did this for
