@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import QRCode from 'react-qr-code';
+import { SIDEBAR_ROW } from '@/components/ui/sidebar-row';
 
 interface ConnectInfo {
   mdnsUrl: string;
@@ -16,7 +17,7 @@ interface ConnectInfo {
   port: number;
 }
 
-export function ConnectDeviceButton() {
+export function ConnectDeviceButton({ variant = 'header' }: { variant?: 'header' | 'sidebar' } = {}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -25,11 +26,15 @@ export function ConnectDeviceButton() {
         onClick={() => setOpen(true)}
         title="Connect another device"
         aria-label="Connect another device"
-        className="text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800
-                   rounded px-2 py-1 text-sm transition shrink-0 flex items-center gap-1.5"
+        className={variant === 'sidebar'
+          ? SIDEBAR_ROW
+          : `text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800
+             rounded px-2 py-1 text-sm transition shrink-0 flex items-center gap-1.5`}
       >
         <DeviceIcon />
-        <span className="hidden sm:inline">Connect</span>
+        {variant === 'sidebar'
+          ? <span className="flex-1">Connect a device</span>
+          : <span className="hidden sm:inline">Connect</span>}
       </button>
       {open && <ConnectModal onClose={() => setOpen(false)} />}
     </>

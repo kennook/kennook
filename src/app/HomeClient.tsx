@@ -19,11 +19,8 @@ import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar
 import { SortControl } from '@/components/SortControl';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { MobileApp } from '@/components/mobile/MobileApp';
-import { LibrarySwitcher } from '@/components/LibrarySwitcher';
 import { KenNookLogo } from '@/components/KenNookLogo';
-import { AdminLinkButton } from '@/components/admin/AdminLinkButton';
-import { SignOutButton } from '@/components/SignOutButton';
-import { ConnectDeviceButton } from '@/components/ConnectDeviceButton';
+import { RightSidebar } from '@/components/RightSidebar';
 import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
@@ -112,6 +109,20 @@ function HomeContent() {
   const toggleSidebar = () => setSidebarOpen((v) => {
     const next = !v;
     try { localStorage.setItem('kennook.sidebar-open', next ? '1' : '0'); } catch { /* private mode */ }
+    return next;
+  });
+
+  // Right "utilities" sidebar (library switcher, connect, admin, sign out).
+  // Occasional-use chrome, so it defaults CLOSED — maximizing grid real estate
+  // is the whole point. Persisted per-browser like the left sidebar.
+  const [rightbarOpen, setRightbarOpen] = useState(false);
+  useEffect(() => {
+    const v = localStorage.getItem('kennook.rightbar-open');
+    if (v !== null) setRightbarOpen(v === '1');
+  }, []);
+  const toggleRightbar = () => setRightbarOpen((v) => {
+    const next = !v;
+    try { localStorage.setItem('kennook.rightbar-open', next ? '1' : '0'); } catch { /* private mode */ }
     return next;
   });
 
@@ -852,18 +863,15 @@ function HomeContent() {
             )}
           </button>
           <button
-            onClick={() => setHelpOpen(true)}
-            title="Keyboard shortcuts (?)"
-            aria-label="Keyboard shortcuts"
-            className="text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800
-                       rounded px-2 py-1 text-sm transition shrink-0"
+            onClick={toggleRightbar}
+            aria-pressed={rightbarOpen}
+            title={rightbarOpen ? 'Hide menu' : 'Show menu'}
+            aria-label="Toggle utilities sidebar"
+            className="flex items-center justify-center text-zinc-400 hover:text-zinc-100
+                       hover:bg-zinc-800 rounded px-2 py-1.5 transition shrink-0"
           >
-            ?
+            <RightbarToggleIcon />
           </button>
-          <ConnectDeviceButton />
-          <AdminLinkButton />
-          <SignOutButton />
-          <LibrarySwitcher />
         </div>
       </header>
 
@@ -1131,6 +1139,13 @@ function HomeContent() {
             onPageChange={goToPage}
           />
         </div>
+
+        <aside
+          className={`${rightbarOpen ? 'hidden md:block' : 'hidden'} w-56 shrink-0 sticky top-20 self-start
+                     max-h-[calc(100vh-6rem)] overflow-y-auto pl-2 ${chromeQuietClass}`}
+        >
+          <RightSidebar onOpenHelp={() => setHelpOpen(true)} />
+        </aside>
       </div>
 
       <MediaViewer
@@ -1271,6 +1286,18 @@ function SidebarToggleIcon() {
          strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
       <rect x="2" y="3" width="12" height="10" rx="1.5" />
       <line x1="6" y1="3" x2="6" y2="13" />
+    </svg>
+  );
+}
+
+function RightbarToggleIcon() {
+  // Panel-with-right-rail glyph — mirror of SidebarToggleIcon; reads as
+  // "show/hide the right utilities panel".
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <line x1="10" y1="3" x2="10" y2="13" />
     </svg>
   );
 }

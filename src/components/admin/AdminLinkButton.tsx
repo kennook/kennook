@@ -9,10 +9,20 @@
 
 import Link from 'next/link';
 import { useIsAdmin } from '@/lib/current-user';
+import { SIDEBAR_ROW } from '@/components/ui/sidebar-row';
 
-export function AdminLinkButton() {
+export function AdminLinkButton({ variant = 'header' }: { variant?: 'header' | 'sidebar' } = {}) {
   const isAdmin = useIsAdmin();
   if (!isAdmin) return null;
+
+  if (variant === 'sidebar') {
+    return (
+      <Link href="/admin" title="Admin" aria-label="Admin" className={SIDEBAR_ROW}>
+        <WrenchIcon />
+        <span className="flex-1">Admin</span>
+      </Link>
+    );
+  }
 
   return (
     <Link
