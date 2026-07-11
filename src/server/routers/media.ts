@@ -553,7 +553,7 @@ async function computeFacets(
 export const mediaRouter = router({
   list: publicProcedure
     .input(z.object({
-      limit: z.number().min(1).max(200).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       // Cursor is the path used by useInfiniteQuery on mobile. When set, it
       // overrides `offset`. Desktop pagination still uses `offset`; both
@@ -663,7 +663,7 @@ export const mediaRouter = router({
   similar: publicProcedure
     .input(z.object({
       uuid: z.string(),
-      limit: z.number().min(1).max(100).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       cursor: z.number().min(0).optional(),
       ...filterShape.shape,
@@ -751,7 +751,7 @@ export const mediaRouter = router({
   search: publicProcedure
     .input(z.object({
       query: z.string().min(1).max(500),
-      limit: z.number().min(1).max(100).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       cursor: z.number().min(0).optional(),
       ...filterShape.shape,

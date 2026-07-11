@@ -71,7 +71,7 @@ export const playlistRouter = router({
   get: publicProcedure
     .input(z.object({
       uuid: z.string(),
-      limit: z.number().min(1).max(200).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       cursor: z.number().min(0).optional(),
     }))
