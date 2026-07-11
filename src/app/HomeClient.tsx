@@ -86,7 +86,6 @@ function HomeContent() {
   // Transient (non-URL) state.
   const [helpOpen, setHelpOpen] = useState(false);
   const [selection, setSelection] = useState<SelectionRef[]>([]);
-  const [selectionMode, setSelectionMode] = useState(false);
   const [anchor, setAnchor] = useState<SelectionRef | null>(null);
   // Walk-away screensaver. Triggered by `S` shortcut, exits on any input.
   const [screensaverOpen, setScreensaverOpen] = useState(false);
@@ -587,21 +586,14 @@ function HomeContent() {
 
   const clearSelection = () => {
     setSelection([]);
-    setSelectionMode(false);
     setAnchor(null);
   };
 
-  // "Selecting" is active when the mode is explicitly armed OR anything is
-  // already selected (via the hover checkbox / cmd-click). In that state a plain
-  // click on a thumbnail toggles its selection instead of opening the preview,
-  // and the Select button shows pressed.
-  const selecting = selectionMode || selection.length > 0;
-
-  const toggleSelectionMode = () => {
-    // Pressed (selecting) → exit and clear everything; otherwise arm the mode.
-    if (selecting) clearSelection();
-    else setSelectionMode(true);
-  };
+  // "Selecting" is active once anything is selected (via the hover checkbox /
+  // ⌘-click / shift-click). In that state a plain click on a thumbnail toggles
+  // its selection instead of opening the preview. There's no separate "arm
+  // selection mode" toggle — you start selecting by selecting an item.
+  const selecting = selection.length > 0;
 
   // Cross-page navigation: at the boundary of the visible page, step into
   // the next (or previous) page and land on the first / last item there.
@@ -854,27 +846,6 @@ function HomeContent() {
           <div className="flex-1">
             <SearchBar initial={url.query} onSubmit={handleSearchSubmit} />
           </div>
-          <button
-            onClick={toggleSelectionMode}
-            aria-pressed={selecting}
-            className={`rounded px-3 py-1 text-sm transition shrink-0 flex items-center gap-1.5
-                        ${selecting
-                          ? 'bg-emerald-400 text-zinc-900 font-medium ring-1 ring-inset ring-emerald-600/70 translate-y-px shadow-[inset_0_2px_4px_rgba(0,0,0,0.35)]'
-                          : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'}`}
-            title={selecting ? 'Exit selection mode' : 'Enter selection mode'}
-          >
-            {selecting ? (
-              <>
-                <CheckIcon />
-                {selection.length > 0 ? `Done · ${selection.length}` : 'Done'}
-              </>
-            ) : (
-              <>
-                <SelectIcon />
-                Select
-              </>
-            )}
-          </button>
           <button
             onClick={toggleRightbar}
             aria-pressed={rightbarOpen}
@@ -1299,15 +1270,6 @@ function HomeContent() {
   );
 }
 
-function SelectIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="2.5" y="2.5" width="11" height="11" rx="2" strokeDasharray="2 1.5" />
-      <path d="M5.5 8 L7.5 10 L11 6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function SidebarToggleIcon() {
   // Panel-with-left-rail glyph — reads as "show/hide the side panel".
   return (
@@ -1327,14 +1289,6 @@ function RightbarToggleIcon() {
          strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
       <rect x="2" y="3" width="12" height="10" rx="1.5" />
       <line x1="10" y1="3" x2="10" y2="13" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2">
-      <path d="M3 6 L5 8 L9 4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
