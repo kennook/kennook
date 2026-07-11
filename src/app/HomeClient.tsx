@@ -839,10 +839,6 @@ function HomeContent() {
           >
             <SidebarToggleIcon />
           </button>
-          <h1 className="shrink-0">
-            <KenNookLogo height={26} />
-            <span className="sr-only">KenNook</span>
-          </h1>
           <div className="flex-1">
             <SearchBar initial={url.query} onSubmit={handleSearchSubmit} />
           </div>
@@ -872,6 +868,10 @@ function HomeContent() {
         >
           <div className="kn-sidebar-body" data-open={sidebarOpen}>
           <div className={`w-56 pr-2 ${chromeQuietClass}`}>
+          <h1 className="px-3 mb-5">
+            <KenNookLogo height={24} />
+            <span className="sr-only">KenNook</span>
+          </h1>
           <PlaylistsSection
             activePlaylistUuid={url.playlist}
             onSelectPlaylist={handlePlaylistSelect}
