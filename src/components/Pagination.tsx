@@ -20,7 +20,11 @@ export function Pagination({ page, hasMore, totalCount, pageSize, onPageChange }
     : pageSize);
 
   return (
-    <div className="flex items-center justify-center gap-3 mt-8 pb-4 text-sm">
+    // Pinned to the viewport bottom so the page controls stay reachable while
+    // scrolling a long grid; the grid scrolls under the blurred bar. mt-8 keeps
+    // spacing when it comes to rest at the true end of the page.
+    <div className="sticky bottom-0 z-20 flex items-center justify-center gap-3 mt-8 py-3 text-sm
+                    bg-zinc-950/80 backdrop-blur border-t border-zinc-900">
       <button
         onClick={() => onPageChange(1)}
         disabled={page <= 1}
