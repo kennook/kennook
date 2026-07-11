@@ -27,9 +27,20 @@ interface LibrarySwitcherProps {
   align?: 'left' | 'right';
   /** 'sidebar' renders a full-width trigger for the utilities aside. */
   variant?: 'header' | 'sidebar';
+  /** Show the "+ New library…" action. Creating libraries is an admin task, so
+   *  only the admin sidebar opts in; the main app + mobile hide it. */
+  allowCreate?: boolean;
+  /** Hide the whole switcher when there's only one library (nothing to switch
+   *  between). Used in the main app, where it's just clutter with a single lib. */
+  hideWhenSingle?: boolean;
 }
 
-export function LibrarySwitcher({ align = 'right', variant = 'header' }: LibrarySwitcherProps = {}) {
+export function LibrarySwitcher({
+  align = 'right',
+  variant = 'header',
+  allowCreate = false,
+  hideWhenSingle = false,
+}: LibrarySwitcherProps = {}) {
   const url = usePageState();
   const libraries = trpc.library.list.useQuery();
   const current = trpc.library.current.useQuery();
@@ -124,6 +135,11 @@ export function LibrarySwitcher({ align = 'right', variant = 'header' }: Library
     utils.invalidate();
   };
 
+  // Nothing to switch between with a single library — hide entirely in the
+  // main app. `?? 1` keeps it hidden while the list is still loading so the
+  // switcher doesn't flash in and then vanish.
+  if (hideWhenSingle && (libraries.data?.length ?? 1) <= 1) return null;
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -165,18 +181,21 @@ export function LibrarySwitcher({ align = 'right', variant = 'header' }: Library
             );
           })}
 
-          <div className="border-t border-zinc-800 my-1" />
-
-          <button
-            onClick={() => { setOpen(false); setCreateDialogOpen(true); }}
-            className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            + New library…
-          </button>
+          {allowCreate && (
+            <>
+              <div className="border-t border-zinc-800 my-1" />
+              <button
+                onClick={() => { setOpen(false); setCreateDialogOpen(true); }}
+                className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                + New library…
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {createDialogOpen && (
+      {allowCreate && createDialogOpen && (
         <CreateLibraryDialog
           onCancel={() => setCreateDialogOpen(false)}
           onCreated={handleCreated}

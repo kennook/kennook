@@ -272,7 +272,7 @@ export function MobileApp() {
             </div>
           )}
 
-          <LibrarySwitcher />
+          <LibrarySwitcher hideWhenSingle />
         </div>
       </header>
 

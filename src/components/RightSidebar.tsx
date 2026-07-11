@@ -9,6 +9,7 @@
  * Collapsible + persisted like the left sidebar; the toggle lives in the header.
  */
 
+import { trpc } from '@/lib/trpc-client';
 import { LibrarySwitcher } from '@/components/LibrarySwitcher';
 import { ConnectDeviceButton } from '@/components/ConnectDeviceButton';
 import { AdminLinkButton } from '@/components/admin/AdminLinkButton';
@@ -24,12 +25,19 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function RightSidebar({ onOpenHelp }: { onOpenHelp: () => void }) {
+  // Only surface the Library section when there's more than one to switch
+  // between — otherwise the whole section (label included) is just clutter.
+  const libraries = trpc.library.list.useQuery();
+  const showLibrary = (libraries.data?.length ?? 0) > 1;
+
   return (
     <div className="flex flex-col gap-5">
-      <section>
-        <SectionLabel>Library</SectionLabel>
-        <LibrarySwitcher variant="sidebar" align="left" />
-      </section>
+      {showLibrary && (
+        <section>
+          <SectionLabel>Library</SectionLabel>
+          <LibrarySwitcher variant="sidebar" align="left" hideWhenSingle />
+        </section>
+      )}
 
       <section>
         <SectionLabel>More</SectionLabel>
