@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
-import { publishToAll, setScreensaverState } from '@/server/sync-broker';
-import { SHARED_DATA_USER_ID } from '@/server/auth';
+import { publishToAll, publishToUser, setScreensaverState } from '@/server/sync-broker';
+import { getSession } from '@/server/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,14 +21,17 @@ export async function POST(req: NextRequest) {
   try { payload = await req.json(); }
   catch { return new Response('Invalid JSON', { status: 400 }); }
 
-  // The client-published events (screensaver, audio.unmuted) are GLOBAL — they
-  // affect every window/device — so broadcast to all streams. Screensaver
-  // state persists under the shared id so a (re)connecting tab syncs to truth.
+  // Screensaver is PER-USER: only the signed-in user's own windows/devices
+  // see it, and its state persists under that user's id so a (re)connecting
+  // tab syncs to their own truth. Other client events (e.g. audio.unmuted)
+  // remain global — they concern a shared physical display.
   const evt = (payload as { event?: { type?: string; open?: boolean } })?.event;
   if (evt?.type === 'screensaver' && typeof evt.open === 'boolean') {
-    setScreensaverState(SHARED_DATA_USER_ID, evt.open);
+    const userId = getSession(req.headers.get('cookie')).userId;
+    setScreensaverState(userId, evt.open);
+    publishToUser(userId, payload);
+  } else {
+    publishToAll(payload);
   }
-
-  publishToAll(payload);
   return new Response(null, { status: 204 });
 }

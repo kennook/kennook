@@ -86,9 +86,9 @@ export function publishToUser(userId: number, payload: unknown): void {
 
 /**
  * Fan out to EVERY active stream, regardless of user — for GLOBAL events that
- * everyone shares: the screensaver, instance config, and shared-media changes
- * (rotation, sensitivity, exclude, move, tags, per-asset framing). Personal
- * events (likes, playlists, saved searches) use `publishToUser` instead.
+ * everyone shares: instance config and shared-media changes (rotation,
+ * sensitivity, exclude, move, tags, per-asset framing). Personal events (likes,
+ * playlists, saved searches, and now the screensaver) use `publishToUser`.
  */
 export function publishToAll(payload: unknown): void {
   const frame = serialize(payload);

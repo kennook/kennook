@@ -5,7 +5,7 @@ import {
   type Subscriber,
 } from '@/server/sync-broker';
 import { KENNOOK_VERSION, KENNOOK_BUILD_ID } from '@/lib/version';
-import { getSession, SHARED_DATA_USER_ID } from '@/server/auth';
+import { getSession } from '@/server/auth';
 
 // Long-lived streaming response — needs the Node runtime (Edge has aggressive
 // connection limits and lacks `req.signal` semantics we rely on here).
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
       // every client processes it.
       send(`data: ${JSON.stringify({
         sessionId: 'server-snapshot',
-        event: { type: 'screensaver', open: getScreensaverState(SHARED_DATA_USER_ID) },
+        event: { type: 'screensaver', open: getScreensaverState(userId) },
       })}\n\n`);
 
       // Per-tab screensaver assignment — monotonic per user, so the first
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
       // the client knows). Sent once per connection.
       send(`data: ${JSON.stringify({
         sessionId: 'server-snapshot',
-        event: { type: 'screensaver.assignment', index: assignScreensaverIndex(SHARED_DATA_USER_ID) },
+        event: { type: 'screensaver.assignment', index: assignScreensaverIndex(userId) },
       })}\n\n`);
 
       // Build version of THIS process — baked at build time, so it's the
