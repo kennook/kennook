@@ -135,17 +135,16 @@ export function YouTubePlayer({
     playerRef.current?.loadVideoById(videos[i].videoId);
   };
 
+  const hasPrev = index > 0;
+  const hasNext = index < videos.length - 1;
+
   return (
-    <div className="fixed inset-0 z-[90] bg-black flex flex-col" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="group fixed inset-0 z-[90] bg-black flex flex-col" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="flex items-center gap-3 px-4 py-2 text-sm text-zinc-300">
         {videos.length > 1 && (
           <span className="text-xs text-zinc-500 tabular-nums shrink-0">{index + 1} / {videos.length}</span>
         )}
         <span className="flex-1 truncate">{current?.title}</span>
-        <button onClick={() => go(index - 1)} disabled={index <= 0} title="Previous"
-          className="text-zinc-400 hover:text-zinc-100 disabled:opacity-30 px-1.5">‹</button>
-        <button onClick={() => go(index + 1)} disabled={index >= videos.length - 1} title="Next"
-          className="text-zinc-400 hover:text-zinc-100 disabled:opacity-30 px-1.5">›</button>
         <button onClick={toggleMute} title={muted ? 'Unmute (solo)' : 'Mute'}
           className={`px-2 ${muted ? 'text-zinc-400 hover:text-zinc-100' : 'text-emerald-400 hover:text-emerald-300'}`}>
           {muted ? 'Muted' : 'Sound on'}
@@ -156,9 +155,38 @@ export function YouTubePlayer({
         )}
         <button onClick={onClose} title="Close (Esc)" className="text-zinc-400 hover:text-zinc-100 px-2">✕</button>
       </div>
+
       {/* YT replaces the mounted child of this host with its iframe. */}
       <div ref={hostRef} className="flex-1 min-h-0 [&>*]:w-full [&>*]:h-full" />
+
+      {/* Large hover-revealed queue arrows over the video (keyboard is
+          unreliable here — the focused YouTube iframe grabs the arrow keys). */}
+      {videos.length > 1 && (
+        <>
+          <NavArrow side="left" onClick={() => go(index - 1)} disabled={!hasPrev} />
+          <NavArrow side="right" onClick={() => go(index + 1)} disabled={!hasNext} />
+        </>
+      )}
+
       <ActionHud />
     </div>
+  );
+}
+
+function NavArrow({ side, onClick, disabled }: { side: 'left' | 'right'; onClick: () => void; disabled: boolean }) {
+  if (disabled) return null;
+  return (
+    <button
+      onClick={onClick}
+      title={side === 'left' ? 'Previous video' : 'Next video'}
+      className={`absolute top-1/2 -translate-y-1/2 z-10 ${side === 'left' ? 'left-4' : 'right-4'}
+                  w-12 h-12 grid place-items-center rounded-full bg-black/50 hover:bg-black/80 text-white
+                  opacity-0 group-hover:opacity-100 transition`}
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+           strokeLinecap="round" strokeLinejoin="round">
+        {side === 'left' ? <path d="M15 6l-6 6 6 6" /> : <path d="M9 6l6 6-6 6" />}
+      </svg>
+    </button>
   );
 }
