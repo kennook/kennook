@@ -1,7 +1,7 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Masonry, useInfiniteLoader } from 'masonic';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { MasonryScroller, usePositioner, useResizeObserver, useInfiniteLoader } from 'masonic';
 import { MediaCard } from './MediaCard';
 
 /** Per-item text occurrence match returned by the search router. Drives
@@ -98,6 +98,35 @@ function useColumnWidth(): number {
   return w;
 }
 
+// Measure the grid CONTAINER's own width + document offset via a ResizeObserver.
+// masonic's built-in <Masonry> only re-measures on WINDOW resize, so it misses
+// the sidebar sliding open/closed (which changes the column width without a
+// window resize) — the grid would then overflow off-screen. Feeding masonic
+// this measured width (via MasonryScroller) fixes that.
+function useMeasure(): [RefObject<HTMLDivElement>, { width: number; offset: number; viewportHeight: number }] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState({ width: 0, offset: 0, viewportHeight: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      let offset = 0;
+      let node: HTMLElement | null = el;
+      while (node) { offset += node.offsetTop || 0; node = node.offsetParent as HTMLElement | null; }
+      const width = el.offsetWidth;
+      const viewportHeight = window.innerHeight;
+      setRect((r) => (r.width === width && r.offset === offset && r.viewportHeight === viewportHeight
+        ? r : { width, offset, viewportHeight }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
+  return [ref, rect];
+}
+
 function GridCell({ data }: { index: number; data: Cell; width: number }) {
   const ref = useContext(HandlersCtx)!;
   const { item, selected } = data;
@@ -169,51 +198,57 @@ export function MediaGrid({
   );
 
   const columnWidth = useColumnWidth();
+  const [measureRef, { width, offset, viewportHeight }] = useMeasure();
+
+  // Recreate the positioner (clearing cached positions) when the width or the
+  // dataset changes; masonic re-lays-out at the correct column count/width.
+  const positioner = usePositioner({ width, columnWidth, columnGutter: 8 }, [resetKey ?? '']);
+  const resizeObserver = useResizeObserver(positioner);
 
   const maybeLoadMore = useInfiniteLoader(
     async () => { if (hasMore) onLoadMore?.(); },
     { isItemLoaded: (index, loaded) => !hasMore || index < loaded.length, threshold: 16 },
   );
 
-  if (loading && items.length === 0) {
-    // Varied-height skeletons so the masonry shape reads while loading.
-    const heights = [1, 0.72, 1.4, 1, 0.66, 1.25];
-    return (
-      <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
-        {Array.from({ length: 24 }).map((_, i) => (
-          <div
-            key={i}
-            style={{ aspectRatio: String(heights[i % heights.length]) }}
-            className="break-inside-avoid mb-2 rounded-lg bg-zinc-900 animate-pulse"
-          />
-        ))}
-      </div>
-    );
-  }
+  // Varied-height skeletons so the masonry shape reads while loading.
+  const skeletonHeights = [1, 0.72, 1.4, 1, 0.66, 1.25];
 
-  if (!items.length) {
-    return (
-      <div className="text-center text-zinc-500 py-20">
-        No results. Try a different search, or index a folder with{' '}
-        <code className="text-zinc-300">pnpm indexer &lt;path&gt;</code>.
-      </div>
-    );
-  }
-
+  // The measure div is ALWAYS rendered so its width is observable even during
+  // the loading/empty states — otherwise the first real grid render would see
+  // width 0 (and masonic would fall back to full-window width).
   return (
-    <HandlersCtx.Provider value={handlersRef}>
-      <Masonry
-        // Remount on dataset change so masonic resets positions + scroll.
-        key={resetKey ?? 'default'}
-        items={cells}
-        columnGutter={8}
-        columnWidth={columnWidth}
-        overscanBy={2}
-        itemHeightEstimate={columnWidth}
-        itemKey={(d) => d.item.uuid}
-        render={GridCell}
-        onRender={maybeLoadMore}
-      />
-    </HandlersCtx.Provider>
+    <div ref={measureRef}>
+      {loading && items.length === 0 ? (
+        <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
+          {Array.from({ length: 24 }).map((_, i) => (
+            <div
+              key={i}
+              style={{ aspectRatio: String(skeletonHeights[i % skeletonHeights.length]) }}
+              className="break-inside-avoid mb-2 rounded-lg bg-zinc-900 animate-pulse"
+            />
+          ))}
+        </div>
+      ) : !items.length ? (
+        <div className="text-center text-zinc-500 py-20">
+          No results. Try a different search, or index a folder with{' '}
+          <code className="text-zinc-300">pnpm indexer &lt;path&gt;</code>.
+        </div>
+      ) : width > 0 ? (
+        <HandlersCtx.Provider value={handlersRef}>
+          <MasonryScroller<Cell>
+            offset={offset}
+            height={viewportHeight}
+            positioner={positioner}
+            resizeObserver={resizeObserver}
+            items={cells}
+            overscanBy={2}
+            itemHeightEstimate={columnWidth}
+            itemKey={(d) => d.item.uuid}
+            render={GridCell}
+            onRender={maybeLoadMore}
+          />
+        </HandlersCtx.Provider>
+      ) : null}
+    </div>
   );
 }
