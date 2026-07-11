@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { trpc } from '@/lib/trpc-client';
 
 interface Props {
@@ -121,7 +122,11 @@ function AddSourceDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
     onError: (e) => setError(e.message),
   });
 
-  return (
+  // Portal to <body>: the dialog is launched from inside the zoomed
+  // (kn-app-scaled) + overflow-clipped sidebar, whose CSS `zoom` traps a nested
+  // `fixed` element in its own stacking context (it would paint under the grid).
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-6"
          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <form
@@ -153,7 +158,8 @@ function AddSourceDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

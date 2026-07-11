@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import QRCode from 'react-qr-code';
 import { SIDEBAR_ROW } from '@/components/ui/sidebar-row';
 
@@ -56,7 +57,10 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
   // option (mDNS isn't resolvable on every device, e.g. some Androids).
   const primary = info?.networkUrls[0] ?? info?.mdnsUrl ?? null;
 
-  return (
+  // Portal to <body> — launched from the zoomed (kn-app-scaled) sidebar, whose
+  // CSS `zoom` would otherwise trap this fixed overlay under the grid.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-6"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -108,7 +112,8 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
