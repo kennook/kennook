@@ -171,6 +171,15 @@ export function Screensaver({ open, onExit }: Props) {
     setAuthError(false);
   }, []);
 
+  // Sign out from the screensaver — for switching accounts without first
+  // unlocking. Safe even when locked: it destroys the session and lands on
+  // /login, so it's an exit TO the gate, not a bypass of it.
+  const signOut = useCallback(async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST' }); }
+    catch { /* redirect to the gate regardless */ }
+    window.location.href = '/login';
+  }, []);
+
   // Escape cancels the prompt from anywhere — a window-level listener so it
   // works even if focus has left the input. Capture phase + stopPropagation
   // so it doesn't also reach the app underneath.
@@ -263,11 +272,17 @@ export function Screensaver({ open, onExit }: Props) {
         dismiss();
       }
     };
+    // Clicks/taps on the sign-out link must NOT be read as a dismiss gesture —
+    // let them through to the link's own handler.
+    const isSignOut = (e: Event) =>
+      (e.target as Element | null)?.closest?.('[data-kn-signout]') != null;
     const onMouseDown = (e: MouseEvent) => {
+      if (isSignOut(e)) return;
       e.stopPropagation();
       dismiss();
     };
     const onTouch = (e: TouchEvent) => {
+      if (isSignOut(e)) return;
       e.stopPropagation();
       dismiss();
     };
@@ -379,6 +394,19 @@ export function Screensaver({ open, onExit }: Props) {
           </form>
         </div>
       )}
+
+      {/* Small sign-out link — for switching accounts. Faint so it stays out of
+          the way; its own cursor-pointer reveals the (otherwise hidden) cursor
+          when you reach the corner. Exempt from the dismiss handlers above. */}
+      <button
+        type="button"
+        data-kn-signout
+        onClick={signOut}
+        className="absolute bottom-4 right-5 z-20 text-xs text-zinc-500 hover:text-zinc-200
+                   opacity-50 hover:opacity-100 transition cursor-pointer"
+      >
+        Sign out
+      </button>
     </div>
   );
 }
