@@ -40,6 +40,7 @@ export function YouTubePlayer({
   const indexRef = useRef(index);
   indexRef.current = index;
   const wasPlayingRef = useRef(false);
+  const lastMutedRef = useRef(true);
   const sync = useSync();
 
   const current = videos[index];
@@ -78,14 +79,33 @@ export function YouTubePlayer({
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [onClose]);
 
-  // Solo-audio: another window/device took audio → mute this player.
-  useSyncEvent('audio.unmuted', () => {
-    const p = playerRef.current;
-    if (!p) return;
-    if (!p.isMuted()) flashHud('mute'); // flash only when we actually lose audio
-    p.mute();
-    setMuted(true);
-  });
+  // Poll the player's ACTUAL mute state and make it the single source of truth,
+  // so a solo fires no matter how the user unmuted — our button OR YouTube's own
+  // native volume control (the IFrame API has no mute-changed event to hook).
+  // A muted→unmuted transition publishes `audio.unmuted` (soloing everything
+  // else); the reverse just updates the HUD/state.
+  useEffect(() => {
+    if (!ready) return;
+    const iv = window.setInterval(() => {
+      const p = playerRef.current;
+      if (!p) return;
+      const isMuted = p.isMuted();
+      if (isMuted === lastMutedRef.current) return;
+      lastMutedRef.current = isMuted;
+      setMuted(isMuted);
+      if (!isMuted) {
+        flashHud('unmute');
+        sync.publish({ type: 'audio.unmuted' }); // solo — mute everything else
+      } else {
+        flashHud('mute');
+      }
+    }, 400);
+    return () => window.clearInterval(iv);
+  }, [ready, sync]);
+
+  // Solo-audio: another window/device took audio → mute this player. The poll
+  // above reconciles the state + HUD.
+  useSyncEvent('audio.unmuted', () => { playerRef.current?.mute(); });
 
   // Screensaver: pause + mute while engaged; resume if it was playing.
   useEffect(() => {
@@ -95,26 +115,18 @@ export function YouTubePlayer({
       wasPlayingRef.current = p.getPlayerState() === 1; // PLAYING
       p.pauseVideo();
       p.mute();
-      setMuted(true);
     } else if (wasPlayingRef.current) {
       wasPlayingRef.current = false;
       p.playVideo();
     }
   }, [suspended, ready]);
 
+  // Our own mute toggle — imperative only; the poll publishes/flashes.
   const toggleMute = () => {
     const p = playerRef.current;
     if (!p) return;
-    if (muted) {
-      p.unMute();
-      setMuted(false);
-      flashHud('unmute');
-      sync.publish({ type: 'audio.unmuted' }); // solo — mute everything else
-    } else {
-      p.mute();
-      setMuted(true);
-      flashHud('mute');
-    }
+    if (p.isMuted()) p.unMute();
+    else p.mute();
   };
 
   const go = (i: number) => {
