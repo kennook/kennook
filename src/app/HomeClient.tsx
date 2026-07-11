@@ -822,6 +822,9 @@ function HomeContent() {
 
   return (
     <main className="min-h-screen">
+      {/* Everything inside kn-app-scaled grows on large displays (see globals.css).
+          The viewer + overlays below stay OUTSIDE it — they scale themselves. */}
+      <div className="kn-app-scaled">
       <header className={`sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
         <div className="px-5 py-4 flex items-center gap-4">
           <button
@@ -878,7 +881,7 @@ function HomeContent() {
       <div className="px-4 py-5 flex gap-6">
         <aside
           className={`${sidebarOpen ? 'hidden md:block' : 'hidden'} w-56 shrink-0 sticky top-20 self-start
-                     max-h-[calc(100vh-6rem)] overflow-y-auto pr-2 ${chromeQuietClass}`}
+                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] overflow-y-auto pr-2 ${chromeQuietClass}`}
         >
           <PlaylistsSection
             activePlaylistUuid={url.playlist}
@@ -1142,11 +1145,12 @@ function HomeContent() {
 
         <aside
           className={`${rightbarOpen ? 'hidden md:block' : 'hidden'} w-56 shrink-0 sticky top-20 self-start
-                     max-h-[calc(100vh-6rem)] overflow-y-auto pl-2 ${chromeQuietClass}`}
+                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] overflow-y-auto pl-2 ${chromeQuietClass}`}
         >
           <RightSidebar onOpenHelp={() => setHelpOpen(true)} />
         </aside>
       </div>
+      </div>{/* /kn-app-scaled */}
 
       <MediaViewer
         item={selected}

@@ -28,6 +28,17 @@
    them in lockstep with the rest of the maxed chrome. */
 .kn-video-controls-scaled { zoom: calc(var(--kn-chrome-scale, 1) * 1.3); }
 
+/* Global app-chrome scaling — the browsing UI (header, sidebars, grid, toolbars)
+   grows on large displays with the SAME stepped scale as the maxed viewer, so
+   text and hit-targets stay legible instead of shrinking into the corner of a
+   4K/5K screen. `zoom` reflows layout (unlike transform), so sticky headers,
+   flex, and the masonry grid all keep working. The media queries that pick the
+   grid's column count still evaluate against the real viewport, so column COUNT
+   is unchanged — thumbnails stay ~constant physical size while the chrome grows.
+   Applied to a wrapper AROUND the header+content only; the fullscreen viewer and
+   overlays sit outside it and keep their own independent --kn-chrome-scale. */
+.kn-app-scaled { zoom: var(--kn-chrome-scale, 1); }
+
 /* Single fading container for the maxed viewer chrome (nav arrows, position
    pill, bottom toolbar, pan/zoom widget, reel). One opacity transition + one
    compositor layer instead of one per chrome cluster — bigly cheaper on the
