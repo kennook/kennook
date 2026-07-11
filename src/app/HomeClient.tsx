@@ -878,7 +878,7 @@ function HomeContent() {
 
         <div className="flex-1 min-w-0">
           {inExternal ? (
-            <ExternalSourceView slug={url.source!} />
+            <ExternalSourceView slug={url.source!} suspended={screensaverOpen} />
           ) : (
           <>
           <SelectionBar

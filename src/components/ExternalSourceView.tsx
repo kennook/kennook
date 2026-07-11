@@ -10,13 +10,14 @@ import { YouTubePlayer } from './YouTubePlayer';
  * presentation), with infinite scroll and a click-to-embed player. Self-contained
  * so HomeClient just mounts it when a source is selected.
  */
-export function ExternalSourceView({ slug }: { slug: string }) {
+export function ExternalSourceView({ slug, suspended }: { slug: string; suspended?: boolean }) {
   const source = trpc.externalSource.get.useQuery({ slug });
   const q = trpc.externalSource.items.useInfiniteQuery(
     { slug },
     { getNextPageParam: (last) => last.nextCursor, initialCursor: undefined },
   );
-  const [playing, setPlaying] = useState<{ videoId: string; title: string } | null>(null);
+  // Index into `videos` of the video the player queue starts at (null = closed).
+  const [playIndex, setPlayIndex] = useState<number | null>(null);
 
   const videos = q.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -36,9 +37,21 @@ export function ExternalSourceView({ slug }: { slug: string }) {
 
   return (
     <div>
-      <div className="mb-4">
-        <div className="text-xs text-zinc-500 uppercase tracking-wider">External source</div>
-        <div className="text-lg text-zinc-100 font-medium truncate">{source.data?.name ?? '…'}</div>
+      <div className="mb-4 flex items-end gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-zinc-500 uppercase tracking-wider">External source</div>
+          <div className="text-lg text-zinc-100 font-medium truncate">{source.data?.name ?? '…'}</div>
+        </div>
+        {videos.length > 0 && (
+          <button
+            onClick={() => setPlayIndex(0)}
+            className="shrink-0 inline-flex items-center gap-2 rounded-md bg-emerald-400 hover:bg-emerald-300
+                       text-zinc-900 font-medium text-sm px-3 py-1.5 transition"
+          >
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
+            Play all
+          </button>
+        )}
       </div>
 
       {q.isError ? (
@@ -55,8 +68,8 @@ export function ExternalSourceView({ slug }: { slug: string }) {
         <div className="text-center text-zinc-500 py-16 text-sm">No videos in this source.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {videos.map((v) => (
-            <button key={v.videoId} onClick={() => setPlaying({ videoId: v.videoId, title: v.title })} className="group text-left">
+          {videos.map((v, i) => (
+            <button key={v.videoId} onClick={() => setPlayIndex(i)} className="group text-left">
               <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-900 ring-1 ring-transparent group-hover:ring-zinc-600 transition">
                 {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-cover" />}
                 <div className="absolute inset-0 grid place-items-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
@@ -73,8 +86,13 @@ export function ExternalSourceView({ slug }: { slug: string }) {
       <div ref={sentinelRef} className="h-8" />
       {q.isFetchingNextPage && <div className="py-4 text-center text-xs text-zinc-600">Loading more…</div>}
 
-      {playing && (
-        <YouTubePlayer videoId={playing.videoId} title={playing.title} onClose={() => setPlaying(null)} />
+      {playIndex !== null && (
+        <YouTubePlayer
+          videos={videos.map((v) => ({ videoId: v.videoId, title: v.title }))}
+          startIndex={playIndex}
+          suspended={suspended}
+          onClose={() => setPlayIndex(null)}
+        />
       )}
     </div>
   );
