@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { publishToAll, publishToUser, setScreensaverState } from '@/server/sync-broker';
+import { publishToUser, setScreensaverState } from '@/server/sync-broker';
 import { getSession } from '@/server/auth';
 
 export const runtime = 'nodejs';
@@ -21,17 +21,15 @@ export async function POST(req: NextRequest) {
   try { payload = await req.json(); }
   catch { return new Response('Invalid JSON', { status: 400 }); }
 
-  // Screensaver is PER-USER: only the signed-in user's own windows/devices
-  // see it, and its state persists under that user's id so a (re)connecting
-  // tab syncs to their own truth. Other client events (e.g. audio.unmuted)
-  // remain global — they concern a shared physical display.
+  // Every client-published event is PER-USER UI/device state — the screensaver
+  // and the solo-audio (unmute) rule — so it only reaches the signed-in user's
+  // own windows/devices, never other accounts. Screensaver additionally
+  // persists under the user's id so a (re)connecting tab syncs to their truth.
+  const userId = getSession(req.headers.get('cookie')).userId;
   const evt = (payload as { event?: { type?: string; open?: boolean } })?.event;
   if (evt?.type === 'screensaver' && typeof evt.open === 'boolean') {
-    const userId = getSession(req.headers.get('cookie')).userId;
     setScreensaverState(userId, evt.open);
-    publishToUser(userId, payload);
-  } else {
-    publishToAll(payload);
   }
+  publishToUser(userId, payload);
   return new Response(null, { status: 204 });
 }
