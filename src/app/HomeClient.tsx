@@ -20,7 +20,8 @@ import { SortControl } from '@/components/SortControl';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { MobileApp } from '@/components/mobile/MobileApp';
 import { KenNookLogo } from '@/components/KenNookLogo';
-import { RightSidebar } from '@/components/RightSidebar';
+import { LibrarySwitcher } from '@/components/LibrarySwitcher';
+import { SidebarTools } from '@/components/SidebarTools';
 import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
@@ -147,20 +148,6 @@ function HomeContent() {
     // Changing the batch size changes the query key, so the infinite query
     // resets to the first page on its own — nothing else to do here.
   };
-
-  // Right "utilities" sidebar (library switcher, connect, admin, sign out).
-  // Occasional-use chrome, so it defaults CLOSED — maximizing grid real estate
-  // is the whole point. Persisted per-browser like the left sidebar.
-  const [rightbarOpen, setRightbarOpen] = useState(false);
-  useEffect(() => {
-    const v = localStorage.getItem('kennook.rightbar-open');
-    if (v !== null) setRightbarOpen(v === '1');
-  }, []);
-  const toggleRightbar = () => setRightbarOpen((v) => {
-    const next = !v;
-    try { localStorage.setItem('kennook.rightbar-open', next ? '1' : '0'); } catch { /* private mode */ }
-    return next;
-  });
 
   // Enable the sidebar slide transitions only AFTER the first paint, so the
   // initial localStorage-driven open/closed state snaps into place without an
@@ -803,16 +790,6 @@ function HomeContent() {
           <div className="flex-1">
             <SearchBar initial={url.query} onSubmit={handleSearchSubmit} />
           </div>
-          <button
-            onClick={toggleRightbar}
-            aria-pressed={rightbarOpen}
-            title={rightbarOpen ? 'Hide menu' : 'Show menu'}
-            aria-label="Toggle utilities sidebar"
-            className="flex items-center justify-center text-zinc-400 hover:text-zinc-100
-                       hover:bg-zinc-800 rounded px-2 py-1.5 transition shrink-0"
-          >
-            <RightbarToggleIcon />
-          </button>
         </div>
       </header>
 
@@ -833,6 +810,10 @@ function HomeContent() {
             <KenNookLogo height={24} />
             <span className="sr-only">KenNook</span>
           </h1>
+          {/* Library selection — hidden when there's only one library. */}
+          <div className="px-1 mb-5">
+            <LibrarySwitcher variant="sidebar" align="left" hideWhenSingle />
+          </div>
           <PlaylistsSection
             activePlaylistUuid={url.playlist}
             onSelectPlaylist={handlePlaylistSelect}
@@ -870,6 +851,7 @@ function HomeContent() {
               onSensitiveChange={(v) => url.set({ sensitive: v })}
             />
           )}
+          <SidebarTools onOpenHelp={() => setHelpOpen(true)} />
           </div>
           </div>
         </aside>
@@ -1104,18 +1086,6 @@ function HomeContent() {
             </div>
           )}
         </div>
-
-        <aside
-          className={`kn-app-scaled shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
-                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
-                     ${rightbarOpen ? 'w-56 ml-6' : 'w-0 ml-0'}`}
-        >
-          <div className="kn-sidebar-body" data-open={rightbarOpen}>
-            <div className={`w-56 pl-2 ${chromeQuietClass}`}>
-              <RightSidebar onOpenHelp={() => setHelpOpen(true)} />
-            </div>
-          </div>
-        </aside>
       </div>
 
       <MediaViewer
@@ -1247,18 +1217,6 @@ function SidebarToggleIcon() {
          strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
       <rect x="2" y="3" width="12" height="10" rx="1.5" />
       <line x1="6" y1="3" x2="6" y2="13" />
-    </svg>
-  );
-}
-
-function RightbarToggleIcon() {
-  // Panel-with-right-rail glyph — mirror of SidebarToggleIcon; reads as
-  // "show/hide the right utilities panel".
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-         strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
-      <rect x="2" y="3" width="12" height="10" rx="1.5" />
-      <line x1="10" y1="3" x2="10" y2="13" />
     </svg>
   );
 }
