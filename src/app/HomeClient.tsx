@@ -70,17 +70,18 @@ function HomeContent() {
     url.set({ item: uuid });
   }, [url]);
 
-  // Fullscreen + slideshow BOTH live in the URL via ?view= (tri-state:
-  // 'full' | 'slideshow' | null). Keeping slideshow in the URL — not React
-  // state — means it survives anything that overlays the page (the
-  // screensaver) and hard refreshes: dismissing the screensaver restores the
-  // exact view the URL describes. Slideshow implies fullscreen.
-  const viewerMaxed = url.view === 'full' || url.view === 'slideshow';
+  // Any open viewer is fullscreen now (the preview modal was retired) — so a
+  // bare ?item=X (e.g. an old bookmark with no ?view=) still opens maxed rather
+  // than in the dead preview layout. `?view=slideshow` additionally enables the
+  // slideshow auto-advance; ?view= otherwise just records the fullscreen intent.
+  const viewerMaxed = url.item != null;
   const slideshow = url.view === 'slideshow';
   const setViewerMaxed = useCallback((m: boolean) => {
-    // Un-maximizing always exits to the modal viewer (clears slideshow too).
-    // Maximizing from the modal enters plain fullscreen, not slideshow.
-    url.set({ view: m ? 'full' : null });
+    // There's no preview modal anymore — items open straight to fullscreen — so
+    // "un-maximize" closes the viewer entirely (back to the grid) rather than
+    // dropping to a preview. Clears slideshow + any deep-link seek too.
+    if (m) url.set({ view: 'full' });
+    else url.set({ item: null, view: null, tMs: null });
   }, [url]);
 
   // Transient (non-URL) state.
@@ -512,15 +513,10 @@ function HomeContent() {
   // ── Handlers ──────────────────────────────────────────────────────────
 
   const handleOpen = (item: MediaItemDto, match?: { tStartMs: number | null }) => {
-    if (match?.tStartMs != null) {
-      // Search-hit click on a timestamped match — open viewer AND seek to
-      // the match point in a single url.set so they propagate together.
-      url.set({ item: item.uuid, tMs: match.tStartMs });
-    } else {
-      // Clear any stale `t` from a previous search-hit click so non-search
-      // opens don't inherit a deep-link seek.
-      url.set({ item: item.uuid, tMs: null });
-    }
+    // Open straight to fullscreen (view:'full') — there's no intermediate
+    // preview modal anymore. A search-hit with a timestamp also seeks; a normal
+    // open clears any stale `t` so it doesn't inherit a previous deep-link seek.
+    url.set({ item: item.uuid, view: 'full', tMs: match?.tStartMs != null ? match.tStartMs : null });
   };
   const handleClose = () => {
     // Clearing `view` drops both fullscreen AND slideshow (slideshow is

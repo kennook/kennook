@@ -169,6 +169,11 @@ export function MediaViewer({
   // `paused` freezes the slideshow auto-advance timer.
   const [paused, setPaused] = useState(false);
 
+  // Fullscreen (i) info panel — the details/metadata that used to live in the
+  // preview modal, now a right slide-in toggled by the (i) button. Closes when
+  // the viewer leaves maxed mode.
+  const [infoOpen, setInfoOpen] = useState(false);
+
   // Chrome auto-hide in maxed mode: floating buttons + nav arrows + position
   // indicator fade out after ~2.5s of mouse inactivity. Same UX as YouTube
   // / Plex / Apple TV. Reset on any mouse movement.
@@ -600,6 +605,7 @@ export function MediaViewer({
         idleTimerRef.current = null;
       }
       setChromeVisible(true);
+      setInfoOpen(false); // info panel is maxed-only
     } else {
       // Entering maxed: show chrome immediately, then start the idle timer.
       setChromeVisible(true);
@@ -723,15 +729,16 @@ export function MediaViewer({
 
   // Step-down "back" handler. Used by both the Esc shortcut and the
   // top-right X button so they behave identically:
-  //   slideshow → exit slideshow (keep viewer on current item)
-  //   maxed     → un-maximize (drop back to the preview modal)
-  //   preview   → close the viewer entirely
+  //   info panel open → close it first
+  //   slideshow       → exit slideshow (keep viewer on current item)
+  //   maxed           → close the viewer (there's no preview modal to drop to)
   // A second press repeats the same logic at the next level.
   const handleStepBack = useCallback(() => {
+    if (infoOpen) { setInfoOpen(false); return; }
     if (slideshow) { onSlideshowExit?.(); return; }
     if (maxed) { setMaxed(false); return; }
     onClose();
-  }, [slideshow, maxed, onSlideshowExit, setMaxed, onClose]);
+  }, [infoOpen, slideshow, maxed, onSlideshowExit, setMaxed, onClose]);
 
   useShortcut('viewer.close', handleStepBack, { enabled: !!item });
 
@@ -1372,10 +1379,21 @@ export function MediaViewer({
 
         </div>
 
-        {/* Sidebar — normal mode only */}
-        {!maxed && (
-          <div className="md:w-80 bg-zinc-900/80 backdrop-blur rounded-xl p-5 ml-6
-                          flex flex-col gap-3 text-sm overflow-y-auto self-stretch">
+        {/* Details panel — slides in from the right when the (i) button is
+            toggled in fullscreen. Holds everything the old preview modal did.
+            Always mounted in maxed mode so it can slide; parked off-screen
+            (+ non-interactive) when closed. Stays above the chrome and doesn't
+            auto-fade. */}
+        {maxed && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            {...chromeHoverHandlers}
+            className={`absolute right-0 top-0 h-full w-80 max-w-[85vw] z-30
+                        bg-zinc-900/95 backdrop-blur border-l border-zinc-800
+                        p-5 flex flex-col gap-3 text-sm overflow-y-auto
+                        transition-transform duration-300 ease-out
+                        ${infoOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'}`}
+          >
             <div className="flex items-start gap-2">
               <h2 className="font-medium text-base text-zinc-100 break-all flex-1">
                 {item.filename}
@@ -1494,7 +1512,6 @@ export function MediaViewer({
 
             <div className="mt-auto pt-3 border-t border-zinc-800 text-xs text-zinc-500 space-y-1">
               <div>
-                <kbd className="text-zinc-300">F</kbd> max ·{' '}
                 <kbd className="text-zinc-300">←</kbd>{' '}
                 <kbd className="text-zinc-300">→</kbd> nav ·{' '}
                 <kbd className="text-zinc-300">Esc</kbd> close
@@ -1538,6 +1555,13 @@ export function MediaViewer({
         )}
         {maxed && (
           <>
+            <ToolbarButton
+              onClick={() => setInfoOpen((v) => !v)}
+              title="Details"
+              className={infoOpen ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+            >
+              <InfoIcon />
+            </ToolbarButton>
             {onAddToPlaylist && (
               <ToolbarButton
                 onClick={() => onAddToPlaylist(item)}
@@ -2134,6 +2158,14 @@ function MaximizeIcon() { return (
 function MinimizeIcon() { return (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" strokeLinecap="round" />
+  </svg>
+); }
+function InfoIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+       strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="8" cy="8" r="6.5" />
+    <path d="M8 7.5v3.5" />
+    <circle cx="8" cy="5" r="0.6" fill="currentColor" stroke="none" />
   </svg>
 ); }
 function FitCoverIcon() { return (
