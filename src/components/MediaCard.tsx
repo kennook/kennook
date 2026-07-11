@@ -144,7 +144,6 @@ export function MediaCard({
     <div
       style={{ aspectRatio: String(aspectRatio) }}
       className={`group relative overflow-hidden rounded-lg bg-zinc-900 transition
-                  break-inside-avoid mb-2
                   ${selected ? 'ring-2 ring-emerald-400' : 'hover:ring-2 hover:ring-zinc-500'}`}
     >
       <button

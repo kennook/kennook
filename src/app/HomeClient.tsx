@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
-import { keepPreviousData, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc-client';
 import { usePageState } from '@/lib/url-state';
 import { SearchBar } from '@/components/SearchBar';
@@ -28,7 +28,6 @@ import { PlaylistsSection } from '@/components/PlaylistsSection';
 import { SavedSearchesSection } from '@/components/SavedSearchesSection';
 import { PeopleSection } from '@/components/PeopleSection';
 import { SelectionBar } from '@/components/SelectionBar';
-import { Pagination } from '@/components/Pagination';
 import { useShortcut } from '@/lib/shortcuts';
 import { useSync, useSyncEvent } from '@/lib/sync';
 
@@ -39,6 +38,33 @@ interface SelectionRef {
 
 const DEFAULT_PAGE_SIZE = 100;
 const PAGE_SIZE_OPTIONS = [50, 100, 200, 500] as const;
+
+/** Immutably patch an infinite-query cache ({ pages: [{ items }] }). `mapItem`
+ *  returns a replacement for a matching item, or null to leave it unchanged.
+ *  Used for the optimistic like/rotation patches so an open viewer isn't yanked
+ *  closed by a refetch. */
+function patchInfinitePages(
+  old: unknown,
+  mapItem: (it: Record<string, unknown>) => Record<string, unknown> | null,
+): unknown {
+  if (!old || typeof old !== 'object') return old;
+  const o = old as { pages?: Array<{ items?: Array<Record<string, unknown>> }> };
+  if (!Array.isArray(o.pages)) return old;
+  let changed = false;
+  const pages = o.pages.map((page) => {
+    if (!Array.isArray(page.items)) return page;
+    let pageChanged = false;
+    const items = page.items.map((it) => {
+      const mapped = mapItem(it);
+      if (mapped == null) return it;
+      pageChanged = true;
+      changed = true;
+      return mapped;
+    });
+    return pageChanged ? { ...page, items } : page;
+  });
+  return changed ? { ...o, pages } : old;
+}
 
 export default function HomeClient() {
   return (
@@ -95,11 +121,6 @@ function HomeContent() {
   // viewer chrome) fades to a low-opacity, non-interactive state. Cleared on
   // the first real user input (mouse move / key / wheel / touch).
   const [quietMode, setQuietMode] = useState(false);
-  // When prev/next steps across a page boundary, we update the URL's `page`
-  // param and remember which end of the next page to land on. The viewer
-  // uses this as a fallback selection while React Query is fetching, so the
-  // user sees a seamless transition (no flash of empty viewer).
-  const [postLoadIntent, setPostLoadIntent] = useState<'first' | 'last' | null>(null);
   // Collapsible filters/facets sidebar. Default open; persisted per-browser.
   // Hydrated from localStorage after mount to avoid an SSR/client mismatch.
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -123,9 +144,8 @@ function HomeContent() {
   const changePageSize = (n: number) => {
     setPageSize(n);
     try { localStorage.setItem('kennook.page-size', String(n)); } catch { /* private mode */ }
-    // Page offsets change with the size — snap back to page 1 so we don't land
-    // on a now-out-of-range page.
-    url.set({ page: 1 });
+    // Changing the batch size changes the query key, so the infinite query
+    // resets to the first page on its own — nothing else to do here.
   };
 
   // Right "utilities" sidebar (library switcher, connect, admin, sign out).
@@ -287,8 +307,6 @@ function HomeContent() {
   const inSearch = !inPlaylist && !inSimilar && url.query !== '';
   const inRecent = !inPlaylist && !inSimilar && !inSearch;
 
-  const offset = (url.page - 1) * pageSize;
-
   const filterArgs = {
     kind: url.kind ?? undefined,
     orientation: url.orientation ?? undefined,
@@ -442,89 +460,82 @@ function HomeContent() {
     });
   };
 
-  // `placeholderData: keepPreviousData` keeps the prior page's items visible
-  // during the next-page fetch — critical for the in-viewer cross-page
-  // transition to feel instant rather than flashing through an empty state.
-  const recent = trpc.media.list.useQuery(
-    { limit: pageSize, offset, ...filterArgs },
-    { enabled: inRecent, placeholderData: keepPreviousData },
+  // Infinite-scroll queries — each `pages` entry is one server response; the
+  // masonry's onRender loader pulls the next page as the user nears the end.
+  // URL state is baked into the query key (via the inputs below), so changing
+  // a filter/search resets the query to page 0 automatically.
+  const recent = trpc.media.list.useInfiniteQuery(
+    { limit: pageSize, ...filterArgs },
+    { enabled: inRecent, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
   );
-  const search = trpc.media.search.useQuery(
-    { query: url.query, limit: pageSize, offset, ...filterArgs },
-    { enabled: inSearch, placeholderData: keepPreviousData },
+  const search = trpc.media.search.useInfiniteQuery(
+    { query: url.query, limit: pageSize, ...filterArgs },
+    { enabled: inSearch, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
   );
-  const similar = trpc.media.similar.useQuery(
-    { uuid: url.similar ?? '', limit: pageSize, offset, ...filterArgs },
-    { enabled: inSimilar, placeholderData: keepPreviousData },
+  const similar = trpc.media.similar.useInfiniteQuery(
+    { uuid: url.similar ?? '', limit: pageSize, ...filterArgs },
+    { enabled: inSimilar, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
   );
-  const playlist = trpc.playlist.get.useQuery(
-    { uuid: url.playlist ?? '', limit: pageSize, offset },
-    { enabled: inPlaylist, placeholderData: keepPreviousData },
+  const playlist = trpc.playlist.get.useInfiniteQuery(
+    { uuid: url.playlist ?? '', limit: pageSize },
+    { enabled: inPlaylist, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
   );
 
-  const loading =
-    inPlaylist ? playlist.isLoading
-    : inSimilar ? similar.isLoading
-    : inSearch ? search.isLoading
-    : recent.isLoading;
+  // The active query for this view drives loading + infinite-load wiring.
+  const active = inPlaylist ? playlist : inSimilar ? similar : inSearch ? search : recent;
+  const loading = active.isLoading;
+  const hasMore = active.hasNextPage ?? false;
+  const loadMore = () => { void active.fetchNextPage(); };
 
-  const items: MediaItemDto[] =
-    inPlaylist
-      ? (playlist.data?.items
+  const items: MediaItemDto[] = useMemo(() => {
+    if (inPlaylist) {
+      return playlist.data?.pages.flatMap((p) =>
+        p.items
           .filter((it) => it.available)
-          .map((it) => (it as unknown as { available: true; item: MediaItemDto }).item) ?? [])
-      : inSimilar
-        ? (similar.data?.items ?? [])
-        : inSearch
-          ? (search.data?.items ?? [])
-          : (recent.data?.items ?? []);
+          .map((it) => (it as unknown as { available: true; item: MediaItemDto }).item),
+      ) ?? [];
+    }
+    if (inSimilar) return similar.data?.pages.flatMap((p) => p.items) ?? [];
+    if (inSearch) return search.data?.pages.flatMap((p) => p.items) ?? [];
+    return recent.data?.pages.flatMap((p) => p.items) ?? [];
+  }, [inPlaylist, inSimilar, inSearch, playlist.data, similar.data, search.data, recent.data]);
 
-  const hasMore =
-    inPlaylist ? (playlist.data?.hasMore ?? false)
-    : inSimilar ? (similar.data?.hasMore ?? false)
-    : inSearch ? (search.data?.hasMore ?? false)
-    : (recent.data?.hasMore ?? false);
-
+  // Per-view metadata for the headers (first page carries it).
+  const similarSource = similar.data?.pages[0]?.source ?? null;
+  const playlistMeta = playlist.data?.pages[0]?.playlist ?? null;
+  const playlistTotal = playlist.data?.pages[0]?.totalCount;
   const totalCount = inPlaylist
-    ? playlist.data?.totalCount
+    ? playlistTotal
     : inRecent
-      ? recent.data?.totalCount
+      ? recent.data?.pages[0]?.totalCount
       : undefined; // search/similar are top-K ranked — no meaningful total
 
-  // Resolve the visible viewer item from current items + selection state.
-  // If a postLoadIntent is set (after a cross-page navigation) and the
-  // selected UUID isn't in this page's items yet, fall back to the first or
-  // last item per the intent — this keeps the viewer showing the right item
-  // through the page transition without a flash.
-  const directIndex = selectedUuid
-    ? items.findIndex((i) => i.uuid === selectedUuid)
-    : -1;
-  let selectedIndex = directIndex;
-  let selected: MediaItemDto | null = directIndex >= 0 ? items[directIndex] : null;
-  // Fallback during cross-page navigation. We deliberately do NOT gate on a
-  // `loading` flag — React Query's `isLoading` flips true on a new
-  // queryKey-fetch even when keepPreviousData provides displayable items,
-  // which would briefly cause `selected` to be null and close the viewer.
-  if (!selected && postLoadIntent && items.length > 0) {
-    selectedIndex = postLoadIntent === 'first' ? 0 : items.length - 1;
-    selected = items[selectedIndex];
-  }
-
-  // Once the page transition completes, sync state: write the new selection
-  // back to `selectedUuid` and clear the intent.
-  //
-  // CRITICAL: we must only clear the intent once we've actually landed on a
-  // *different* item. With `keepPreviousData`, `selected` will resolve to the
-  // OLD page's item for one or more renders before the new page arrives — if
-  // we clear `postLoadIntent` during that window, the fallback below stops
-  // firing, and when the new data finally arrives `selected` becomes null and
-  // the viewer closes. Hence the `selectedUuid !== selected.uuid` gate.
+  // Dataset identity — when it changes, the grid remounts (fresh masonry
+  // positions) and we scroll back to the top.
+  const resetKey = JSON.stringify([
+    inPlaylist ? `pl:${url.playlist}` : inSimilar ? `sim:${url.similar}` : inSearch ? `q:${url.query}` : 'recent',
+    filterArgs, pageSize,
+  ]);
   useEffect(() => {
-    if (!postLoadIntent || !selected) return;
-    if (selectedUuid === selected.uuid) return;
-    setSelectedUuid(selected.uuid);
-    setPostLoadIntent(null);
-  }, [postLoadIntent, selected, selectedUuid]);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+  }, [resetKey]);
+
+  // The viewer walks the single accumulated `items` list — no page boundaries
+  // to cross anymore. Just find the selected item by uuid.
+  const selectedIndex = selectedUuid ? items.findIndex((i) => i.uuid === selectedUuid) : -1;
+  const selected: MediaItemDto | null = selectedIndex >= 0 ? items[selectedIndex] : null;
+
+  // "Next" at the end of the loaded list (with more available) fetches the next
+  // page and then advances once it arrives. This ref carries that intent across
+  // the fetch.
+  const advanceAfterLoadRef = useRef(false);
+  useEffect(() => {
+    if (!advanceAfterLoadRef.current) return;
+    if (selectedIndex >= 0 && selectedIndex < items.length - 1) {
+      advanceAfterLoadRef.current = false;
+      setSelectedUuid(items[selectedIndex + 1].uuid);
+    }
+  }, [items.length, selectedIndex, setSelectedUuid]);
 
   // ── Handlers ──────────────────────────────────────────────────────────
 
@@ -607,36 +618,21 @@ function HomeContent() {
   // selection mode" toggle — you start selecting by selecting an item.
   const selecting = selection.length > 0;
 
-  // Cross-page navigation: at the boundary of the visible page, step into
-  // the next (or previous) page and land on the first / last item there.
-  // Slideshow mode adds wrap-around at the very end so playback loops.
+  // Navigation over the single accumulated list. "Next" past the last loaded
+  // item fetches more and advances when it arrives (advanceAfterLoadRef);
+  // slideshow wraps to the top once everything's loaded.
   const onPrev = selectedIndex > 0
     ? () => setSelectedUuid(items[selectedIndex - 1].uuid)
-    : (url.page > 1
-        ? () => {
-            setPostLoadIntent('last');
-            url.set({ page: url.page - 1 });
-          }
-        : undefined);
+    : undefined;
 
-  const atVeryEnd =
-    selectedIndex >= 0 && selectedIndex >= items.length - 1 && !hasMore;
+  const atVeryEnd = selectedIndex >= 0 && selectedIndex >= items.length - 1 && !hasMore;
   const onNext = selectedIndex >= 0 && selectedIndex < items.length - 1
     ? () => setSelectedUuid(items[selectedIndex + 1].uuid)
     : hasMore
-      ? () => {
-          setPostLoadIntent('first');
-          url.set({ page: url.page + 1 });
-        }
-      : slideshow && atVeryEnd && url.page > 1
-        ? () => {
-            // Loop: jump back to page 1 and land on its first item.
-            setPostLoadIntent('first');
-            url.set({ page: 1 });
-          }
-        : slideshow && atVeryEnd && items.length > 0
-          ? () => setSelectedUuid(items[0].uuid)
-          : undefined;
+      ? () => { advanceAfterLoadRef.current = true; loadMore(); }
+      : slideshow && atVeryEnd && items.length > 0
+        ? () => setSelectedUuid(items[0].uuid)
+        : undefined;
 
   const onSeeSimilar = (item: MediaItemDto) => {
     url.set({
@@ -690,12 +686,6 @@ function HomeContent() {
   // Item pending the "exclude" (soft-delete) confirmation.
   const [excludeItem, setExcludeItem] = useState<MediaItemDto | null>(null);
 
-  const goToPage = (page: number) => {
-    url.set({ page });
-    // Scroll to top on page change so users land at the first item.
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
   // Like-count cache patch. Used by BOTH the local setLike mutation's
   // onSuccess AND the cross-session 'item.like' sync event, so a like
   // performed in another tab/device updates this session's cache without
@@ -704,31 +694,12 @@ function HomeContent() {
   const trpcUtils = trpc.useUtils();
   const queryClient = useQueryClient();
   const applyLikePatch = useCallback((uuid: string, count: number) => {
-    const patchFlat = (old: unknown) => {
-      if (!old || typeof old !== 'object') return old;
-      const o = old as { items?: Array<{ uuid: string; likeCount: number } & Record<string, unknown>> };
-      if (!Array.isArray(o.items)) return old;
-      let changed = false;
-      const items = o.items.map((it) => {
-        if (it.uuid !== uuid) return it;
-        changed = true;
-        return { ...it, likeCount: count };
-      });
-      return changed ? { ...o, items } : old;
-    };
-    const patchPlaylist = (old: unknown) => {
-      if (!old || typeof old !== 'object') return old;
-      const o = old as { items?: Array<Record<string, unknown>> };
-      if (!Array.isArray(o.items)) return old;
-      let changed = false;
-      const items = o.items.map((it) => {
-        const wrapper = it as { available?: boolean; item?: { uuid?: string; likeCount?: number } & Record<string, unknown> };
-        if (!wrapper.available || wrapper.item?.uuid !== uuid) return it;
-        changed = true;
-        return { ...wrapper, item: { ...wrapper.item, likeCount: count } };
-      });
-      return changed ? { ...o, items } : old;
-    };
+    const patchFlat = (old: unknown) => patchInfinitePages(old, (it) =>
+      it.uuid === uuid ? { ...it, likeCount: count } : null);
+    const patchPlaylist = (old: unknown) => patchInfinitePages(old, (it) => {
+      const w = it as { available?: boolean; item?: { uuid?: string } & Record<string, unknown> };
+      return w.available && w.item?.uuid === uuid ? { ...w, item: { ...w.item, likeCount: count } } : null;
+    });
     queryClient.setQueriesData({ queryKey: [['media', 'list']] }, patchFlat);
     queryClient.setQueriesData({ queryKey: [['media', 'search']] }, patchFlat);
     queryClient.setQueriesData({ queryKey: [['media', 'similar']] }, patchFlat);
@@ -746,34 +717,12 @@ function HomeContent() {
   // ── Rotation: same cache-patch pattern as likes, so the rotate-button
   // is instant and the viewer doesn't get yanked closed by a refetch.
   const applyRotationPatch = useCallback((uuid: string, rotation: number) => {
-    const patchFlat = (old: unknown) => {
-      if (!old || typeof old !== 'object') return old;
-      const o = old as { items?: Array<{ uuid: string } & Record<string, unknown>> };
-      if (!Array.isArray(o.items)) return old;
-      let changed = false;
-      const items = o.items.map((it) => {
-        if (it.uuid !== uuid) return it;
-        changed = true;
-        return { ...it, rotation };
-      });
-      return changed ? { ...o, items } : old;
-    };
-    const patchPlaylist = (old: unknown) => {
-      if (!old || typeof old !== 'object') return old;
-      const o = old as { items?: Array<Record<string, unknown>> };
-      if (!Array.isArray(o.items)) return old;
-      let changed = false;
-      const items = o.items.map((it) => {
-        const wrapper = it as {
-          available?: boolean;
-          item?: { uuid?: string } & Record<string, unknown>;
-        };
-        if (!wrapper.available || wrapper.item?.uuid !== uuid) return it;
-        changed = true;
-        return { ...wrapper, item: { ...wrapper.item, rotation } };
-      });
-      return changed ? { ...o, items } : old;
-    };
+    const patchFlat = (old: unknown) => patchInfinitePages(old, (it) =>
+      it.uuid === uuid ? { ...it, rotation } : null);
+    const patchPlaylist = (old: unknown) => patchInfinitePages(old, (it) => {
+      const w = it as { available?: boolean; item?: { uuid?: string } & Record<string, unknown> };
+      return w.available && w.item?.uuid === uuid ? { ...w, item: { ...w.item, rotation } } : null;
+    });
     queryClient.setQueriesData({ queryKey: [['media', 'list']] }, patchFlat);
     queryClient.setQueriesData({ queryKey: [['media', 'search']] }, patchFlat);
     queryClient.setQueriesData({ queryKey: [['media', 'similar']] }, patchFlat);
@@ -836,10 +785,10 @@ function HomeContent() {
 
   return (
     <main className="min-h-screen">
-      {/* Everything inside kn-app-scaled grows on large displays (see globals.css).
-          The viewer + overlays below stay OUTSIDE it — they scale themselves. */}
-      <div className="kn-app-scaled">
-      <header className={`sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
+      {/* kn-app-scaled (large-screen zoom) lives on the header + sidebars only —
+          NOT the grid/content column, since CSS zoom desyncs masonic's
+          virtualization math. The grid scales via responsive columnWidth. */}
+      <header className={`kn-app-scaled sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
         <div className="px-5 py-4 flex items-center gap-4">
           <button
             onClick={toggleSidebar}
@@ -874,7 +823,7 @@ function HomeContent() {
             Quiet-mode fade lives on the inner div so its opacity transition
             doesn't collide with the width transition here. */}
         <aside
-          className={`shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
+          className={`kn-app-scaled shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
                      max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
                      ${sidebarOpen ? 'w-56 mr-6' : 'w-0 mr-0'}`}
         >
@@ -930,7 +879,7 @@ function HomeContent() {
             selection={selection}
             onClear={clearSelection}
             currentPlaylistUuid={inPlaylist ? url.playlist : null}
-            currentPlaylistName={inPlaylist ? playlist.data?.playlist.name ?? null : null}
+            currentPlaylistName={inPlaylist ? playlistMeta?.name ?? null : null}
             onRemovedFromPlaylist={clearSelection}
             currentPersonUuid={url.person}
             onReassignSelection={() => {
@@ -1037,18 +986,18 @@ function HomeContent() {
             </div>
           )}
 
-          {inSimilar && similar.data?.source && (
+          {inSimilar && similarSource && (
             <div className="mb-4 flex items-center gap-3 bg-zinc-900/60 border border-zinc-800
                             rounded-lg px-3 py-2">
               <img
-                src={similar.data.source.thumbnailUrl}
-                alt={similar.data.source.filename}
+                src={similarSource.thumbnailUrl}
+                alt={similarSource.filename}
                 className="w-10 h-10 object-cover rounded shrink-0"
               />
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-zinc-500">Similar to</div>
                 <div className="text-sm text-zinc-200 truncate">
-                  {similar.data.source.filename}
+                  {similarSource.filename}
                 </div>
               </div>
               {items.length > 0 && <PlayButton onClick={startSlideshow} />}
@@ -1062,16 +1011,16 @@ function HomeContent() {
             </div>
           )}
 
-          {inPlaylist && playlist.data && (
+          {inPlaylist && playlistMeta && (
             <div className="mb-4 flex items-start gap-4">
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-zinc-500 uppercase tracking-wider">Playlist</div>
-                <div className="text-lg text-zinc-100 font-medium">{playlist.data.playlist.name}</div>
+                <div className="text-lg text-zinc-100 font-medium">{playlistMeta.name}</div>
                 <div className="text-sm text-zinc-500">
-                  {playlist.data.totalCount} item{playlist.data.totalCount === 1 ? '' : 's'}
+                  {playlistTotal} item{playlistTotal === 1 ? '' : 's'}
                 </div>
               </div>
-              {playlist.data.totalCount > 0 && (
+              {(playlistTotal ?? 0) > 0 && (
                 <div className="shrink-0 mt-1">
                   <PlayButton onClick={startSlideshow} />
                 </div>
@@ -1082,14 +1031,14 @@ function HomeContent() {
           {inSearch && (
             <div className="mb-4 flex items-center gap-4">
               <div className="text-sm text-zinc-500 flex-1">
-                Page {url.page} of results for{' '}
+                Results for{' '}
                 <span className="text-zinc-300">&ldquo;{url.query}&rdquo;</span>
               </div>
               {items.length > 0 && <PlayButton onClick={startSlideshow} />}
             </div>
           )}
 
-          {inSimilar && !similar.data?.source && (
+          {inSimilar && !similarSource && (
             <div className="text-sm text-zinc-500 mb-4">Loading…</div>
           )}
 
@@ -1137,19 +1086,27 @@ function HomeContent() {
             selectionMode={selecting}
             onSetLikes={handleSetLikes}
             loading={loading}
+            onLoadMore={loadMore}
+            hasMore={hasMore}
+            resetKey={resetKey}
           />
 
-          <Pagination
-            page={url.page}
-            hasMore={hasMore}
-            totalCount={totalCount}
-            pageSize={pageSize}
-            onPageChange={goToPage}
-          />
+          {/* Infinite-scroll status footer (replaces the pager). */}
+          {items.length > 0 && (
+            <div className="py-6 text-center text-xs text-zinc-600">
+              {active.isFetchingNextPage
+                ? 'Loading more…'
+                : !hasMore
+                  ? (totalCount != null
+                      ? `${items.length.toLocaleString()} of ${totalCount.toLocaleString()} · end`
+                      : `${items.length.toLocaleString()} items`)
+                  : null}
+            </div>
+          )}
         </div>
 
         <aside
-          className={`shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
+          className={`kn-app-scaled shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
                      max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
                      ${rightbarOpen ? 'w-56 ml-6' : 'w-0 ml-0'}`}
         >
@@ -1160,7 +1117,6 @@ function HomeContent() {
           </div>
         </aside>
       </div>
-      </div>{/* /kn-app-scaled */}
 
       <MediaViewer
         item={selected}
