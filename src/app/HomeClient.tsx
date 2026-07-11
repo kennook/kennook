@@ -37,7 +37,8 @@ interface SelectionRef {
   itemUuid: string;
 }
 
-const PAGE_SIZE = 60;
+const DEFAULT_PAGE_SIZE = 100;
+const PAGE_SIZE_OPTIONS = [50, 100, 200, 500] as const;
 
 export default function HomeClient() {
   return (
@@ -111,6 +112,21 @@ function HomeContent() {
     try { localStorage.setItem('kennook.sidebar-open', next ? '1' : '0'); } catch { /* private mode */ }
     return next;
   });
+
+  // Results per page — user-adjustable, persisted per-browser. Default 100.
+  // Hydrated after mount to avoid an SSR/client mismatch.
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  useEffect(() => {
+    const v = Number(localStorage.getItem('kennook.page-size'));
+    if (PAGE_SIZE_OPTIONS.includes(v as (typeof PAGE_SIZE_OPTIONS)[number])) setPageSize(v);
+  }, []);
+  const changePageSize = (n: number) => {
+    setPageSize(n);
+    try { localStorage.setItem('kennook.page-size', String(n)); } catch { /* private mode */ }
+    // Page offsets change with the size — snap back to page 1 so we don't land
+    // on a now-out-of-range page.
+    url.set({ page: 1 });
+  };
 
   // Right "utilities" sidebar (library switcher, connect, admin, sign out).
   // Occasional-use chrome, so it defaults CLOSED — maximizing grid real estate
@@ -271,7 +287,7 @@ function HomeContent() {
   const inSearch = !inPlaylist && !inSimilar && url.query !== '';
   const inRecent = !inPlaylist && !inSimilar && !inSearch;
 
-  const offset = (url.page - 1) * PAGE_SIZE;
+  const offset = (url.page - 1) * pageSize;
 
   const filterArgs = {
     kind: url.kind ?? undefined,
@@ -430,19 +446,19 @@ function HomeContent() {
   // during the next-page fetch — critical for the in-viewer cross-page
   // transition to feel instant rather than flashing through an empty state.
   const recent = trpc.media.list.useQuery(
-    { limit: PAGE_SIZE, offset, ...filterArgs },
+    { limit: pageSize, offset, ...filterArgs },
     { enabled: inRecent, placeholderData: keepPreviousData },
   );
   const search = trpc.media.search.useQuery(
-    { query: url.query, limit: PAGE_SIZE, offset, ...filterArgs },
+    { query: url.query, limit: pageSize, offset, ...filterArgs },
     { enabled: inSearch, placeholderData: keepPreviousData },
   );
   const similar = trpc.media.similar.useQuery(
-    { uuid: url.similar ?? '', limit: PAGE_SIZE, offset, ...filterArgs },
+    { uuid: url.similar ?? '', limit: pageSize, offset, ...filterArgs },
     { enabled: inSimilar, placeholderData: keepPreviousData },
   );
   const playlist = trpc.playlist.get.useQuery(
-    { uuid: url.playlist ?? '', limit: PAGE_SIZE, offset },
+    { uuid: url.playlist ?? '', limit: pageSize, offset },
     { enabled: inPlaylist, placeholderData: keepPreviousData },
   );
 
@@ -1094,11 +1110,13 @@ function HomeContent() {
             onClearAll={clearAllFilters}
           />
 
-          {/* Sort + shuffle — browse and search/similar (playlists keep their
-              own order). Picking a sort clears shuffle; the shuffle toggle
-              mints a fresh seed on, clears it off. */}
-          {!inPlaylist && (
-            <div className="flex justify-end mb-3">
+          {/* View controls: results-per-page (always) + sort/shuffle (browse and
+              search/similar; playlists keep their own order). Picking a sort
+              clears shuffle; the shuffle toggle mints a fresh seed on / clears
+              it off. */}
+          <div className="flex items-center justify-end gap-3 mb-3">
+            <PageSizeControl value={pageSize} onChange={changePageSize} />
+            {!inPlaylist && (
               <SortControl
                 sort={url.sort}
                 shuffle={url.shuffle}
@@ -1108,8 +1126,8 @@ function HomeContent() {
                   url.set({ shuffle: url.shuffle != null ? null : Math.floor(Math.random() * 2_000_000_000) })
                 }
               />
-            </div>
-          )}
+            )}
+          </div>
 
           <MediaGrid
             items={items}
@@ -1125,7 +1143,7 @@ function HomeContent() {
             page={url.page}
             hasMore={hasMore}
             totalCount={totalCount}
-            pageSize={PAGE_SIZE}
+            pageSize={pageSize}
             onPageChange={goToPage}
           />
         </div>
@@ -1307,6 +1325,25 @@ function PencilIcon() {
     >
       <path d="M11 2l3 3L5.5 13.5 2 14l.5-3.5L11 2z" />
     </svg>
+  );
+}
+
+function PageSizeControl({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-zinc-500 shrink-0">
+      <span>Per page</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label="Results per page"
+        className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-zinc-300
+                   hover:border-zinc-700 focus:border-zinc-600 outline-none cursor-pointer"
+      >
+        {PAGE_SIZE_OPTIONS.map((n) => (
+          <option key={n} value={n}>{n}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 
