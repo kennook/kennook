@@ -26,6 +26,8 @@ import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
 import { PlaylistsSection } from '@/components/PlaylistsSection';
+import { SourcesSection } from '@/components/SourcesSection';
+import { ExternalSourceView } from '@/components/ExternalSourceView';
 import { SavedSearchesSection } from '@/components/SavedSearchesSection';
 import { PeopleSection } from '@/components/PeopleSection';
 import { SelectionBar } from '@/components/SelectionBar';
@@ -288,11 +290,15 @@ function HomeContent() {
   // time so the first trigger plays instantly. ~1.4MB for 1080p.
   useEffect(() => preloadScreensaverInBackground(), []);
 
+  // An external source (YouTube) takes over the whole view — the internal
+  // library modes below are all suppressed while one is selected.
+  const inExternal = url.source != null;
+
   // View modes derived from URL — playlist > similar > search > recent.
-  const inPlaylist = !!url.playlist;
-  const inSimilar = !inPlaylist && !!url.similar;
-  const inSearch = !inPlaylist && !inSimilar && url.query !== '';
-  const inRecent = !inPlaylist && !inSimilar && !inSearch;
+  const inPlaylist = !inExternal && !!url.playlist;
+  const inSimilar = !inExternal && !inPlaylist && !!url.similar;
+  const inSearch = !inExternal && !inPlaylist && !inSimilar && url.query !== '';
+  const inRecent = !inExternal && !inPlaylist && !inSimilar && !inSearch;
 
   const filterArgs = {
     kind: url.kind ?? undefined,
@@ -315,7 +321,7 @@ function HomeContent() {
     ...filterArgs,
     query: inSearch ? url.query : undefined,
     similarToUuid: inSimilar ? (url.similar ?? undefined) : undefined,
-  }, { enabled: !inPlaylist });
+  }, { enabled: !inPlaylist && !inExternal });
 
   // Person header data — only fetched when a person is selected; cheap
   // (one row from user.db). The grid query above already filters by
@@ -623,7 +629,7 @@ function HomeContent() {
 
   const onSeeSimilar = (item: MediaItemDto) => {
     url.set({
-      similar: item.uuid, query: '', playlist: null, person: null,
+      similar: item.uuid, query: '', playlist: null, person: null, source: null,
       item: null, view: null,
     });
   };
@@ -631,13 +637,13 @@ function HomeContent() {
   const clearSimilar = () => url.set({ similar: null });
 
   const handleSearchSubmit = (q: string) => {
-    url.set({ query: q, similar: q ? null : undefined, playlist: q ? null : undefined });
+    url.set({ query: q, similar: q ? null : undefined, playlist: q ? null : undefined, source: q ? null : undefined });
   };
 
   const handlePlaylistSelect = (uuid: string | null) => {
     // view:null clears slideshow (it's derived from view) along with the viewer.
     url.set({
-      playlist: uuid, similar: null, query: '', person: null,
+      playlist: uuid, similar: null, query: '', person: null, source: null,
       item: null, view: null,
     });
     setSelection([]);
@@ -645,7 +651,17 @@ function HomeContent() {
 
   const handlePersonSelect = (uuid: string | null) => {
     url.set({
-      person: uuid, playlist: null, similar: null,
+      person: uuid, playlist: null, similar: null, source: null,
+      item: null, view: null,
+    });
+    setSelection([]);
+  };
+
+  // Select an external source (or null to return to the internal library).
+  // Clears every internal view axis so the two realms never blend.
+  const handleSelectSource = (slug: string | null) => {
+    url.set({
+      source: slug, playlist: null, similar: null, query: '', person: null,
       item: null, view: null,
     });
     setSelection([]);
@@ -818,6 +834,10 @@ function HomeContent() {
             activePlaylistUuid={url.playlist}
             onSelectPlaylist={handlePlaylistSelect}
           />
+          <SourcesSection
+            activeSourceSlug={url.source}
+            onSelectSource={handleSelectSource}
+          />
           <SavedSearchesSection />
           <PeopleSection
             activePersonUuid={url.person}
@@ -857,6 +877,10 @@ function HomeContent() {
         </aside>
 
         <div className="flex-1 min-w-0">
+          {inExternal ? (
+            <ExternalSourceView slug={url.source!} />
+          ) : (
+          <>
           <SelectionBar
             selection={selection}
             onClear={clearSelection}
@@ -1084,6 +1108,8 @@ function HomeContent() {
                       : `${items.length.toLocaleString()} items`)
                   : null}
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

@@ -28,6 +28,9 @@ export interface PageState {
   query: string;
   similar: string | null;
   playlist: string | null;
+  /** Slug of the selected EXTERNAL source (YouTube channel/playlist). When set,
+   *  the page shows that source's videos instead of the local library. */
+  source: string | null;
   person: string | null;
   kind: Kind | null;
   orientation: Orientation | null;
@@ -71,7 +74,7 @@ export interface PageState {
 // Keys we manage in the URL. Anything not in this list is left alone, so other
 // libraries (analytics, etc.) can drop their own params without us clobbering.
 // `ws` is the pre-rename library key — we still read it but always write `lib`.
-const ALL_KEYS = ['q', 'similar', 'playlist', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'sort', 'shuffle', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
+const ALL_KEYS = ['q', 'similar', 'playlist', 'source', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'sort', 'shuffle', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
 type UrlKey = typeof ALL_KEYS[number];
 
 // Keys that DON'T reset `page` when they change — these don't alter
@@ -91,6 +94,7 @@ function parseState(params: URLSearchParams): PageState {
     query: params.get('q') ?? '',
     similar: params.get('similar'),
     playlist: params.get('playlist'),
+    source: params.get('source'),
     person: params.get('person'),
     kind: (params.get('kind') as Kind | null) ?? null,
     orientation: (params.get('orientation') as Orientation | null) ?? null,
@@ -160,6 +164,7 @@ function applyPatchToParams(
   if ('query' in patch) writeKey(out, 'q', patch.query);
   if ('similar' in patch) writeKey(out, 'similar', patch.similar);
   if ('playlist' in patch) writeKey(out, 'playlist', patch.playlist);
+  if ('source' in patch) writeKey(out, 'source', patch.source);
   if ('person' in patch) writeKey(out, 'person', patch.person);
   if ('kind' in patch) writeKey(out, 'kind', patch.kind);
   if ('orientation' in patch) writeKey(out, 'orientation', patch.orientation);

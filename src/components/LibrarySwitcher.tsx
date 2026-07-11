@@ -94,6 +94,7 @@ export function LibrarySwitcher({
       query: '',
       similar: null,
       playlist: null,
+      source: null,
       person: null,
       kind: null,
       orientation: null,
