@@ -12,24 +12,95 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
-- Multi-window sync: each browser now holds a single `/api/sync` SSE stream and a
-  single cross-process state poll — a leader elected across same-origin windows
-  (via a localStorage lease) owns them and relays to the others over
-  BroadcastChannel. Many open windows no longer exhaust the browser's connection
-  pool, so multi-screen use works.
+## [0.3.0] - 2026-07-12
 
-- Server binds dual-stack (`-H ::`) so it answers both IPv6 and IPv4 clients —
-  fixes connection latency on devices that resolve/prefer IPv6 first.
+A big release: real multi-user support, external YouTube sources alongside your
+libraries, an infinite-scroll virtualized grid, a consolidated sidebar, a
+redesigned full-screen viewer, and an admin storage file manager — plus
+cross-device sync that keeps every window in step.
 
-- Screensaver lock: signed-in users now dismiss the walk-away screensaver with
-  their own account password; anonymous / kiosk displays use a 4-digit passcode
-  (entered as four boxes), replacing the old shared passphrase.
+### Added
+- **External sources (YouTube).** Add a YouTube channel, playlist, or individual
+  video / live stream alongside your internal libraries; it shows up in the
+  sidebar and browses in the same grid. The built-in player has **Play All**,
+  prev/next queue arrows, an autoplay toggle, a **Resume** control, and a
+  captions (CC) toggle. Audio solos across windows and devices, and the
+  screensaver mutes/pauses external playback too. (Needs a YouTube Data API key
+  — see Upgrade notes.)
+- **Real multi-user support.** Per-user data (playlists, saved searches, likes,
+  watch state), sign-up, an anonymous / kiosk mode, and admin user management
+  (create / edit / remove). Sign out from the header; admins can also "sign out
+  all sessions."
+- **Infinite scroll.** The library grid loads continuously as you scroll,
+  virtualized so even very large libraries stay smooth. Choose how many results
+  load at a time (default 100) with a per-page selector.
+- **Admin storage file manager.** Browse a storage's real folder tree with
+  per-file status (indexed / duplicate / ignored / not-yet-indexed), bulk
+  ignore / remove / delete, shift-click range select and select-all/none,
+  visibility toggles (hidden / ignored / incompatible), duplicate → original
+  links, and live "files indexed" counts during a scan.
+- **Enrichment throttle.** A UI control to pace background AI enrichment —
+  full / light / background presets — so multi-hour jobs don't peg your CPU.
+- **Action HUD.** A large ghosted glyph briefly flashes in the center on a
+  keyboard shortcut or a background sync event (e.g. another window muting), so
+  you can see what just happened.
+- **Redesigned viewer.** Media opens straight to full-screen; item details,
+  tags, and bookmarks live behind an (i) info panel. Added bookmarks, tags,
+  trim, scrub-preview thumbnails, community likes, and watch counts.
+- **"Last viewed" highlight + Resume.** The last item you opened is highlighted
+  (sky ring) and marked with a chip — in both the library and external sources —
+  and a Resume pill jumps you back to it.
+- Video **loading spinner** so a slow-to-start video shows progress instead of a
+  blank black screen.
 
-- Slideshow: loop the current video on repeat instead of advancing — toggle with
-  `R` or the loop button in the video controls bar; a chip shows while active.
+### Changed
+- **One left sidebar.** The two sidebars are merged into a single left sidebar
+  holding the logo, library switcher, playlists (now a dropdown), saved
+  searches, and tools/links. It slides open and closed smoothly. The library
+  switcher hides when there's only one library, and creating a library is
+  admin-only.
+- **Big-screen scaling.** The whole app chrome scales up on large / high-res
+  displays so items are no longer tiny.
+- **Live sidebar sync.** Playlists, saved searches, and external sources now
+  refresh across windows and devices the moment one is added — no reload needed.
+- **Per-user, not global.** The screensaver and the solo-audio (mute) rule are
+  now per-user rather than instance-wide.
+- **Face recognition** switched to ArcFace + YuNet for photos; video face
+  recognition was removed.
+- **Faster re-scans.** The indexer caches every seen file and skips re-hashing
+  unchanged, already-indexed files; only browser-viewable formats are indexed
+  (tiff / mkv / avi dropped).
+- Removed the header **Select** button (hover-to-select replaces it), made the
+  pagination bar sticky, and hid empty Playlists / Saved Searches sections.
+- Multi-window sync now uses a leader-elected SSE stream + a single cross-process
+  state poll per browser (via a localStorage lease, relayed over
+  BroadcastChannel), so many open windows no longer exhaust the connection pool.
+- Server binds dual-stack (`-H ::`) so it answers both IPv6 and IPv4 clients.
+- Screensaver lock: signed-in users dismiss it with their own account password;
+  anonymous / kiosk displays use a 4-digit passcode (four boxes), replacing the
+  old shared passphrase. A small sign-out link appears at the unlock prompt.
+- Slideshow: loop the current video on repeat (toggle with `R` or the controls
+  button); slideshow auto-loop is now per-window instead of global.
+
+### Fixed
+- Grid no longer gets pushed off-screen when the sidebar toggles.
+- Checkbox selection in the file browser no longer needs multiple clicks.
+- Viewer chrome (reel / minimap / toolbar) no longer stays pinned on first load.
+- Truncated / damaged videos are labeled and salvaged where possible; 0-byte and
+  empty files are handled cleanly, and real ffmpeg errors surface.
+- The indexer no longer leaks a FileHandle (exifr) and crashes mid-run; progress
+  emits are throttled during fast skip runs.
+- YouTube video / live links create a single-video source (not the whole
+  channel); "Open on YouTube" moved to avoid mis-clicks; player and flow controls
+  scale up on big screens.
 
 ### Upgrade notes
-
+- This release runs **database migrations** (per-library and user databases) for
+  multi-user support and the new features. Rebuild before starting your
+  production server: `pnpm build:prod && pnpm start:prod`.
+- **External YouTube sources need an API key.** Set `YOUTUBE_API_KEY` (a
+  YouTube Data API v3 key, no OAuth) in `.env.local`. Without it the app runs
+  fine, but adding a YouTube source will error.
 - The screensaver lock is now a 4-digit numeric passcode. On upgrade, an existing
   lock is reset to the default `1234` — change it in Admin → Settings.
 
