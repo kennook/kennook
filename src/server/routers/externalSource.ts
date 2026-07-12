@@ -7,7 +7,7 @@ import {
   addExternalSource,
   removeExternalSource,
 } from '@/server/external-sources';
-import { parseYouTubeUrl, resolveYouTubeSource, fetchPlaylistPage } from '@/server/youtube';
+import { parseYouTubeUrl, resolveYouTubeSource, fetchPlaylistPage, fetchVideoAsItem } from '@/server/youtube';
 
 /**
  * External sources — YouTube channels/playlists surfaced alongside (but cleanly
@@ -60,6 +60,10 @@ export const externalSourceRouter = router({
       const src = getExternalSource(input.slug);
       if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
       try {
+        // A single-video/live source is just its one video; channels/playlists page.
+        if (src.kind === 'video') {
+          return { items: [await fetchVideoAsItem(src.ref)], nextCursor: undefined as string | undefined };
+        }
         return await fetchPlaylistPage(src.playlistId, input.cursor);
       } catch (e) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: e instanceof Error ? e.message : 'Failed to load videos.' });

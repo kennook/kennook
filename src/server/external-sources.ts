@@ -16,7 +16,7 @@ const DATA_ROOT = process.env.KENNOOK_DATA_ROOT ?? './data';
 const REGISTRY_PATH = path.join(DATA_ROOT, 'external-sources.json');
 
 export type ExternalProvider = 'youtube';
-export type ExternalSourceKind = 'channel' | 'playlist';
+export type ExternalSourceKind = 'channel' | 'playlist' | 'video';
 
 export interface ExternalSource {
   slug: string;

@@ -85,40 +85,11 @@ async function fetchChannelMeta(ref: string): Promise<ChannelMeta> {
   return { channelId: item.id, title: item.snippet?.title ?? ref, uploadsPlaylistId: uploads };
 }
 
-/** Resolve a video to the id of the channel that published it. */
-async function fetchVideoChannelId(videoId: string): Promise<string> {
-  const data = await yt<{ items?: Array<{ snippet?: { channelId?: string } }> }>('videos', { part: 'snippet', id: videoId });
-  const cid = data.items?.[0]?.snippet?.channelId;
-  if (!cid) throw new Error(`YouTube video not found for "${videoId}".`);
-  return cid;
-}
-
 async function fetchPlaylistTitle(playlistId: string): Promise<string> {
   const data = await yt<{ items?: Array<{ snippet?: { title?: string } }> }>('playlists', { part: 'snippet', id: playlistId });
   const t = data.items?.[0]?.snippet?.title;
   if (!t) throw new Error(`YouTube playlist not found for "${playlistId}".`);
   return t;
-}
-
-export interface ResolvedYouTubeSource {
-  kind: 'channel' | 'playlist';
-  ref: string;        // channelId or playlistId
-  playlistId: string; // pageable playlist
-  name: string;       // channel/playlist title
-}
-
-/** Turn a parsed URL into everything the registry needs to store. A video link
- *  resolves to its channel — you follow the source, not the single clip. */
-export async function resolveYouTubeSource(parsed: ParsedYouTube): Promise<ResolvedYouTubeSource> {
-  if (parsed.kind === 'playlist') {
-    const name = await fetchPlaylistTitle(parsed.ref);
-    return { kind: 'playlist', ref: parsed.ref, playlistId: parsed.ref, name };
-  }
-  const channelRef = parsed.kind === 'video'
-    ? await fetchVideoChannelId(parsed.ref)
-    : parsed.ref;
-  const meta = await fetchChannelMeta(channelRef);
-  return { kind: 'channel', ref: meta.channelId, playlistId: meta.uploadsPlaylistId, name: meta.title };
 }
 
 export interface YouTubeVideo {
@@ -129,6 +100,47 @@ export interface YouTubeVideo {
   publishedAt: string;
 }
 export interface YouTubePage { items: YouTubeVideo[]; nextCursor?: string; }
+
+/** Fetch a single video's snippet as an item (for single-video/live sources). */
+export async function fetchVideoAsItem(videoId: string): Promise<YouTubeVideo> {
+  const data = await yt<{ items?: Array<{ snippet?: {
+    title?: string; channelTitle?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }>;
+  } }> }>('videos', { part: 'snippet', id: videoId });
+  const sn = data.items?.[0]?.snippet;
+  if (!sn) throw new Error(`YouTube video not found for "${videoId}".`);
+  const th = sn.thumbnails ?? {};
+  const thumb = (th.medium ?? th.high ?? th.standard ?? th.default ?? {}).url ?? '';
+  return {
+    videoId,
+    title: sn.title ?? '',
+    thumbnailUrl: thumb,
+    channelTitle: sn.channelTitle ?? '',
+    publishedAt: sn.publishedAt ?? '',
+  };
+}
+
+export interface ResolvedYouTubeSource {
+  kind: 'channel' | 'playlist' | 'video';
+  ref: string;        // channelId, playlistId, or videoId
+  playlistId: string; // pageable playlist ('' for a single video)
+  name: string;       // channel/playlist/video title
+}
+
+/** Turn a parsed URL into everything the registry needs to store. A video/live
+ *  link becomes a single-video source (just that stream/clip); channel and
+ *  playlist links become channel/playlist sources. */
+export async function resolveYouTubeSource(parsed: ParsedYouTube): Promise<ResolvedYouTubeSource> {
+  if (parsed.kind === 'playlist') {
+    const name = await fetchPlaylistTitle(parsed.ref);
+    return { kind: 'playlist', ref: parsed.ref, playlistId: parsed.ref, name };
+  }
+  if (parsed.kind === 'video') {
+    const v = await fetchVideoAsItem(parsed.ref);
+    return { kind: 'video', ref: parsed.ref, playlistId: '', name: v.title };
+  }
+  const meta = await fetchChannelMeta(parsed.ref);
+  return { kind: 'channel', ref: meta.channelId, playlistId: meta.uploadsPlaylistId, name: meta.title };
+}
 
 /** One page (up to 50) of a playlist's videos. `cursor` is the page token. */
 export async function fetchPlaylistPage(playlistId: string, cursor?: string): Promise<YouTubePage> {
