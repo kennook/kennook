@@ -13,9 +13,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
-- External sources manager: a slide-out panel (open it from the sidebar
-  "Sources" button) to add, filter, drag-to-reorder, rename, and delete your
-  YouTube sources — replacing the cramped dropdown once the list grows.
+- External sources manager: a second sidebar layer that slides over the sidebar
+  column (opened from the "Sources" button) to add, filter, drag-to-reorder,
+  rename, and delete your YouTube sources — replacing the cramped dropdown once
+  the list grows. It's anchored to the sidebar (no click-away backdrop); a
+  "Back" link returns to the main sidebar content.
 
 ### Changed
 - External sources now show a compact per-kind icon (channel / playlist / video)

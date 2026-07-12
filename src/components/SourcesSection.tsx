@@ -1,23 +1,22 @@
 'use client';
 
-import { useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
-import { SourcesManager } from './SourcesManager';
 
 interface Props {
   activeSourceSlug: string | null;
-  onSelectSource: (slug: string | null) => void;
+  /** Open the in-sidebar sources manager (slides over the sidebar). */
+  onOpenManager: () => void;
 }
 
 /**
  * Sidebar "Sources" entry — the EXTERNAL half of the libraries-vs-sources
  * division. A compact button showing the active external source; clicking it
- * opens the slide-out SourcesManager (add / search / reorder / rename / delete).
+ * slides the SourcesManager panel over the sidebar (add / reorder / rename /
+ * delete). The panel itself lives at the sidebar level so it can slide as a
+ * second layer rather than float on top of the page.
  */
-export function SourcesSection({ activeSourceSlug, onSelectSource }: Props) {
+export function SourcesSection({ activeSourceSlug, onOpenManager }: Props) {
   const sources = trpc.externalSource.list.useQuery();
-  const [managerOpen, setManagerOpen] = useState(false);
-
   const list = sources.data ?? [];
   const active = list.find((s) => s.slug === activeSourceSlug) ?? null;
 
@@ -27,7 +26,7 @@ export function SourcesSection({ activeSourceSlug, onSelectSource }: Props) {
 
       <div className="px-1">
         <button
-          onClick={() => setManagerOpen(true)}
+          onClick={onOpenManager}
           title="Manage external sources"
           className={`w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition border
                       ${active
@@ -42,13 +41,6 @@ export function SourcesSection({ activeSourceSlug, onSelectSource }: Props) {
           <PanelIcon />
         </button>
       </div>
-
-      <SourcesManager
-        open={managerOpen}
-        onClose={() => setManagerOpen(false)}
-        activeSourceSlug={activeSourceSlug}
-        onSelectSource={onSelectSource}
-      />
     </section>
   );
 }

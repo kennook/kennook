@@ -27,6 +27,7 @@ import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
 import { PlaylistsSection } from '@/components/PlaylistsSection';
 import { SourcesSection } from '@/components/SourcesSection';
+import { SourcesManager } from '@/components/SourcesManager';
 import { ExternalSourceView } from '@/components/ExternalSourceView';
 import { SavedSearchesSection } from '@/components/SavedSearchesSection';
 import { PeopleSection } from '@/components/PeopleSection';
@@ -141,6 +142,9 @@ function HomeContent() {
   // Collapsible filters/facets sidebar. Default open; persisted per-browser.
   // Hydrated from localStorage after mount to avoid an SSR/client mismatch.
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Sub-sidebar: the external-sources manager slides over the sidebar column as
+  // a second layer (no backdrop — a "Back" link returns to the main content).
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   useEffect(() => {
     const v = localStorage.getItem('kennook.sidebar-open');
     if (v !== null) setSidebarOpen(v === '1');
@@ -846,7 +850,15 @@ function HomeContent() {
                      ${sidebarOpen ? 'w-56 mr-6' : 'w-0 mr-0'}`}
         >
           <div className="kn-sidebar-body" data-open={sidebarOpen}>
-          <div className={`w-56 pr-2 ${chromeQuietClass}`}>
+          {/* Two-pane horizontal track: the main sidebar and the sources
+              manager sit side by side; opening the manager slides the track
+              left so it "comes out of" the sidebar (the aside's overflow-x-hidden
+              clips the off-screen pane). No backdrop — Back returns. */}
+          <div className={`w-56 ${chromeQuietClass}`}>
+          <div className={`flex w-[200%] items-start
+                          ${sidebarAnimate ? 'transition-transform duration-300 ease-in-out' : ''}
+                          ${sourcesOpen ? '-translate-x-1/2' : ''}`}>
+          <div className="w-1/2 shrink-0 pr-2">
           <h1 className="px-3 mb-5">
             <KenNookLogo height={24} />
             <span className="sr-only">KenNook</span>
@@ -861,7 +873,7 @@ function HomeContent() {
           />
           <SourcesSection
             activeSourceSlug={url.source}
-            onSelectSource={handleSelectSource}
+            onOpenManager={() => setSourcesOpen(true)}
           />
           <SavedSearchesSection />
           <PeopleSection
@@ -897,6 +909,15 @@ function HomeContent() {
             />
           )}
           <SidebarTools onOpenHelp={() => setHelpOpen(true)} />
+          </div>
+          <div className="w-1/2 shrink-0 pr-2">
+            <SourcesManager
+              activeSourceSlug={url.source}
+              onSelectSource={handleSelectSource}
+              onBack={() => setSourcesOpen(false)}
+            />
+          </div>
+          </div>
           </div>
           </div>
         </aside>
