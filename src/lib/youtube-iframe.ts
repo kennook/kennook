@@ -14,6 +14,10 @@ export interface YTPlayer {
   loadVideoById(id: string): void;
   getPlayerState(): number;
   destroy(): void;
+  // Captions control — legacy/undocumented module API, best-effort (optional).
+  loadModule?(module: string): void;
+  unloadModule?(module: string): void;
+  setOption?(module: string, option: string, value: unknown): void;
 }
 
 interface YTPlayerEvent { target: YTPlayer; data: number }

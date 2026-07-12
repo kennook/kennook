@@ -40,6 +40,12 @@ export function YouTubePlayer({
   const [autoplayNext, setAutoplayNext] = useState(autoplay);
   const [muted, setMuted] = useState(true);
   const [ready, setReady] = useState(false);
+  // Captions on/off — the enabler for muted background news. Persisted so a
+  // news-wall stays captioned across sessions.
+  const [captions, setCaptions] = useState<boolean>(() =>
+    typeof window !== 'undefined' && localStorage.getItem('kennook.yt-captions') === '1');
+  const captionsRef = useRef(captions);
+  captionsRef.current = captions;
 
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
@@ -79,7 +85,10 @@ export function YouTubePlayer({
       playerRef.current = new YT.Player(mount, {
         videoId: queueRef.current[startIndex]?.videoId,
         host: 'https://www.youtube-nocookie.com',
-        playerVars: { autoplay: 1, mute: 1, rel: 0, modestbranding: 1, playsinline: 1 },
+        playerVars: {
+          autoplay: 1, mute: 1, rel: 0, modestbranding: 1, playsinline: 1,
+          cc_load_policy: captionsRef.current ? 1 : 0, cc_lang_pref: 'en',
+        },
         events: {
           onReady: (e) => { setReady(true); e.target.playVideo(); },
           onStateChange: (e) => { if (e.data === YT.PlayerState.ENDED) advance(); },
@@ -124,6 +133,31 @@ export function YouTubePlayer({
   // Solo-audio: another window/device took audio → mute this player. The poll
   // above reconciles the state + HUD.
   useSyncEvent('audio.unmuted', () => { playerRef.current?.mute(); });
+
+  // Apply captions on load and on every video change (loading a new video
+  // resets them). Legacy captions module API — best-effort per video.
+  useEffect(() => {
+    if (!ready) return;
+    const p = playerRef.current;
+    if (!p) return;
+    try {
+      if (captions) {
+        p.loadModule?.('captions');
+        p.loadModule?.('cc');
+        p.setOption?.('captions', 'track', { languageCode: 'en' });
+        p.setOption?.('cc', 'track', { languageCode: 'en' });
+      } else {
+        p.setOption?.('captions', 'track', {});
+        p.setOption?.('cc', 'track', {});
+      }
+    } catch { /* captions not available for this video */ }
+  }, [captions, index, ready]);
+
+  const toggleCaptions = () => setCaptions((v) => {
+    const next = !v;
+    try { localStorage.setItem('kennook.yt-captions', next ? '1' : '0'); } catch { /* private mode */ }
+    return next;
+  });
 
   // Screensaver: pause + mute while engaged; resume if it was playing.
   useEffect(() => {
@@ -175,6 +209,16 @@ export function YouTubePlayer({
             Autoplay {autoplayNext ? 'on' : 'off'}
           </button>
         )}
+        <button
+          onClick={toggleCaptions}
+          title={captions ? 'Captions on — great for muted background news' : 'Captions off'}
+          className={`text-xs font-semibold px-1.5 py-0.5 rounded ring-1 transition
+                      ${captions
+                        ? 'text-emerald-300 ring-emerald-500/50 bg-emerald-950/40'
+                        : 'text-zinc-400 ring-zinc-700 hover:text-zinc-200'}`}
+        >
+          CC
+        </button>
         <button onClick={toggleMute} title={muted ? 'Unmute (solo)' : 'Mute'}
           className={`px-2 ${muted ? 'text-zinc-400 hover:text-zinc-100' : 'text-emerald-400 hover:text-emerald-300'}`}>
           {muted ? 'Muted' : 'Sound on'}
