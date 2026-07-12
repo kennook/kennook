@@ -64,8 +64,7 @@ export function VideoBookmarks({
   return (
     <div
       data-kn-chrome=""
-      className="w-64 max-h-[60vh] overflow-y-auto bg-zinc-950/90 backdrop-blur ring-1 ring-zinc-800
-                 rounded-lg p-3 text-sm shadow-2xl flex flex-col gap-2"
+      className="max-h-[60vh] overflow-y-auto text-sm flex flex-col gap-2"
     >
       {addAtMs != null && (
         <form onSubmit={submit} className="flex flex-col gap-2 border-b border-zinc-800 pb-3">

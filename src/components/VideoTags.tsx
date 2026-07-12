@@ -15,6 +15,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { useSyncEvent } from '@/lib/sync';
+import { VoiceTagButton } from './VoiceTagButton';
+import { FEATURES } from '@/lib/feature-flags';
 
 interface Props {
   uuid: string;
@@ -67,12 +69,8 @@ export function VideoTags({ uuid, librarySlug, focusSignal, onDone }: Props) {
   const list = tags.data ?? [];
 
   return (
-    <div
-      data-kn-chrome=""
-      className="w-64 bg-zinc-950/90 backdrop-blur ring-1 ring-zinc-800 rounded-lg p-3
-                 text-sm shadow-2xl flex flex-col gap-2"
-    >
-      <div className="text-xs text-zinc-400">Tags</div>
+    <div data-kn-chrome="" className="flex flex-col gap-1.5">
+      <div className="text-xs uppercase text-zinc-500 tracking-wider">Tags</div>
 
       {list.length > 0 && (
         <div className="flex flex-wrap gap-1">
@@ -120,8 +118,8 @@ export function VideoTags({ uuid, librarySlug, focusSignal, onDone }: Props) {
           }}
           placeholder="party, animals…"
           maxLength={60}
-          className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-[11px]
-                     outline-none focus:border-zinc-500"
+          className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px]
+                     outline-none focus:border-zinc-600"
         />
         <button
           type="submit"
@@ -132,6 +130,14 @@ export function VideoTags({ uuid, librarySlug, focusSignal, onDone }: Props) {
         </button>
       </form>
       {addTag.error && <div className="text-[10px] text-red-400">{addTag.error.message}</div>}
+
+      {FEATURES.voiceTagging && (
+        <VoiceTagButton
+          uuid={uuid}
+          librarySlug={librarySlug}
+          onCommitted={(committed) => { if (committed.length > 0) invalidate(); }}
+        />
+      )}
     </div>
   );
 }

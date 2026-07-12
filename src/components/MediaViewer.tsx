@@ -10,7 +10,7 @@ import { trpc } from '@/lib/trpc-client';
 import { ViewerReel } from './ViewerReel';
 import { SparkleBurst } from './SparkleBurst';
 import { RatingFlash } from './RatingFlash';
-import { VoiceTagButton, useVoiceTagger, VoiceTagStatusLine, MicIcon } from './VoiceTagButton';
+import { useVoiceTagger, VoiceTagStatusLine, MicIcon } from './VoiceTagButton';
 import { FEATURES } from '@/lib/feature-flags';
 import { usePreference } from '@/lib/preferences';
 import { useSessionFlag } from '@/lib/use-session-flag';
@@ -1525,6 +1525,9 @@ export function MediaViewer({
               </div>
             )}
 
+            {/* Divider: forms + actions above, read-only info below. */}
+            <div className="border-t border-zinc-800" />
+
             <Field label="Type" value={item.kind} />
             {item.width && item.height && (
               <Field label="Dimensions" value={`${item.width} × ${item.height}`} />
@@ -1606,7 +1609,7 @@ export function MediaViewer({
           <>
             <ToolbarButton
               onClick={toggleInfo}
-              title="Details (D)"
+              title="Details (I)"
               className={infoOpen ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
             >
               <InfoIcon />
@@ -1979,55 +1982,11 @@ function Field({ label, value }: { label: string; value: string }) {
 function DetailsSection({ item }: { item: MediaItemDto }) {
   const [expanded, setExpanded] = useState(true);
   const [ocrExpanded, setOcrExpanded] = useState(false);
-  const [tagInput, setTagInput] = useState('');
 
-  const utils = trpc.useUtils();
   const details = trpc.media.getDetails.useQuery(
     { uuid: item.uuid, librarySlug: item.librarySlug },
     { enabled: !!item },
   );
-
-  const addTag = trpc.media.addUserTag.useMutation({
-    onSuccess: () => {
-      utils.media.getDetails.invalidate();
-      utils.media.facets.invalidate();
-      setTagInput('');
-    },
-  });
-
-  const removeTag = trpc.media.removeUserTag.useMutation({
-    onSuccess: () => {
-      utils.media.getDetails.invalidate();
-      utils.media.facets.invalidate();
-    },
-  });
-
-  const submitTag = async (e: React.FormEvent) => {
-    e.preventDefault();
-    // Accept either a single tag or a comma-separated list. Splitting in
-    // the client (vs. teaching addUserTag to accept arrays) keeps the
-    // server mutation single-purpose; the existing onConflict upsert
-    // makes duplicate submissions cheap and idempotent.
-    const names = Array.from(new Set(
-      tagInput.split(',').map((s) => s.trim()).filter(Boolean),
-    ));
-    if (names.length === 0) return;
-    // Sequential to avoid SQLITE_BUSY on the shared media_tags index for
-    // the same row. Counts are small (typically 1-5).
-    for (const name of names) {
-      try {
-        await addTag.mutateAsync({
-          uuid: item.uuid,
-          librarySlug: item.librarySlug,
-          name,
-        });
-      } catch {
-        // Skip per-tag failures; loop continues so the user doesn't lose
-        // the rest of a batch because of one duplicate or length error.
-      }
-    }
-    setTagInput('');
-  };
 
   if (!details.data && !details.isLoading) return null;
   const d = details.data;
@@ -2088,81 +2047,6 @@ function DetailsSection({ item }: { item: MediaItemDto }) {
               {d.transcript && (
                 <DetailBlock label="Transcript" body={d.transcript} />
               )}
-
-              <div>
-                <div className="text-zinc-500 mb-1">Tags ({d.tags.length})</div>
-                <div className="flex flex-wrap gap-1">
-                  {d.tags.map((t) => {
-                    const isUser = t.source === 'user';
-                    return (
-                      <span
-                        key={`${t.source}-${t.name}`}
-                        className={`px-1.5 py-0.5 rounded text-[10px] border
-                                    inline-flex items-center gap-1
-                                    ${isUser
-                                      ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50'
-                                      : 'bg-zinc-800 text-zinc-300 border-zinc-700/50'}`}
-                      >
-                        {t.name}
-                        {isUser && (
-                          <button
-                            onClick={() => removeTag.mutate({
-                              uuid: item.uuid,
-                              librarySlug: item.librarySlug,
-                              name: t.name,
-                            })}
-                            disabled={removeTag.isPending}
-                            className="text-emerald-500 hover:text-emerald-200 leading-none ml-0.5"
-                            title="Remove tag"
-                            aria-label="Remove tag"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-
-                <form onSubmit={submitTag} className="mt-1.5 flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    placeholder="Add tags (comma-separated)…"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    disabled={addTag.isPending}
-                    maxLength={60}
-                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1
-                               text-[11px] focus:border-zinc-600 outline-none disabled:opacity-50"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addTag.isPending || !tagInput.trim()}
-                    className="text-[11px] text-zinc-400 hover:text-zinc-100 disabled:opacity-30
-                               px-2 py-1"
-                  >
-                    Add
-                  </button>
-                </form>
-                {addTag.error && (
-                  <div className="text-[10px] text-red-400 mt-1">
-                    {addTag.error.message}
-                  </div>
-                )}
-
-                {FEATURES.voiceTagging && (
-                  <VoiceTagButton
-                    uuid={item.uuid}
-                    librarySlug={item.librarySlug}
-                    onCommitted={(tags) => {
-                      if (tags.length > 0) {
-                        utils.media.getDetails.invalidate();
-                        utils.media.facets.invalidate();
-                      }
-                    }}
-                  />
-                )}
-              </div>
 
               <div className="pt-2 mt-2 border-t border-zinc-800/60 space-y-0.5
                               text-[10px] font-mono text-zinc-600">

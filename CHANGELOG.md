@@ -13,12 +13,20 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
-- Toggle-info shortcut (`d`) in the full-screen viewer: shows/hides the details
+- Toggle-info shortcut (`i`) in the full-screen viewer: shows/hides the details
   (info / tags / bookmarks) sidebar — the same action as the (i) toolbar button.
 - Add-tag shortcut (`t`) in the full-screen viewer: opens the info panel with
   the tag field focused and auto-closes it once you add a tag (or press Escape),
   mirroring the bookmark shortcut. Works for photos and videos — the info panel
   now shows tags for photos too.
+
+### Changed
+- Reorganized the viewer's details sidebar: the Tags and Bookmarks editors no
+  longer render as odd floating boxes inside the panel, tags are no longer
+  duplicated (one editor, shown for photos and videos), and editable
+  fields/actions are grouped above a divider from the read-only info below.
+- Trim in/out shortcuts moved from `i`/`o` to `[`/`]` (freeing `i` for the info
+  panel).
 
 ### Fixed
 - Full-screen viewer chrome (the "coming up" reel + controls) no longer stays
