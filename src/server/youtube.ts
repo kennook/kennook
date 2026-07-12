@@ -65,7 +65,8 @@ export function parseYouTubeUrl(raw: string): ParsedYouTube | null {
   const p = u.pathname;
   let m: RegExpMatchArray | null;
   if ((m = p.match(/^\/channel\/(UC[\w-]+)/))) return { kind: 'channel', ref: m[1] };
-  if ((m = p.match(/^\/shorts\/([\w-]+)/))) return { kind: 'video', ref: m[1] };
+  // Video paths: /shorts/<id>, /live/<id> (live stream), /embed/<id>, /v/<id>.
+  if ((m = p.match(/^\/(?:shorts|live|embed|v)\/([\w-]+)/))) return { kind: 'video', ref: m[1] };
   if ((m = p.match(/^\/@([\w.-]+)/))) return { kind: 'channel', ref: `@${m[1]}` };
   return null;
 }
