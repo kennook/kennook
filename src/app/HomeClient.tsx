@@ -1132,7 +1132,7 @@ function HomeContent() {
           {!url.item && lastViewed && (() => {
             const it = items.find((i) => i.uuid === lastViewed.uuid);
             return (
-              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
+              <div className="kn-app-scaled fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
                               bg-zinc-900/95 backdrop-blur ring-1 ring-zinc-700 rounded-full pl-4 pr-2 py-2 shadow-2xl">
                 <button
                   onClick={() => url.set({ item: lastViewed.uuid, view: lastViewed.view, tMs: null })}

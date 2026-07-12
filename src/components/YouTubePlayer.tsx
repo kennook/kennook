@@ -192,16 +192,25 @@ export function YouTubePlayer({
 
   return (
     <div className="group fixed inset-0 z-[90] bg-black flex flex-col" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="flex items-center gap-3 px-4 py-2 text-sm text-zinc-300">
+      {/* kn-app-scaled grows the chrome on large displays so the controls
+          aren't tiny (this overlay is outside the app's normal scaled chrome). */}
+      <div className="kn-app-scaled flex items-center gap-3 px-4 py-2 text-sm text-zinc-300">
         {videos.length > 1 && (
           <span className="text-xs text-zinc-500 tabular-nums shrink-0">{index + 1} / {videos.length}</span>
         )}
-        <span className="flex-1 truncate">{current?.title}</span>
+        {/* Title + "Open on YouTube" grouped on the LEFT, away from the primary
+            actions on the right (which were easy to mis-click). */}
+        <span className="truncate max-w-[45%]">{current?.title}</span>
+        {current && (
+          <a href={`https://www.youtube.com/watch?v=${current.videoId}`} target="_blank" rel="noreferrer"
+            className="shrink-0 text-zinc-500 hover:text-zinc-200 text-xs">Open on YouTube ↗</a>
+        )}
+        <div className="flex-1" />
         {videos.length > 1 && (
           <button
             onClick={() => setAutoplayNext((v) => !v)}
             title={autoplayNext ? 'Autoplay on — plays the next video automatically' : 'Autoplay off — stops at the end of this video'}
-            className={`text-xs px-2 py-0.5 rounded ring-1 transition
+            className={`shrink-0 text-xs px-2 py-0.5 rounded ring-1 transition
                         ${autoplayNext
                           ? 'text-emerald-300 ring-emerald-500/50 bg-emerald-950/40'
                           : 'text-zinc-400 ring-zinc-700 hover:text-zinc-200'}`}
@@ -212,7 +221,7 @@ export function YouTubePlayer({
         <button
           onClick={toggleCaptions}
           title={captions ? 'Captions on — great for muted background news' : 'Captions off'}
-          className={`text-xs font-semibold px-1.5 py-0.5 rounded ring-1 transition
+          className={`shrink-0 text-xs font-semibold px-1.5 py-0.5 rounded ring-1 transition
                       ${captions
                         ? 'text-emerald-300 ring-emerald-500/50 bg-emerald-950/40'
                         : 'text-zinc-400 ring-zinc-700 hover:text-zinc-200'}`}
@@ -220,14 +229,10 @@ export function YouTubePlayer({
           CC
         </button>
         <button onClick={toggleMute} title={muted ? 'Unmute (solo)' : 'Mute'}
-          className={`px-2 ${muted ? 'text-zinc-400 hover:text-zinc-100' : 'text-emerald-400 hover:text-emerald-300'}`}>
+          className={`shrink-0 px-2 ${muted ? 'text-zinc-400 hover:text-zinc-100' : 'text-emerald-400 hover:text-emerald-300'}`}>
           {muted ? 'Muted' : 'Sound on'}
         </button>
-        {current && (
-          <a href={`https://www.youtube.com/watch?v=${current.videoId}`} target="_blank" rel="noreferrer"
-            className="text-zinc-500 hover:text-zinc-200 text-xs">Open on YouTube ↗</a>
-        )}
-        <button onClick={onClose} title="Close (Esc)" className="text-zinc-400 hover:text-zinc-100 px-2">✕</button>
+        <button onClick={onClose} title="Close (Esc)" className="shrink-0 text-zinc-400 hover:text-zinc-100 px-2">✕</button>
       </div>
 
       {/* YT replaces the mounted child of this host with its iframe. */}
@@ -253,7 +258,7 @@ function NavArrow({ side, onClick, disabled }: { side: 'left' | 'right'; onClick
     <button
       onClick={onClick}
       title={side === 'left' ? 'Previous video' : 'Next video'}
-      className={`absolute top-1/2 -translate-y-1/2 z-10 ${side === 'left' ? 'left-4' : 'right-4'}
+      className={`kn-app-scaled absolute top-1/2 -translate-y-1/2 z-10 ${side === 'left' ? 'left-4' : 'right-4'}
                   w-12 h-12 grid place-items-center rounded-full bg-black/50 hover:bg-black/80 text-white
                   opacity-0 group-hover:opacity-100 transition`}
     >

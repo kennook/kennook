@@ -69,7 +69,7 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
         {videos.length > 0 && (
           <button
             onClick={() => openAt(0, true)}
-            className="shrink-0 inline-flex items-center gap-2 rounded-md bg-emerald-400 hover:bg-emerald-300
+            className="kn-app-scaled shrink-0 inline-flex items-center gap-2 rounded-md bg-emerald-400 hover:bg-emerald-300
                        text-zinc-900 font-medium text-sm px-3 py-1.5 transition"
           >
             <svg width="13" height="13" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
@@ -130,7 +130,7 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
           don't have to hunt for the video in the grid. Restores position +
           autoplay. */}
       {!player && resume && videos[resume.index] && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
+        <div className="kn-app-scaled fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
                         bg-zinc-900/95 backdrop-blur ring-1 ring-zinc-700 rounded-full pl-4 pr-2 py-2 shadow-2xl">
           <button
             onClick={() => setPlayer({ startIndex: resume.index, autoplay: resume.autoplay })}
