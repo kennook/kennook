@@ -58,6 +58,9 @@ interface Props {
   /** Called when Esc is pressed while slideshow is active — exits slideshow
    *  but keeps the viewer open on the current item. */
   onSlideshowExit?: () => void;
+  /** Turn slideshow (auto-advance) ON from within fullscreen — the in-viewer
+   *  autoplay toggle, so you don't have to exit to enable it. */
+  onSlideshowEnter?: () => void;
   /** If the page is filtering by a person, pass that uuid here so the
    *  viewer can show a "Reassign person" affordance. */
   currentPersonUuid?: string | null;
@@ -115,7 +118,7 @@ interface Props {
  */
 export function MediaViewer({
   item, onClose, onPrev, onNext, onSeeSimilar, onSetLikes, position,
-  slideshow = false, onSlideshowExit,
+  slideshow = false, onSlideshowExit, onSlideshowEnter,
   currentPersonUuid = null, onReassignPerson,
   onRotate,
   reelItems, reelHasMore, onSelectItem,
@@ -1205,16 +1208,8 @@ export function MediaViewer({
             </div>
           )}
 
-          {/* Left column for video tools — tags. (Bookmarks moved into the
-              info sidebar.) Video + maxed only; fades with the chrome. */}
-          {maxed && item.kind === 'video' && (
-            <div
-              {...chromeHoverHandlers}
-              className={`absolute top-16 left-[var(--kn-chrome-pad)] z-30 flex flex-col gap-2 items-start ${chromeFadeClass}`}
-            >
-              <VideoTags uuid={item.uuid} librarySlug={item.librarySlug} />
-            </div>
-          )}
+          {/* Video tags + bookmarks now live in the info sidebar, not a floating
+              overlay — see the (i) panel below. */}
 
           {/* Pan + zoom widget — both controls live together because
               they're the same gesture conceptually (re-framing). Zoom
@@ -1418,19 +1413,22 @@ export function MediaViewer({
               />
             )}
 
-            {/* Bookmarks (video) — moved here from the floating overlay. The
-                sidebar auto-opens when a bookmark add is requested. */}
+            {/* Video tags + bookmarks — moved here from the floating overlay.
+                The sidebar auto-opens when a bookmark add is requested. */}
             {item.kind === 'video' && (
-              <VideoBookmarks
-                uuid={item.uuid}
-                librarySlug={item.librarySlug}
-                bookmarks={bookmarksQuery.data?.bookmarks ?? []}
-                defaultShared={bookmarksQuery.data?.defaultShared ?? true}
-                isAdmin={isAdmin}
-                addAtMs={addBookmarkAtMs}
-                onCloseAdd={closeBookmarkAdd}
-                onSeek={(ms) => playerApiRef.current?.seek(ms)}
-              />
+              <>
+                <VideoTags uuid={item.uuid} librarySlug={item.librarySlug} />
+                <VideoBookmarks
+                  uuid={item.uuid}
+                  librarySlug={item.librarySlug}
+                  bookmarks={bookmarksQuery.data?.bookmarks ?? []}
+                  defaultShared={bookmarksQuery.data?.defaultShared ?? true}
+                  isAdmin={isAdmin}
+                  addAtMs={addBookmarkAtMs}
+                  onCloseAdd={closeBookmarkAdd}
+                  onSeek={(ms) => playerApiRef.current?.seek(ms)}
+                />
+              </>
             )}
 
             {onSeeSimilar && (
@@ -1580,6 +1578,15 @@ export function MediaViewer({
             >
               <InfoIcon />
             </ToolbarButton>
+            {(onSlideshowEnter || onSlideshowExit) && (
+              <ToolbarButton
+                onClick={() => (slideshow ? onSlideshowExit?.() : onSlideshowEnter?.())}
+                title={slideshow ? 'Autoplay on — stop slideshow' : 'Autoplay off — start slideshow'}
+                className={slideshow ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+              >
+                <AutoplayIcon on={slideshow} />
+              </ToolbarButton>
+            )}
             {onAddToPlaylist && (
               <ToolbarButton
                 onClick={() => onAddToPlaylist(item)}
@@ -2184,6 +2191,15 @@ function InfoIcon() { return (
     <circle cx="8" cy="8" r="6.5" />
     <path d="M8 7.5v3.5" />
     <circle cx="8" cy="5" r="0.6" fill="currentColor" stroke="none" />
+  </svg>
+); }
+function AutoplayIcon({ on }: { on: boolean }) { return (
+  // Play glyph inside a circular "auto-loop" arrow.
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M13.5 5.5A6 6 0 1 0 14 8" />
+    <path d="M13.5 2.5v3h-3" />
+    <path d="M6.5 5.5l4 2.5-4 2.5z" fill={on ? 'currentColor' : 'none'} />
   </svg>
 ); }
 function FitCoverIcon() { return (

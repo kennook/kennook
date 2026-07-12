@@ -1167,8 +1167,9 @@ function HomeContent() {
         onSetLikes={handleSetLikes}
         position={selected ? { index: selectedIndex, total: items.length } : undefined}
         slideshow={slideshow}
-        // Exit slideshow but stay fullscreen — drop view 'slideshow' → 'full'.
+        // Toggle slideshow (auto-advance) from within fullscreen.
         onSlideshowExit={() => url.set({ view: 'full' })}
+        onSlideshowEnter={() => url.set({ view: 'slideshow' })}
         currentPersonUuid={url.person}
         onReassignPerson={(it) => setReassignItems([it])}
         onRotate={handleRotate}
