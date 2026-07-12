@@ -102,20 +102,20 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
                 className="group text-left"
               >
                 <div className={`relative aspect-video rounded-lg overflow-hidden bg-zinc-900 transition
-                                ${isCurrent ? 'ring-2 ring-emerald-400' : 'ring-1 ring-transparent group-hover:ring-zinc-600'}`}>
+                                ${isCurrent ? 'ring-2 ring-sky-400' : 'ring-1 ring-transparent group-hover:ring-zinc-600'}`}>
                   {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-cover" />}
                   <div className="absolute inset-0 grid place-items-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
                     <PlayGlyph />
                   </div>
                   {isCurrent && (
-                    <div className="absolute top-2 left-2 flex items-center gap-1 bg-emerald-400 text-zinc-900
+                    <div className="absolute top-2 left-2 flex items-center gap-1 bg-sky-400 text-zinc-900
                                     text-[10px] font-semibold px-1.5 py-0.5 rounded-full shadow">
                       <svg width="8" height="8" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
                       {player ? 'Playing' : 'Last played'}
                     </div>
                   )}
                 </div>
-                <div className={`mt-1.5 text-sm line-clamp-2 ${isCurrent ? 'text-emerald-300' : 'text-zinc-200'}`}>{v.title}</div>
+                <div className={`mt-1.5 text-sm line-clamp-2 ${isCurrent ? 'text-sky-300' : 'text-zinc-200'}`}>{v.title}</div>
                 <div className="text-xs text-zinc-500 truncate">{v.channelTitle}</div>
               </button>
             );
@@ -136,7 +136,7 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
             onClick={() => setPlayer({ startIndex: resume.index, autoplay: resume.autoplay })}
             className="flex items-center gap-2 text-sm text-zinc-100"
           >
-            <span className="grid place-items-center w-6 h-6 rounded-full bg-emerald-400 text-zinc-900">
+            <span className="grid place-items-center w-6 h-6 rounded-full bg-sky-400 text-zinc-900">
               <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
             </span>
             <span className="max-w-[16rem] truncate">
