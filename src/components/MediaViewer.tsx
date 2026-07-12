@@ -606,8 +606,41 @@ export function MediaViewer({
     setSpeedNotice({ key: Date.now(), ms: next });
   }, [slideshowPhotoMs, setSlideshowPhotoMs]);
 
-  // Whenever we leave maxed mode (or the viewer closes), drop any pending
-  // idle timer and show all chrome.
+  // Chrome auto-hide plumbing. `chromePinnedRef` keeps the chrome open while a
+  // focused input must stay visible (e.g. the bookmark tag field) — typing
+  // produces no pointer movement to keep it alive. `lastCursorRef` holds the
+  // real pointer position; the idle tick verifies hover GEOMETRICALLY from it
+  // (elementFromPoint) rather than trusting mouseenter/leave bookkeeping, which
+  // gets stuck open when a synthetic mouseenter fires (chrome mounting under a
+  // stationary cursor on reload) with no matching leave. Off-screen default, so
+  // a cold load with no real move reads "not over chrome" and hides as intended.
+  const chromePinnedRef = useRef(false);
+  const lastCursorRef = useRef({ x: -1, y: -1 });
+
+  // Arm (or re-arm) the idle-hide timer. The tick is SELF-PERPETUATING: on fire
+  // it re-checks, from the real cursor position, whether the pointer is over
+  // chrome (or a field is pinned) and, if so, re-arms instead of hiding — so a
+  // genuine hover keeps chrome up with no enter/leave state to get stuck, and a
+  // stale/synthetic hover can never pin it open.
+  const armIdle = useCallback(() => {
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    const tick = () => {
+      const { x, y } = lastCursorRef.current;
+      const overChrome = x >= 0 && y >= 0
+        && !!(document.elementFromPoint(x, y) as Element | null)?.closest?.('[data-kn-chrome]');
+      if (chromePinnedRef.current || overChrome) {
+        idleTimerRef.current = window.setTimeout(tick, CHROME_IDLE_MS);
+        return;
+      }
+      idleTimerRef.current = null;
+      setChromeVisible(false);
+    };
+    idleTimerRef.current = window.setTimeout(tick, CHROME_IDLE_MS);
+  }, []);
+
+  // Whenever we leave maxed mode (or the viewer closes), drop any pending idle
+  // timer and show all chrome. On entering maxed, show it then arm the idle
+  // timer so it auto-hides even on a cold reload with no mouse movement.
   useEffect(() => {
     if (!maxed) {
       if (idleTimerRef.current) {
@@ -617,88 +650,37 @@ export function MediaViewer({
       setChromeVisible(true);
       setInfoOpen(false); // info panel is maxed-only
     } else {
-      // Entering maxed: show chrome immediately, then start the idle timer.
       setChromeVisible(true);
-      idleTimerRef.current = window.setTimeout(
-        () => setChromeVisible(false),
-        CHROME_IDLE_MS,
-      );
+      armIdle();
     }
     return () => {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     };
-  }, [maxed]);
+  }, [maxed, armIdle]);
 
-  // While the cursor is over any chrome element, the idle timer is
-  // suspended — fading the controls out from under the user's pointer
-  // looks like a bug. Tracked via a ref so the chrome-hover handlers
-  // can read/write it without triggering renders.
-  const chromeHoveredRef = useRef(false);
-  // Timestamp of the last real pointer move. A genuine hover-enter is always
-  // preceded by a move; a SYNTHETIC mouseenter (Chrome fires one when chrome
-  // mounts under a stationary cursor on first load) is not — so we ignore
-  // enters with no recent move, which otherwise pin the chrome open until the
-  // user wiggles the mouse.
-  const lastMoveAtRef = useRef(0);
-  // Pins the chrome open (idle fade suspended) while a focused input must stay
-  // visible — e.g. the bookmark tag field. Mouse-hover tracking can't cover
-  // this: typing produces no pointer movement to keep the chrome alive.
-  const chromePinnedRef = useRef(false);
-
-  // Show chrome and (re-)arm the idle timer. Used by both mouse movement
-  // and by shortcut handlers — pressing a key in fullscreen now reveals
-  // the chrome briefly so the user sees the effect of their action. If
-  // the cursor is over chrome, we show but DON'T start the timer (the
-  // mouseleave handler restarts it when the cursor exits).
+  // Show chrome and (re-)arm the idle timer. Used by mouse movement and by
+  // shortcut handlers — pressing a key in fullscreen reveals the chrome briefly
+  // so the user sees the effect of their action.
   const pulseChrome = useCallback(() => {
     if (!maxed) return;
-    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     setChromeVisible(true);
-    if (chromeHoveredRef.current || chromePinnedRef.current) return;
-    idleTimerRef.current = window.setTimeout(
-      () => setChromeVisible(false),
-      CHROME_IDLE_MS,
-    );
-  }, [maxed]);
+    armIdle();
+  }, [maxed, armIdle]);
 
-  // Handlers spread onto every chrome wrapper so the idle timer
-  // suspends/resumes correctly as the cursor enters/leaves controls. The
-  // `data-kn-chrome` marker lets the root mouse-move handler below tell,
-  // authoritatively, whether the cursor is over chrome.
+  // Spread onto every chrome wrapper. The `data-kn-chrome` marker is what the
+  // geometric hover check keys off; leaving a control re-pulses so the fade
+  // resumes promptly once the cursor exits.
   const chromeHoverHandlers = {
     'data-kn-chrome': '',
-    onMouseEnter: () => {
-      // Ignore a synthetic enter (chrome mounting under a stationary cursor) —
-      // a real hover is always preceded by a move within the last frame or two.
-      if (Date.now() - lastMoveAtRef.current > 120) return;
-      chromeHoveredRef.current = true;
-      if (idleTimerRef.current) {
-        window.clearTimeout(idleTimerRef.current);
-        idleTimerRef.current = null;
-      }
-      setChromeVisible(true);
-    },
-    onMouseLeave: () => {
-      chromeHoveredRef.current = false;
-      pulseChrome();
-    },
+    onMouseLeave: () => pulseChrome(),
   };
 
-  // Root mouse-move: re-derive the hover flag from the element actually
-  // under the cursor, THEN pulse. Enter/leave bookkeeping alone gets stuck
-  // `true` when a hovered control unmounts (e.g. a nav arrow disabling at
-  // the first/last item) or re-renders without firing `onMouseLeave` —
-  // which leaves `pulseChrome` permanently short-circuited and the chrome
-  // pinned on screen. Recomputing from the real target on each move
-  // self-heals that the instant the cursor moves.
+  // Root mouse-move: record the real cursor position (the idle tick reads it to
+  // verify hover), then pulse the chrome.
   const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
-    lastMoveAtRef.current = Date.now(); // mark a real pointer move (see onMouseEnter)
-    if (maxed) {
-      const target = e.target as Element | null;
-      chromeHoveredRef.current = !!target?.closest?.('[data-kn-chrome]');
-    }
+    lastCursorRef.current = { x: e.clientX, y: e.clientY };
     pulseChrome();
-  }, [maxed, pulseChrome]);
+  }, [pulseChrome]);
 
   // Keep the chrome pinned open while a text field in it is focused (bookmark
   // tags, video tags) — typing produces no pointer movement to keep it alive,
