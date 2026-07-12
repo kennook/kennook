@@ -681,6 +681,16 @@ export function MediaViewer({
     armIdle();
   }, [maxed, armIdle]);
 
+  // Toggle the (i) details/info sidebar. Shared by the toolbar button and the
+  // `d` shortcut so they stay in lockstep. Clearing tagAddingRef means a manual
+  // toggle won't auto-close on the user (that's only for a tag-shortcut open).
+  const toggleInfo = useCallback(() => {
+    if (!maxed) return;
+    tagAddingRef.current = false;
+    setInfoOpen((v) => !v);
+    pulseChrome();
+  }, [maxed, pulseChrome]);
+
   // Spread onto every chrome wrapper. The `data-kn-chrome` marker is what the
   // geometric hover check keys off; leaving a control re-pulses so the fade
   // resumes promptly once the cursor exits.
@@ -825,6 +835,8 @@ export function MediaViewer({
     setTagFocusSignal((n) => n + 1);
     pulseChrome();
   }, { enabled: !!item && maxed });
+  // Toggle the details/info sidebar (same as the (i) toolbar button).
+  useShortcut('viewer.toggleInfo', () => toggleInfo(), { enabled: !!item && maxed });
   useShortcut('viewer.trimStart', () => {
     if (!item) return;
     setTrimMutation.mutate({
@@ -1593,8 +1605,8 @@ export function MediaViewer({
         {maxed && (
           <>
             <ToolbarButton
-              onClick={() => { setInfoOpen((v) => !v); tagAddingRef.current = false; }}
-              title="Details"
+              onClick={toggleInfo}
+              title="Details (D)"
               className={infoOpen ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
             >
               <InfoIcon />

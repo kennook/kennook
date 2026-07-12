@@ -13,6 +13,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- Toggle-info shortcut (`d`) in the full-screen viewer: shows/hides the details
+  (info / tags / bookmarks) sidebar — the same action as the (i) toolbar button.
 - Add-tag shortcut (`t`) in the full-screen viewer: opens the info panel with
   the tag field focused and auto-closes it once you add a tag (or press Escape),
   mirroring the bookmark shortcut. Works for photos and videos — the info panel
