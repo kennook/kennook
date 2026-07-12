@@ -300,6 +300,16 @@ function HomeContent() {
     trpcUtils.savedSearch.list.invalidate();
   });
 
+  // Any per-user sidebar list changed — a playlist / saved search / external
+  // source, in-process (via the event) or on another DEVICE (via the poll).
+  // Refetch every sidebar list so it appears without a reload.
+  useSyncEvent('data.changed', () => {
+    trpcUtils.playlist.list.invalidate();
+    trpcUtils.playlist.get.invalidate();
+    trpcUtils.savedSearch.list.invalidate();
+    trpcUtils.externalSource.list.invalidate();
+  });
+
   // Quietly warm the browser cache with the screensaver video during idle
   // time so the first trigger plays instantly. ~1.4MB for 1080p.
   useEffect(() => preloadScreensaverInBackground(), []);

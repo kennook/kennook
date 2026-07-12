@@ -13,7 +13,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { getScreensaverState, getAudioSolo } from '@/server/sync-broker';
+import { getScreensaverState, getAudioSolo, getDataRev } from '@/server/sync-broker';
 import { getSession } from '@/server/auth';
 
 export const runtime = 'nodejs';
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest): Promise<Response> {
   // Per-user: each account's devices converge on their OWN shared UI state.
   const userId = getSession(req.headers.get('cookie')).userId;
   return Response.json(
-    { screensaver: getScreensaverState(userId), audio: getAudioSolo(userId) },
+    { screensaver: getScreensaverState(userId), audio: getAudioSolo(userId), rev: getDataRev(userId) },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

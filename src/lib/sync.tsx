@@ -46,6 +46,9 @@ export type SyncEvent =
   | { type: 'playlist.changed' }
   /** A saved search was created or deleted; other tabs refresh the list. */
   | { type: 'savedSearch.changed' }
+  /** A per-user sidebar list changed (playlists / saved searches / external
+   *  sources). The cross-process poll emits this so other DEVICES refetch. */
+  | { type: 'data.changed' }
   /** An asset's saved pan/zoom framing changed (per orientation). Other open
    *  clients invalidate that key so their NEXT open is fresh. */
   | { type: 'mediaView.changed'; librarySlug: string; uuid: string; orientation: 'portrait' | 'landscape' }
@@ -250,9 +253,10 @@ class SyncBroker {
       try {
         const res = await fetch('/api/sync/state', { cache: 'no-store' });
         if (!res.ok) return;
-        const data = (await res.json()) as { screensaver?: boolean; audio?: string | null };
+        const data = (await res.json()) as { screensaver?: boolean; audio?: string | null; rev?: string | null };
         this.handleScreensaverPoll(data.screensaver);
         this.handleAudioPoll(data.audio);
+        this.handleDataRevPoll(data.rev);
       } catch { /* offline / transient — retry next tick */ }
     };
     this.pollTimer = setInterval(poll, POLL_MS);
@@ -295,9 +299,26 @@ class SyncBroker {
     this.bc?.postMessage({ sessionId: ownerSession, event });
   }
 
+  // Sidebar data revision. `undefined` = not yet polled (don't refetch on the
+  // first observation). On a change, emit `data.changed` so this device
+  // refetches its sidebar lists — this is what makes playlists / saved searches
+  // / external sources appear on OTHER devices without a reload.
+  private lastPolledRev: string | null | undefined = undefined;
+  private handleDataRevPoll(rev: string | null | undefined): void {
+    if (rev == null) { this.lastPolledRev = rev ?? null; return; }
+    if (rev === this.lastPolledRev) return;
+    const first = this.lastPolledRev === undefined;
+    this.lastPolledRev = rev;
+    if (first) return;
+    const event: SyncEvent = { type: 'data.changed' };
+    this.emitLocal(event);
+    this.bc?.postMessage({ sessionId: SESSION_ID, event });
+  }
+
   private stopStatePoll(): void {
     if (this.pollTimer != null) { clearInterval(this.pollTimer); this.pollTimer = null; }
     this.lastPolledScreensaver = null;
+    this.lastPolledRev = undefined;
     this.lastPolledAudio = undefined;
   }
 

@@ -12,7 +12,7 @@ import { z } from 'zod';
 import crypto from 'node:crypto';
 import { router, publicProcedure } from '@/server/trpc';
 import { getUserSqlite } from '@/db/user-client';
-import { publishToUser } from '@/server/sync-broker';
+import { publishToUser, bumpDataRev } from '@/server/sync-broker';
 
 // The saveable subset of PageState. `.strict()` rejects any other key (viewport,
 // library, view-mode), so only a real search ever gets persisted.
@@ -78,6 +78,7 @@ export const savedSearchRouter = router({
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run(uuid, ctx.userId, slug, input.name, JSON.stringify(input.search), now, now);
       publishToUser(ctx.userId, { sessionId: ctx.sessionId, event: { type: 'savedSearch.changed' } });
+      bumpDataRev(ctx.userId);
       return { uuid, name: input.name };
     }),
 
@@ -91,6 +92,7 @@ export const savedSearchRouter = router({
         'UPDATE saved_searches SET search_json = ?, updated_at = ? WHERE uuid = ? AND user_id = ?',
       ).run(JSON.stringify(input.search), Date.now(), input.uuid, ctx.userId);
       publishToUser(ctx.userId, { sessionId: ctx.sessionId, event: { type: 'savedSearch.changed' } });
+      bumpDataRev(ctx.userId);
       return { uuid: input.uuid };
     }),
 
@@ -101,6 +103,7 @@ export const savedSearchRouter = router({
       db.prepare('DELETE FROM saved_searches WHERE uuid = ? AND user_id = ?')
         .run(input.uuid, ctx.userId);
       publishToUser(ctx.userId, { sessionId: ctx.sessionId, event: { type: 'savedSearch.changed' } });
+      bumpDataRev(ctx.userId);
       return { ok: true as const };
     }),
 });
