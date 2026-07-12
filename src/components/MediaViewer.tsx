@@ -634,6 +634,12 @@ export function MediaViewer({
   // looks like a bug. Tracked via a ref so the chrome-hover handlers
   // can read/write it without triggering renders.
   const chromeHoveredRef = useRef(false);
+  // Timestamp of the last real pointer move. A genuine hover-enter is always
+  // preceded by a move; a SYNTHETIC mouseenter (Chrome fires one when chrome
+  // mounts under a stationary cursor on first load) is not — so we ignore
+  // enters with no recent move, which otherwise pin the chrome open until the
+  // user wiggles the mouse.
+  const lastMoveAtRef = useRef(0);
   // Pins the chrome open (idle fade suspended) while a focused input must stay
   // visible — e.g. the bookmark tag field. Mouse-hover tracking can't cover
   // this: typing produces no pointer movement to keep the chrome alive.
@@ -662,6 +668,9 @@ export function MediaViewer({
   const chromeHoverHandlers = {
     'data-kn-chrome': '',
     onMouseEnter: () => {
+      // Ignore a synthetic enter (chrome mounting under a stationary cursor) —
+      // a real hover is always preceded by a move within the last frame or two.
+      if (Date.now() - lastMoveAtRef.current > 120) return;
       chromeHoveredRef.current = true;
       if (idleTimerRef.current) {
         window.clearTimeout(idleTimerRef.current);
@@ -683,6 +692,7 @@ export function MediaViewer({
   // pinned on screen. Recomputing from the real target on each move
   // self-heals that the instant the cursor moves.
   const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
+    lastMoveAtRef.current = Date.now(); // mark a real pointer move (see onMouseEnter)
     if (maxed) {
       const target = e.target as Element | null;
       chromeHoveredRef.current = !!target?.closest?.('[data-kn-chrome]');
