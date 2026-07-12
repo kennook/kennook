@@ -40,7 +40,7 @@ import {
   type OccurrenceInput,
 } from '@/server/text-occurrences';
 import { emitProgress } from './progress';
-import { pace } from '@/ai/throttle';
+import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 
 interface Args {
@@ -176,7 +176,7 @@ async function main() {
       done++;
       const elapsed = ((Date.now() - tStart) / 1000).toFixed(1);
       process.stdout.write(
-        `\n✓ ${row.filename}: ${result.kept} occurrence(s) from ${result.framesProcessed} frame(s) (${elapsed}s)\n`,
+        `\n✓ ${row.filename}: ${result.kept} occurrence(s) from ${result.framesProcessed} frame(s) (${elapsed}s · ${throttleTag()})\n`,
       );
     } catch (e) {
       failed++;
@@ -187,6 +187,7 @@ async function main() {
 
     // Duty-cycle pause (no-op unless throttled), re-read live per item.
     await pace(Date.now() - tStart);
+    reportThrottleChange();
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);

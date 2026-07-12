@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import { getRawSqlite } from '@/db/client';
 import { enrichImage } from '@/ai/vlm';
-import { pace } from '@/ai/throttle';
+import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
 import { emitProgress } from './progress';
 import {
   DEFAULT_LIBRARY_SLUG,
@@ -184,7 +184,7 @@ async function main() {
       const itemMs = Date.now() - itemStart;
       const tagPreview = tags.slice(0, 3).join(', ') + (tags.length > 3 ? '…' : '');
       process.stdout.write(
-        `\r✓ ${done}/${pending.length} (${itemMs}ms) — ${row.filename.slice(0, 40)}  [${tagPreview}]\n`,
+        `\r✓ ${done}/${pending.length} (${itemMs}ms · ${throttleTag()}) — ${row.filename.slice(0, 40)}  [${tagPreview}]\n`,
       );
     } catch (err) {
       failed++;
@@ -196,6 +196,7 @@ async function main() {
     // Duty-cycle pause (no-op unless throttled) — lets the CPU breathe between
     // items. Re-reads the live setting, so a UI change applies mid-run.
     await pace(Date.now() - itemStart);
+    reportThrottleChange();
   }
 
   emitProgress({

@@ -154,3 +154,28 @@ export async function pace(elapsedMs: number): Promise<void> {
   const idleMs = Math.round(elapsedMs * (100 / duty - 1));
   if (idleMs > 0) await sleep(idleMs);
 }
+
+/** Short level tag for per-item log lines, e.g. "full" / "background". */
+export function throttleTag(): string {
+  return getThrottleLevel();
+}
+
+// The level last surfaced to the admin log, so we announce only changes.
+let _reportedLevel: ThrottleLevel | null = null;
+
+/**
+ * Surface throttle state to the admin indexing log: a one-line note when the
+ * level CHANGES (so the user sees the toggle take effect mid-run), plus one line
+ * the first time to state the starting level. Call once per item in the enrich
+ * loops — a no-op when the level is unchanged, so it's cheap to call every item.
+ */
+export function reportThrottleChange(): void {
+  const p = getThrottle();
+  if (_reportedLevel === p.level) return;
+  const first = _reportedLevel === null;
+  _reportedLevel = p.level;
+  const msg = first
+    ? `⚙ Processor load: ${p.label} — ${p.hint}`
+    : `⚙ Processor load changed → ${p.label} — ${p.hint}`;
+  try { process.stdout.write(`\n${msg}\n`); } catch { /* stdout closed */ }
+}
