@@ -1,22 +1,31 @@
 'use client';
 
 /**
- * Whole-video tags for the maximized viewer — the existing item-level tag
- * system ("party", "animals", …), surfaced where the details sidebar isn't
- * (immersive / slideshow). Not timestamped (unlike bookmarks); these plug
- * straight into the tag facets + search that already exist.
+ * Whole-item tags for the maximized viewer — the existing item-level tag
+ * system ("party", "animals", …), surfaced in the (i) info panel for photos
+ * and videos alike. Not timestamped (unlike bookmarks); these plug straight
+ * into the tag facets + search that already exist.
+ *
+ * `focusSignal` (bumped by the parent's Add-tag shortcut) focuses the input;
+ * `onDone` fires when the user finishes a shortcut-initiated add (submitted or
+ * cancelled with Escape) so the parent can auto-close the panel — mirroring the
+ * bookmark add flow.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { useSyncEvent } from '@/lib/sync';
 
 interface Props {
   uuid: string;
   librarySlug: string;
+  /** Bump to focus the tag input (the Add-tag shortcut does this). */
+  focusSignal?: number;
+  /** Fired when a shortcut-initiated add finishes (submit or Escape). */
+  onDone?: () => void;
 }
 
-export function VideoTags({ uuid, librarySlug }: Props) {
+export function VideoTags({ uuid, librarySlug, focusSignal, onDone }: Props) {
   const utils = trpc.useUtils();
   const tags = trpc.media.listTags.useQuery({ uuid, librarySlug });
   const invalidate = () => {
@@ -31,6 +40,18 @@ export function VideoTags({ uuid, librarySlug }: Props) {
   const addTag = trpc.media.addUserTag.useMutation({ onSuccess: invalidate });
   const removeTag = trpc.media.removeUserTag.useMutation({ onSuccess: invalidate });
   const [input, setInput] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus (and select) the input whenever the parent bumps `focusSignal` — the
+  // Add-tag shortcut opens the panel and lands the cursor here. Skip the initial
+  // 0/undefined so it doesn't steal focus on mount.
+  useEffect(() => {
+    if (!focusSignal) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [focusSignal]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +61,7 @@ export function VideoTags({ uuid, librarySlug }: Props) {
     if (!names.length) return;
     for (const name of names) addTag.mutate({ uuid, librarySlug, name });
     setInput('');
+    onDone?.(); // finished adding — let the parent close the panel if it opened for this
   };
 
   const list = tags.data ?? [];
@@ -50,7 +72,7 @@ export function VideoTags({ uuid, librarySlug }: Props) {
       className="w-64 bg-zinc-950/90 backdrop-blur ring-1 ring-zinc-800 rounded-lg p-3
                  text-sm shadow-2xl flex flex-col gap-2"
     >
-      <div className="text-xs text-zinc-400">Video tags</div>
+      <div className="text-xs text-zinc-400">Tags</div>
 
       {list.length > 0 && (
         <div className="flex flex-wrap gap-1">
@@ -84,9 +106,18 @@ export function VideoTags({ uuid, librarySlug }: Props) {
 
       <form onSubmit={submit} className="flex items-center gap-1.5">
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Escape') (e.currentTarget as HTMLInputElement).blur(); }}
+          onKeyDown={(e) => {
+            // Escape cancels: blur, then let the parent close the panel if it
+            // opened for a shortcut-initiated add.
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              (e.currentTarget as HTMLInputElement).blur();
+              onDone?.();
+            }
+          }}
           placeholder="party, animals…"
           maxLength={60}
           className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-[11px]

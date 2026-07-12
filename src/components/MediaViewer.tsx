@@ -270,6 +270,19 @@ export function MediaViewer({
   }, []);
   // Close the add form when the item changes.
   useEffect(() => { setAddBookmarkAtMs(null); }, [item?.uuid]);
+
+  // Add-tag via the `t` shortcut — mirrors the bookmark flow: the shortcut opens
+  // the info panel and focuses the tag input (via `tagFocusSignal`), and the
+  // panel auto-closes once the user finishes. `tagAddingRef` marks that the
+  // panel was opened FOR a tag add, so a manual open + tag edit doesn't
+  // auto-close on the user.
+  const [tagFocusSignal, setTagFocusSignal] = useState(0);
+  const tagAddingRef = useRef(false);
+  const handleTagDone = useCallback(() => {
+    if (!tagAddingRef.current) return;
+    tagAddingRef.current = false;
+    setInfoOpen(false);
+  }, []);
   // Converge when any client edits this item's bookmarks.
   useSyncEvent('item.bookmark.changed', (e) => {
     if (item && e.uuid === item.uuid) {
@@ -649,6 +662,7 @@ export function MediaViewer({
       }
       setChromeVisible(true);
       setInfoOpen(false); // info panel is maxed-only
+      tagAddingRef.current = false;
     } else {
       setChromeVisible(true);
       armIdle();
@@ -738,7 +752,7 @@ export function MediaViewer({
   const handleStepBack = useCallback(() => {
     // Closing the info sidebar also cancels any in-progress bookmark add (its
     // form lives in the sidebar).
-    if (infoOpen) { setInfoOpen(false); setAddBookmarkAtMs(null); return; }
+    if (infoOpen) { setInfoOpen(false); setAddBookmarkAtMs(null); tagAddingRef.current = false; return; }
     if (slideshow) { onSlideshowExit?.(); return; }
     if (maxed) { setMaxed(false); return; }
     onClose();
@@ -800,6 +814,17 @@ export function MediaViewer({
     setInfoOpen(true); // the bookmark add form lives in the info sidebar now
     pulseChrome();
   }, { enabled: videoToolsEnabled });
+  // Add-tag: opens the info panel and focuses the tag input for ANY item (photo
+  // or video), unlike the video-only bookmark. The panel auto-closes when the
+  // user finishes (handleTagDone).
+  useShortcut('viewer.addTag', (e) => {
+    // Cancel the keydown so the 't' isn't typed into the field about to focus.
+    e.preventDefault();
+    tagAddingRef.current = true;
+    setInfoOpen(true);
+    setTagFocusSignal((n) => n + 1);
+    pulseChrome();
+  }, { enabled: !!item && maxed });
   useShortcut('viewer.trimStart', () => {
     if (!item) return;
     setTrimMutation.mutate({
@@ -1405,22 +1430,26 @@ export function MediaViewer({
               />
             )}
 
-            {/* Video tags + bookmarks — moved here from the floating overlay.
-                The sidebar auto-opens when a bookmark add is requested. */}
+            {/* Item tags (photos + videos) + bookmarks (video only) — moved here
+                from the floating overlay. The panel auto-opens when a tag or
+                bookmark add is requested via shortcut. */}
+            <VideoTags
+              uuid={item.uuid}
+              librarySlug={item.librarySlug}
+              focusSignal={tagFocusSignal}
+              onDone={handleTagDone}
+            />
             {item.kind === 'video' && (
-              <>
-                <VideoTags uuid={item.uuid} librarySlug={item.librarySlug} />
-                <VideoBookmarks
-                  uuid={item.uuid}
-                  librarySlug={item.librarySlug}
-                  bookmarks={bookmarksQuery.data?.bookmarks ?? []}
-                  defaultShared={bookmarksQuery.data?.defaultShared ?? true}
-                  isAdmin={isAdmin}
-                  addAtMs={addBookmarkAtMs}
-                  onCloseAdd={closeBookmarkAdd}
-                  onSeek={(ms) => playerApiRef.current?.seek(ms)}
-                />
-              </>
+              <VideoBookmarks
+                uuid={item.uuid}
+                librarySlug={item.librarySlug}
+                bookmarks={bookmarksQuery.data?.bookmarks ?? []}
+                defaultShared={bookmarksQuery.data?.defaultShared ?? true}
+                isAdmin={isAdmin}
+                addAtMs={addBookmarkAtMs}
+                onCloseAdd={closeBookmarkAdd}
+                onSeek={(ms) => playerApiRef.current?.seek(ms)}
+              />
             )}
 
             {onSeeSimilar && (
@@ -1564,7 +1593,7 @@ export function MediaViewer({
         {maxed && (
           <>
             <ToolbarButton
-              onClick={() => setInfoOpen((v) => !v)}
+              onClick={() => { setInfoOpen((v) => !v); tagAddingRef.current = false; }}
               title="Details"
               className={infoOpen ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
             >

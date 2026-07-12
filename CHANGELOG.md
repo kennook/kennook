@@ -12,6 +12,17 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+### Added
+- Add-tag shortcut (`t`) in the full-screen viewer: opens the info panel with
+  the tag field focused and auto-closes it once you add a tag (or press Escape),
+  mirroring the bookmark shortcut. Works for photos and videos — the info panel
+  now shows tags for photos too.
+
+### Fixed
+- Full-screen viewer chrome (the "coming up" reel + controls) no longer stays
+  pinned on screen after reloading a display until you move the mouse — it now
+  auto-hides reliably on a cold load.
+
 ## [0.3.1] - 2026-07-12
 
 ### Fixed
