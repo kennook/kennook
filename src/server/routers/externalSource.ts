@@ -6,6 +6,8 @@ import {
   getExternalSource,
   addExternalSource,
   removeExternalSource,
+  reorderExternalSources,
+  renameExternalSource,
 } from '@/server/external-sources';
 import { parseYouTubeUrl, resolveYouTubeSource, fetchPlaylistPage, fetchVideoAsItem } from '@/server/youtube';
 import { publishToUser, bumpDataRev } from '@/server/sync-broker';
@@ -64,6 +66,25 @@ export const externalSourceRouter = router({
       removeExternalSource(input.slug);
       notifySidebar(ctx.userId, ctx.sessionId);
       return { ok: true };
+    }),
+
+  /** Persist a new display order for the sidebar list (drag-to-sort). */
+  reorder: publicProcedure
+    .input(z.object({ slugs: z.array(z.string()) }))
+    .mutation(({ input, ctx }) => {
+      const sources = reorderExternalSources(input.slugs);
+      notifySidebar(ctx.userId, ctx.sessionId);
+      return sources;
+    }),
+
+  /** Rename a source's display title. */
+  rename: publicProcedure
+    .input(z.object({ slug: z.string(), name: z.string().trim().min(1).max(120) }))
+    .mutation(({ input, ctx }) => {
+      const src = renameExternalSource(input.slug, input.name);
+      if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
+      notifySidebar(ctx.userId, ctx.sessionId);
+      return src;
     }),
 
   /** A page of the source's videos — cursor is the YouTube page token, shaped

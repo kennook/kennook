@@ -87,3 +87,32 @@ export function removeExternalSource(slug: string): void {
   reg.sources = reg.sources.filter((s) => s.slug !== slug);
   writeRegistry(reg);
 }
+
+/**
+ * Persist a new display order. `slugs` is the desired order; any registry source
+ * not named is appended in its existing order, and unknown slugs are ignored —
+ * so a stale client can't drop or duplicate sources.
+ */
+export function reorderExternalSources(slugs: string[]): ExternalSource[] {
+  const reg = readRegistry();
+  const bySlug = new Map(reg.sources.map((s) => [s.slug, s]));
+  const ordered: ExternalSource[] = [];
+  for (const slug of slugs) {
+    const s = bySlug.get(slug);
+    if (s) { ordered.push(s); bySlug.delete(slug); }
+  }
+  for (const s of reg.sources) if (bySlug.has(s.slug)) ordered.push(s); // leftovers, original order
+  reg.sources = ordered;
+  writeRegistry(reg);
+  return reg.sources;
+}
+
+/** Rename a source (its display title). No-op if the slug is unknown. */
+export function renameExternalSource(slug: string, name: string): ExternalSource | null {
+  const reg = readRegistry();
+  const src = reg.sources.find((s) => s.slug === slug);
+  if (!src) return null;
+  src.name = name;
+  writeRegistry(reg);
+  return src;
+}

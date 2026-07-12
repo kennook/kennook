@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
+import { SourcesManager } from './SourcesManager';
 
 interface Props {
   activeSourceSlug: string | null;
@@ -10,43 +10,25 @@ interface Props {
 }
 
 /**
- * Sidebar "Sources" picker — the EXTERNAL half of the libraries-vs-sources
- * division. A compact dropdown of external (YouTube) sources plus an "Add"
- * action. Selecting one switches the page into external mode.
+ * Sidebar "Sources" entry — the EXTERNAL half of the libraries-vs-sources
+ * division. A compact button showing the active external source; clicking it
+ * opens the slide-out SourcesManager (add / search / reorder / rename / delete).
  */
 export function SourcesSection({ activeSourceSlug, onSelectSource }: Props) {
   const sources = trpc.externalSource.list.useQuery();
-  const utils = trpc.useUtils();
-  const [open, setOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, []);
-
-  const remove = trpc.externalSource.remove.useMutation({
-    onSuccess: (_d, vars) => {
-      void utils.externalSource.list.invalidate();
-      if (vars.slug === activeSourceSlug) onSelectSource(null);
-    },
-  });
+  const [managerOpen, setManagerOpen] = useState(false);
 
   const list = sources.data ?? [];
   const active = list.find((s) => s.slug === activeSourceSlug) ?? null;
-  const pick = (slug: string | null) => { onSelectSource(slug); setOpen(false); };
 
   return (
     <section className="mb-5">
       <h3 className="text-[10px] uppercase tracking-wider text-zinc-500 px-3 mb-1.5">Sources</h3>
 
-      <div className="relative px-1" ref={ref}>
+      <div className="px-1">
         <button
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setManagerOpen(true)}
+          title="Manage external sources"
           className={`w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition border
                       ${active
                         ? 'bg-zinc-800/80 text-zinc-100 border-zinc-700'
@@ -54,113 +36,30 @@ export function SourcesSection({ activeSourceSlug, onSelectSource }: Props) {
         >
           <YouTubeMark />
           <span className="flex-1 truncate text-left">{active ? active.name : 'External sources'}</span>
-          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-500 shrink-0">
-            <path d="M1 3 L5 7 L9 3" stroke="currentColor" strokeWidth="1.5" fill="none" />
-          </svg>
+          {list.length > 0 && (
+            <span className="text-[10px] text-zinc-500 shrink-0 tabular-nums">{list.length}</span>
+          )}
+          <PanelIcon />
         </button>
-
-        {open && (
-          <div className="absolute left-1 right-1 top-full mt-1 z-20 max-h-80 overflow-y-auto
-                          bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1">
-            <button
-              onClick={() => pick(null)}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-800 ${active ? 'text-zinc-400' : 'text-zinc-100'}`}
-            >
-              Back to library
-            </button>
-            {list.length > 0 && <div className="border-t border-zinc-800 my-1" />}
-            {list.map((s) => {
-              const isCurrent = s.slug === activeSourceSlug;
-              return (
-                <div key={s.slug} className="group flex items-center hover:bg-zinc-800">
-                  <button
-                    onClick={() => pick(isCurrent ? null : s.slug)}
-                    className={`flex-1 min-w-0 text-left px-3 py-2 text-sm flex items-center gap-2
-                                ${isCurrent ? 'text-zinc-100' : 'text-zinc-300'}`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-red-500/80" />
-                    <span className="flex-1 truncate">{s.name}</span>
-                    <span className="text-[10px] uppercase text-zinc-600 shrink-0">{s.kind}</span>
-                  </button>
-                  <button
-                    onClick={() => remove.mutate({ slug: s.slug })}
-                    title="Remove source"
-                    className="px-2 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100"
-                  >
-                    ×
-                  </button>
-                </div>
-              );
-            })}
-            <div className="border-t border-zinc-800 my-1" />
-            <button
-              onClick={() => { setOpen(false); setAdding(true); }}
-              className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            >
-              + Add YouTube source…
-            </button>
-          </div>
-        )}
       </div>
 
-      {adding && (
-        <AddSourceDialog
-          onClose={() => setAdding(false)}
-          onAdded={(slug) => { setAdding(false); onSelectSource(slug); }}
-        />
-      )}
+      <SourcesManager
+        open={managerOpen}
+        onClose={() => setManagerOpen(false)}
+        activeSourceSlug={activeSourceSlug}
+        onSelectSource={onSelectSource}
+      />
     </section>
   );
 }
 
-function AddSourceDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (slug: string) => void }) {
-  const utils = trpc.useUtils();
-  const [url, setUrl] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const create = trpc.externalSource.create.useMutation({
-    onSuccess: (src) => { void utils.externalSource.list.invalidate(); onAdded(src.slug); },
-    onError: (e) => setError(e.message),
-  });
-
-  // Portal to <body>: the dialog is launched from inside the zoomed
-  // (kn-app-scaled) + overflow-clipped sidebar, whose CSS `zoom` traps a nested
-  // `fixed` element in its own stacking context (it would paint under the grid).
-  if (typeof document === 'undefined') return null;
-  return createPortal(
-    <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-6"
-         onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <form
-        onSubmit={(e) => { e.preventDefault(); setError(null); if (url.trim()) create.mutate({ url: url.trim() }); }}
-        className="w-full max-w-md bg-zinc-900 ring-1 ring-zinc-800 rounded-xl p-5 flex flex-col gap-3 shadow-2xl"
-      >
-        <h2 className="text-base font-medium text-zinc-100">Add a YouTube source</h2>
-        <p className="text-xs text-zinc-500">
-          Paste a channel, playlist, or video link — e.g.{' '}
-          <span className="text-zinc-400">youtube.com/@channel</span>,{' '}
-          <span className="text-zinc-400">…/playlist?list=…</span>, or a{' '}
-          <span className="text-zinc-400">youtu.be/…</span> video (adds its channel).
-        </p>
-        <input
-          autoFocus
-          value={url}
-          onChange={(e) => { setUrl(e.target.value); setError(null); }}
-          placeholder="https://www.youtube.com/@…"
-          className="bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-500"
-        />
-        {error && <div className="text-xs text-red-400">{error}</div>}
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200">Cancel</button>
-          <button
-            type="submit"
-            disabled={create.isPending || !url.trim()}
-            className="px-3 py-1.5 text-sm rounded-md bg-zinc-200 text-zinc-900 font-medium hover:bg-white disabled:opacity-40"
-          >
-            {create.isPending ? 'Adding…' : 'Add source'}
-          </button>
-        </div>
-      </form>
-    </div>,
-    document.body,
+/** Signals "opens a side panel" (vs. the old dropdown chevron). */
+function PanelIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" className="text-zinc-500 shrink-0" aria-hidden>
+      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M9 4v16" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
   );
 }
 
