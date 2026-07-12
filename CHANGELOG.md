@@ -12,6 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-12
+
+### Fixed
+- Server crash (`ReferenceError: ResizeObserver is not defined`) when
+  server-rendering the library page — the virtualized grid's resize hooks now
+  run only on the client, so the home page loads again in production.
+
 ## [0.3.0] - 2026-07-12
 
 A big release: real multi-user support, external YouTube sources alongside your
