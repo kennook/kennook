@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { MasonryScroller, usePositioner, useResizeObserver, useInfiniteLoader } from 'masonic';
+import { MasonryScroller, usePositioner, useResizeObserver, useInfiniteLoader, useScrollToIndex } from 'masonic';
 import { MediaCard } from './MediaCard';
 
 /** Per-item text occurrence match returned by the search router. Drives
@@ -71,9 +71,9 @@ interface Handlers {
 // masonic didn't re-render.
 const HandlersCtx = createContext<React.MutableRefObject<Handlers> | null>(null);
 
-/** What masonic stores per cell: the item plus its (volatile) selected flag,
- *  baked in so a selection change busts the cell's memo and re-renders it. */
-interface Cell { item: MediaItemDto; selected: boolean; }
+/** What masonic stores per cell: the item plus its (volatile) selected +
+ *  highlighted flags, baked in so a change busts the cell's memo. */
+interface Cell { item: MediaItemDto; selected: boolean; highlighted: boolean; }
 
 // Target tile width — bigger on large displays (fewer, larger tiles), which is
 // how a virtualized masonry scales up (the old CSS-zoom path can't, it desyncs
@@ -129,11 +129,12 @@ function useMeasure(): [RefObject<HTMLDivElement>, { width: number; offset: numb
 
 function GridCell({ data }: { index: number; data: Cell; width: number }) {
   const ref = useContext(HandlersCtx)!;
-  const { item, selected } = data;
+  const { item, selected, highlighted } = data;
   return (
     <MediaCard
       id={item.id}
       uuid={item.uuid}
+      highlighted={highlighted}
       librarySlug={item.librarySlug}
       thumbnailUrl={item.thumbnailUrl}
       kind={item.kind}
@@ -176,25 +177,29 @@ interface Props {
   /** Identity of the current result set (view + filters). When it changes we
    *  remount the masonry so positions + scroll reset for the new dataset. */
   resetKey?: string;
+  /** uuid of the last item opened in the viewer — its tile gets a sky ring. */
+  highlightUuid?: string | null;
+  /** Bump to scroll the highlighted tile into view (e.g. on viewer close). */
+  scrollSignal?: number;
 }
 
 export function MediaGrid({
   items, onSelect, onToggleSelection, selectedKeys, selectionMode, onSetLikes,
-  loading, onLoadMore, hasMore, resetKey,
+  loading, onLoadMore, hasMore, resetKey, highlightUuid, scrollSignal,
 }: Props) {
   // Latest handlers in a stable ref (see HandlersCtx).
   const handlersRef = useRef<Handlers>({ onSelect, onToggleSelection, onSetLikes, selectionMode });
   handlersRef.current = { onSelect, onToggleSelection, onSetLikes, selectionMode };
 
-  // Bake `selected` into each cell so a selection change re-renders just the
-  // affected tiles (identity churn is cheap; unchanged items keep their DTO
-  // reference from the query cache, so their memo holds).
+  // Bake `selected` + `highlighted` into each cell so a change re-renders just
+  // the affected tiles (unchanged items keep their DTO reference, so memo holds).
   const cells = useMemo<Cell[]>(
     () => items.map((item) => ({
       item,
       selected: selectedKeys?.has(selectionKey(item.librarySlug, item.uuid)) ?? false,
+      highlighted: highlightUuid != null && item.uuid === highlightUuid,
     })),
-    [items, selectedKeys],
+    [items, selectedKeys, highlightUuid],
   );
 
   const columnWidth = useColumnWidth();
@@ -204,6 +209,21 @@ export function MediaGrid({
   // dataset changes; masonic re-lays-out at the correct column count/width.
   const positioner = usePositioner({ width, columnWidth, columnGutter: 8 }, [resetKey ?? '']);
   const resizeObserver = useResizeObserver(positioner);
+
+  // Scroll the highlighted tile into view when `scrollSignal` bumps (the grid is
+  // virtualized, so masonic's own scroll-to-index is required).
+  const scrollToIndex = useScrollToIndex(positioner, {
+    element: typeof window !== 'undefined' ? window : null,
+    align: 'center',
+    height: viewportHeight,
+    offset,
+  });
+  useEffect(() => {
+    if (scrollSignal == null || highlightUuid == null) return;
+    const idx = items.findIndex((it) => it.uuid === highlightUuid);
+    if (idx >= 0) scrollToIndex(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollSignal]);
 
   const maybeLoadMore = useInfiniteLoader(
     async () => { if (hasMore) onLoadMore?.(); },

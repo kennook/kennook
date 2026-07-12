@@ -22,6 +22,9 @@ interface MediaCardProps {
   durationMs: number | null;
   score?: number;
   selected?: boolean;
+  /** The last item opened in the viewer — ringed so you can find where you
+   *  left off. Distinct from `selected` (multi-select). */
+  highlighted?: boolean;
   selectionMode?: boolean;
   likeCount: number;
   /** Community rating: average across all raters (0-5), null when none. */
@@ -57,6 +60,7 @@ export function MediaCard({
   durationMs,
   score,
   selected,
+  highlighted,
   selectionMode,
   likeCount,
   communityLikeAvg = null,
@@ -144,7 +148,9 @@ export function MediaCard({
     <div
       style={{ aspectRatio: String(aspectRatio) }}
       className={`group relative overflow-hidden rounded-lg bg-zinc-900 transition
-                  ${selected ? 'ring-2 ring-emerald-400' : 'hover:ring-2 hover:ring-zinc-500'}`}
+                  ${selected ? 'ring-2 ring-emerald-400'
+                    : highlighted ? 'ring-2 ring-sky-400'
+                    : 'hover:ring-2 hover:ring-zinc-500'}`}
     >
       <button
         onClick={handleCardClick}

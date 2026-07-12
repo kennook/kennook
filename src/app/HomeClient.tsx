@@ -114,6 +114,20 @@ function HomeContent() {
     else url.set({ item: null, view: null, tMs: null });
   }, [url]);
 
+  // Last item opened in the viewer — powers a "Resume" pill + a grid highlight
+  // so you can pick up where you left off after closing. `view` remembers
+  // whether it was a slideshow.
+  const [lastViewed, setLastViewed] = useState<{ uuid: string; view: 'full' | 'slideshow' } | null>(null);
+  // Bumped when the viewer closes, to scroll the highlighted tile into view.
+  const [scrollSignal, setScrollSignal] = useState(0);
+  const prevItemRef = useRef<string | null>(url.item);
+  useEffect(() => {
+    if (url.item) setLastViewed({ uuid: url.item, view: slideshow ? 'slideshow' : 'full' });
+    // Viewer just closed (had an item, now none) → scroll to where we were.
+    if (prevItemRef.current != null && url.item == null) setScrollSignal((n) => n + 1);
+    prevItemRef.current = url.item;
+  }, [url.item, slideshow]);
+
   // Transient (non-URL) state.
   const [helpOpen, setHelpOpen] = useState(false);
   const [selection, setSelection] = useState<SelectionRef[]>([]);
@@ -511,6 +525,7 @@ function HomeContent() {
   ]);
   useEffect(() => {
     if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+    setLastViewed(null); // the resume point belongs to the previous result set
   }, [resetKey]);
 
   // The viewer walks the single accumulated `items` list — no page boundaries
@@ -1095,6 +1110,8 @@ function HomeContent() {
             onLoadMore={loadMore}
             hasMore={hasMore}
             resetKey={resetKey}
+            highlightUuid={url.item ? null : lastViewed?.uuid ?? null}
+            scrollSignal={scrollSignal}
           />
 
           {/* Infinite-scroll status footer (replaces the pager). */}
@@ -1109,6 +1126,31 @@ function HomeContent() {
                   : null}
             </div>
           )}
+
+          {/* Resume pill — reopen the last-viewed item (photo/video/slideshow)
+              without hunting for it in the grid. */}
+          {!url.item && lastViewed && (() => {
+            const it = items.find((i) => i.uuid === lastViewed.uuid);
+            return (
+              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
+                              bg-zinc-900/95 backdrop-blur ring-1 ring-zinc-700 rounded-full pl-4 pr-2 py-2 shadow-2xl">
+                <button
+                  onClick={() => url.set({ item: lastViewed.uuid, view: lastViewed.view, tMs: null })}
+                  className="flex items-center gap-2 text-sm text-zinc-100"
+                >
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-sky-400 text-zinc-900">
+                    <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
+                  </span>
+                  <span className="max-w-[16rem] truncate">
+                    {lastViewed.view === 'slideshow' ? 'Resume slideshow' : 'Resume'}
+                    {it ? `: ${it.filename}` : ''}
+                  </span>
+                </button>
+                <button onClick={() => setLastViewed(null)} title="Dismiss"
+                  className="text-zinc-500 hover:text-zinc-200 px-1.5">×</button>
+              </div>
+            );
+          })()}
           </>
           )}
         </div>
