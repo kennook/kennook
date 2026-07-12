@@ -6,17 +6,13 @@ import {
   RawImage,
   env,
 } from '@huggingface/transformers';
+import { aiSessionOptions, levelAwareLoader } from './throttle';
 
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
 
 if (process.env.TRANSFORMERS_CACHE) {
   env.cacheDir = process.env.TRANSFORMERS_CACHE;
 }
-
-let _imageEncoder: Promise<{
-  processor: Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>;
-  model: Awaited<ReturnType<typeof CLIPVisionModelWithProjection.from_pretrained>>;
-}> | null = null;
 
 let _textEncoder: Promise<{
   tokenizer: Awaited<ReturnType<typeof AutoTokenizer.from_pretrained>>;
@@ -28,24 +24,27 @@ let _textEncoder: Promise<{
 // variant — fastest on CPU, ~4x smaller download.
 const MODEL_OPTS = { dtype: 'q8' as const };
 
-function loadImageEncoder() {
-  if (_imageEncoder) return _imageEncoder;
-  _imageEncoder = (async () => {
+// The image encoder drives the (long-running) vector backfill, so it rebuilds
+// with the current core cap when the throttle level changes.
+const loadImageEncoder = levelAwareLoader(
+  async () => {
     const [processor, model] = await Promise.all([
       AutoProcessor.from_pretrained(MODEL_ID),
-      CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, MODEL_OPTS),
+      CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { ...MODEL_OPTS, ...aiSessionOptions() }),
     ]);
     return { processor, model };
-  })();
-  return _imageEncoder;
-}
+  },
+  (s) => (s.model as unknown as { dispose?: () => void }).dispose?.(),
+);
 
+// The text encoder is interactive (search queries), not a batch pass — load it
+// once (honouring the cap at load time) rather than rebuilding under the user.
 function loadTextEncoder() {
   if (_textEncoder) return _textEncoder;
   _textEncoder = (async () => {
     const [tokenizer, model] = await Promise.all([
       AutoTokenizer.from_pretrained(MODEL_ID),
-      CLIPTextModelWithProjection.from_pretrained(MODEL_ID, MODEL_OPTS),
+      CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { ...MODEL_OPTS, ...aiSessionOptions() }),
     ]);
     return { tokenizer, model };
   })();

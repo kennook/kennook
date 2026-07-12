@@ -21,6 +21,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
 import * as ort from 'onnxruntime-node';
+import { aiSessionOptions, getThrottleLevel, type ThrottleLevel } from './throttle';
 
 const MODELS_DIR = path.join(process.cwd(), 'data', 'face-models');
 
@@ -71,20 +72,33 @@ async function downloadTo(url: string, dest: string, label: string): Promise<voi
 }
 
 let loadPromise: Promise<void> | null = null;
+let loadedLevel: ThrottleLevel | null = null;
 let yunet: ort.InferenceSession | null = null;
 let arc: ort.InferenceSession | null = null;
 let arcIn = 'data';
 let arcOut = 'fc1';
+// Rebuilds both sessions with the current core cap when the throttle level
+// changes — the only way to change onnxruntime's thread count, which is fixed at
+// session creation. The face-enrich loop awaits each item, so the old sessions
+// are never mid-inference when a rebuild triggers.
 async function ensureLoaded(): Promise<void> {
-  if (loadPromise) return loadPromise;
+  const level = getThrottleLevel();
+  if (loadPromise && loadedLevel === level) return loadPromise;
+  if (loadPromise) {
+    const oldY = yunet, oldA = arc;
+    yunet = arc = null;
+    void Promise.resolve().then(() => { try { oldY?.release?.(); oldA?.release?.(); } catch { /* best-effort */ } });
+  }
+  loadedLevel = level;
   loadPromise = (async () => {
     await fs.mkdir(MODELS_DIR, { recursive: true });
     const yPath = path.join(MODELS_DIR, YUNET_FILE);
     const aPath = path.join(MODELS_DIR, ARCFACE_FILE);
     if (!(await fileExists(yPath))) await downloadTo(YUNET_URL, yPath, `${YUNET_FILE} (YuNet detector)`);
     if (!(await fileExists(aPath))) await downloadTo(ARCFACE_URL, aPath, `${ARCFACE_FILE} (ArcFace, ~249MB, one-time)`);
-    yunet = await ort.InferenceSession.create(yPath);
-    arc = await ort.InferenceSession.create(aPath);
+    const opts = aiSessionOptions().session_options; // { intraOpNumThreads, interOpNumThreads } | undefined
+    yunet = await ort.InferenceSession.create(yPath, opts);
+    arc = await ort.InferenceSession.create(aPath, opts);
     arcIn = arc.inputNames[0] ?? arcIn;
     arcOut = arc.outputNames[0] ?? arcOut;
   })();

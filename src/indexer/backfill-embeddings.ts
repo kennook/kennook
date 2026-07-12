@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import { getRawSqlite } from '@/db/client';
 import { embedImage, floatArrayToBuffer } from '@/ai/embeddings';
+import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
 import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 
 interface Row {
@@ -65,16 +66,21 @@ async function main() {
       failed++;
       continue;
     }
+    const itemStart = Date.now();
     try {
       const embedding = await embedImage(row.thumbnail_path);
       insert.run(BigInt(row.id), floatArrayToBuffer(embedding));
       done++;
-      process.stdout.write(`\r✓ ${done} embedded, ${failed} failed   `);
+      process.stdout.write(`\r✓ ${done} embedded, ${failed} failed · ${throttleTag()}   `);
     } catch (err) {
       failed++;
       const msg = err instanceof Error ? err.message : String(err);
       process.stdout.write(`\n✗ id=${row.id} (${row.filename}): ${msg}\n`);
     }
+
+    // Duty-cycle pause + surface any load change (both read the live setting).
+    await pace(Date.now() - itemStart);
+    reportThrottleChange();
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);

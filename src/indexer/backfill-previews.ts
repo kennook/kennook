@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
+import { pace, getThrottle, throttleTag, reportThrottleChange } from '@/ai/throttle';
 import { getRawSqlite } from '@/db/client';
 import {
   DEFAULT_LIBRARY_SLUG,
@@ -84,6 +85,10 @@ async function main() {
       continue;
     }
     const previewPath = path.join(previewDir, `${row.uuid}.jpg`);
+    const itemStart = Date.now();
+    // Cap libvips' threadpool per the throttle (0 = all cores) — read live so a
+    // UI change applies to the next preview.
+    sharp.concurrency(getThrottle().threads);
     try {
       const oriented = await sharp(absSource).rotate().toBuffer();
       await sharp(oriented)
@@ -92,12 +97,16 @@ async function main() {
         .toFile(previewPath);
       update.run(previewPath, row.id);
       done++;
-      process.stdout.write(`\r✓ ${done} generated, ${failed} failed   `);
+      process.stdout.write(`\r✓ ${done} generated, ${failed} failed · ${throttleTag()}   `);
     } catch (err) {
       failed++;
       const msg = err instanceof Error ? err.message : String(err);
       process.stdout.write(`\n✗ ${row.filename}: ${msg}\n`);
     }
+
+    // Duty-cycle pause + surface any load change (both read the live setting).
+    await pace(Date.now() - itemStart);
+    reportThrottleChange();
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);

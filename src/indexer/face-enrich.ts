@@ -20,6 +20,7 @@ import { parseRootPath, resolveMediaPath } from '@/server/storage';
 import { detectFaces, faceEmbeddingToBuffer, FRONTAL_MAX_ASYMMETRY } from '@/ai/face';
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
+import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
 
 interface Args {
   librarySlug: string;
@@ -133,6 +134,7 @@ async function main() {
       console.log('SKIP (file missing)');
       continue;
     }
+    const itemStart = Date.now();
     try {
       const allDetected = await detectFaces(absPath);
       // Quality gates before storing: (1) size — tiny crops give unreliable
@@ -163,13 +165,18 @@ async function main() {
       }
       faces += detected.length;
       done++;
-      console.log(`${detected.length} face(s)`);
+      const elapsed = ((Date.now() - itemStart) / 1000).toFixed(1);
+      console.log(`${detected.length} face(s) (${elapsed}s · ${throttleTag()})`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       markStatus.run('failed', row.id);
       failed++;
       console.log(`FAIL: ${msg}`);
     }
+
+    // Duty-cycle pause + surface any load change (both read the live setting).
+    await pace(Date.now() - itemStart);
+    reportThrottleChange();
   }
   emitProgress({
     step: 'Enrich: faces',
