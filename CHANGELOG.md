@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-12
+
 ### Added
 - The processor-load throttle now governs **every** enrichment pass — Text/VLM,
   Video OCR, Transcript, Transcript Tags, Faces, Vector backfill, Scrub-preview
