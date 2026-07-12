@@ -28,9 +28,22 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
     setPlayer({ startIndex, autoplay });
   };
 
+  // The current / last-played video (by id, robust to the list growing) — used
+  // to highlight its tile so you can find where the queue is.
+  const currentVideoId = resume != null ? videos[resume.index]?.videoId ?? null : null;
+
   // Switching to a different source is a fresh session — drop any open player
   // + resume point (their indices belong to the previous source's list).
   useEffect(() => { setPlayer(null); setResume(null); }, [slug]);
+
+  // On exiting the player, scroll the highlighted tile into view so continuing
+  // the queue doesn't mean hunting for it.
+  const currentTileRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!player && currentVideoId) {
+      currentTileRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [player, currentVideoId]);
 
   // Tail sentinel → fetch the next page as the user nears the end.
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -79,18 +92,34 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
         <div className="text-center text-zinc-500 py-16 text-sm">No videos in this source.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {videos.map((v, i) => (
-            <button key={v.videoId} onClick={() => openAt(i, false)} className="group text-left">
-              <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-900 ring-1 ring-transparent group-hover:ring-zinc-600 transition">
-                {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-cover" />}
-                <div className="absolute inset-0 grid place-items-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
-                  <PlayGlyph />
+          {videos.map((v, i) => {
+            const isCurrent = currentVideoId === v.videoId;
+            return (
+              <button
+                key={v.videoId}
+                ref={isCurrent ? currentTileRef : undefined}
+                onClick={() => openAt(i, false)}
+                className="group text-left"
+              >
+                <div className={`relative aspect-video rounded-lg overflow-hidden bg-zinc-900 transition
+                                ${isCurrent ? 'ring-2 ring-emerald-400' : 'ring-1 ring-transparent group-hover:ring-zinc-600'}`}>
+                  {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-cover" />}
+                  <div className="absolute inset-0 grid place-items-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                    <PlayGlyph />
+                  </div>
+                  {isCurrent && (
+                    <div className="absolute top-2 left-2 flex items-center gap-1 bg-emerald-400 text-zinc-900
+                                    text-[10px] font-semibold px-1.5 py-0.5 rounded-full shadow">
+                      <svg width="8" height="8" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
+                      {player ? 'Playing' : 'Last played'}
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="mt-1.5 text-sm text-zinc-200 line-clamp-2">{v.title}</div>
-              <div className="text-xs text-zinc-500 truncate">{v.channelTitle}</div>
-            </button>
-          ))}
+                <div className={`mt-1.5 text-sm line-clamp-2 ${isCurrent ? 'text-emerald-300' : 'text-zinc-200'}`}>{v.title}</div>
+                <div className="text-xs text-zinc-500 truncate">{v.channelTitle}</div>
+              </button>
+            );
+          })}
         </div>
       )}
 
