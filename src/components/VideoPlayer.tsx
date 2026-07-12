@@ -129,6 +129,20 @@ export function VideoPlayer({
   const currentTimeRef = useRef<HTMLSpanElement>(null);
 
   const [playing, setPlaying] = useState(false);
+  // True while the video has no playable data yet — initial load (slow when a
+  // snoozing drive is spinning up) or mid-playback buffering. Drives a spinner
+  // so a black screen doesn't read as "nothing's happening".
+  const [buffering, setBuffering] = useState(true);
+  // A new src is loading until it can play — reset immediately on item swap.
+  useEffect(() => { setBuffering(true); }, [src]);
+  // Only actually show the spinner if buffering lasts >200ms, so fast/cached
+  // loads don't flash it.
+  const [showSpinner, setShowSpinner] = useState(false);
+  useEffect(() => {
+    if (!buffering) { setShowSpinner(false); return; }
+    const t = window.setTimeout(() => setShowSpinner(true), 200);
+    return () => window.clearTimeout(t);
+  }, [buffering]);
   // Volume *level* stays a cross-tab preference (same loudness everywhere).
   // Mute is per-window and deliberately NOT persisted: a fresh window load
   // always starts muted (also autoplay-policy friendly), and the user unmutes
@@ -469,6 +483,12 @@ export function VideoPlayer({
           showControls();
         }}
         onPause={() => { setPlaying(false); setControlsVisible(true); }}
+        // Buffering / loading lifecycle → drives the spinner.
+        onWaiting={() => setBuffering(true)}
+        onStalled={() => setBuffering(true)}
+        onCanPlay={() => setBuffering(false)}
+        onPlaying={() => setBuffering(false)}
+        onError={() => setBuffering(false)}
         onLoadedMetadata={(e) => {
           const dur = e.currentTarget.duration;
           setDuration(dur);
@@ -523,6 +543,14 @@ export function VideoPlayer({
         className={videoClassName}
         style={videoStyle}
       />
+
+      {/* Loading / buffering spinner — centered over the (possibly still black)
+          video so it's clear something's happening while data streams in. */}
+      {showSpinner && (
+        <div className="absolute inset-0 grid place-items-center pointer-events-none">
+          <div className="w-12 h-12 rounded-full border-2 border-white/25 border-t-white/90 animate-spin" />
+        </div>
+      )}
 
       <div
         onMouseEnter={() => {
