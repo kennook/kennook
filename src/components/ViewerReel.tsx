@@ -1,10 +1,38 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { MediaItemDto } from './MediaGrid';
 import { VIEWER_THUMB_H, REEL_TILE_ASPECT } from '@/lib/viewer-thumb';
 
 const TILE_W = VIEWER_THUMB_H * REEL_TILE_ASPECT;
 const TILE_STYLE = { width: TILE_W, height: VIEWER_THUMB_H } as const;
+
+// Layout budget for the responsive count below.
+const REEL_GAP = 6;         // gap-1.5 between tiles
+// Width kept clear on EACH side so the centered strip never overlaps the side
+// nav arrows (w-11 at left-4/right-4 ≈ 60px + breathing room).
+const SIDE_RESERVE = 84;
+
+/** How many UPCOMING tiles fit without the centered strip reaching the side
+ *  controls. On a narrow screen this drops toward 0 so the nav arrows stay
+ *  clickable; on a wide screen it caps at UPCOMING_MAX. Counts the always-shown
+ *  "now" tile against the budget. */
+function computeMaxUpcoming(): number {
+  if (typeof window === 'undefined') return UPCOMING_MAX;
+  const avail = window.innerWidth - SIDE_RESERVE * 2;
+  const tiles = Math.floor((avail + REEL_GAP) / (TILE_W + REEL_GAP));
+  return Math.max(0, Math.min(UPCOMING_MAX, tiles - 1));
+}
+
+function useMaxUpcoming(): number {
+  const [count, setCount] = useState(computeMaxUpcoming);
+  useEffect(() => {
+    const onResize = () => setCount(computeMaxUpcoming());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return count;
+}
 
 interface Props {
   /** The currently visible page of items (parent supplies this). */
@@ -18,10 +46,9 @@ interface Props {
   onSelect: (item: MediaItemDto) => void;
 }
 
-// Number of UPCOMING items shown after the "now playing" tile.
-// 5 upcoming + 1 current = 6 total, same width as before but with the
-// current item explicitly indicated.
-const UPCOMING_COUNT = 5;
+// Upper bound on UPCOMING items shown after the "now playing" tile (5 upcoming +
+// 1 current = 6). The actual count shrinks on narrow screens — see useMaxUpcoming.
+const UPCOMING_MAX = 5;
 
 /**
  * Sticky-feeling film strip across the bottom of the viewer. Layout:
@@ -34,14 +61,18 @@ const UPCOMING_COUNT = 5;
  * page is about to run out a dashed "Next page" placeholder gets
  * appended so the user knows more is coming.
  *
+ * On a narrow screen the number of upcoming tiles is reduced so the centered
+ * strip doesn't cover the side nav arrows (see useMaxUpcoming).
+ *
  * Click any upcoming tile to jump straight to it.
  */
 export function ViewerReel({ items, currentIndex, hasMore, onSelect }: Props) {
+  const maxUpcoming = useMaxUpcoming();
   if (currentIndex < 0 || currentIndex >= items.length) return null;
 
   const current = items[currentIndex];
-  const upcoming = items.slice(currentIndex + 1, currentIndex + 1 + UPCOMING_COUNT);
-  const showNextPageTile = upcoming.length < UPCOMING_COUNT && hasMore;
+  const upcoming = items.slice(currentIndex + 1, currentIndex + 1 + maxUpcoming);
+  const showNextPageTile = upcoming.length < maxUpcoming && hasMore;
 
   return (
     <div

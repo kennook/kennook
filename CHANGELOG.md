@@ -22,6 +22,9 @@ Anything under **Upgrade notes** requires action on the operator's part
 - Full-screen viewer chrome (the "coming up" reel + controls) no longer stays
   pinned on screen after reloading a display until you move the mouse — it now
   auto-hides reliably on a cold load.
+- The "coming up" reel now shows fewer thumbnails on narrow screens instead of
+  running under the side navigation arrows — the number shrinks with the window
+  so the controls stay clear and clickable.
 
 ## [0.3.1] - 2026-07-12
 
