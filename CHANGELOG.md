@@ -16,6 +16,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 - Enrichment logs now report the processor load: each processed item shows the
   active level next to its timing (e.g. `(1.2s · background)`), and a change to
   the level mid-run is announced in the log so you can see the toggle take effect.
+  Covers the AI passes (text/VLM, video OCR, transcript, transcript tags) and the
+  scrub-preview (sprite) pass.
+- The scrub-preview (sprite-sheet) generation now honors the processor-load
+  throttle: it paces between items and caps ffmpeg's thread count, so switching
+  to Light/Background actually lowers CPU on that pass (it's ffmpeg, not AI, so it
+  wasn't affected before).
 - Toggle-info shortcut (`i`) in the full-screen viewer: shows/hides the details
   (info / tags / bookmarks) sidebar — the same action as the (i) toolbar button.
 - Add-tag shortcut (`t`) in the full-screen viewer: opens the info panel with

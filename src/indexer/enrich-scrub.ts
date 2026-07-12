@@ -21,6 +21,7 @@ import { parseRootPath, resolveMediaPath } from '@/server/storage';
 import { generateSpriteSheet, probeVideo, ensureFfmpegAvailable } from './ffmpeg';
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
+import { pace, getThrottle, throttleTag, reportThrottleChange } from '@/ai/throttle';
 
 // A scrub track only needs ~1 tile every few seconds; cap the grid so long
 // videos don't blow up the sprite. 150 × 160px tiles is a small JPEG.
@@ -133,6 +134,7 @@ async function main() {
       continue;
     }
 
+    const itemStart = Date.now();
     try {
       // Duration + dims: prefer what indexing already stored, else probe.
       let durationMs = row.duration_ms;
@@ -161,17 +163,24 @@ async function main() {
       fs.mkdirSync(dir, { recursive: true });
       const outPath = path.join(dir, 'sprite.jpg');
 
-      await generateSpriteSheet(abs, outPath, { intervalSec, tileW, tileH, cols, rows });
+      // Cap ffmpeg's threads per the current processor-load throttle (read live
+      // each item, so a UI change applies to the next sprite).
+      await generateSpriteSheet(abs, outPath, { intervalSec, tileW, tileH, cols, rows, threads: getThrottle().threads });
 
       const meta = JSON.stringify({ intervalMs: intervalSec * 1000, cols, rows, tileW, tileH, count });
       markDone.run(meta, Date.now(), row.id);
       done++;
-      process.stdout.write(`  ✓ ${row.filename} — ${count} tiles (${cols}×${rows}, every ${intervalSec}s)\n`);
+      const elapsed = ((Date.now() - itemStart) / 1000).toFixed(1);
+      process.stdout.write(`  ✓ ${row.filename} — ${count} tiles (${cols}×${rows}, every ${intervalSec}s) (${elapsed}s · ${throttleTag()})\n`);
     } catch (err) {
       failed++;
       markFailed.run(Date.now(), row.id);
       process.stdout.write(`  ✗ ${row.filename} — ${(err as Error).message}\n`);
     }
+
+    // Duty-cycle pause + surface any load change (both read the live setting).
+    await pace(Date.now() - itemStart);
+    reportThrottleChange();
   }
 
   const secs = ((Date.now() - start) / 1000).toFixed(1);

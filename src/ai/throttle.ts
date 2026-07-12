@@ -1,6 +1,7 @@
 /**
- * AI workload throttle — lets the operator trade wall-clock time for lower CPU
- * load on the long-running enrichment passes (VLM text, video OCR, transcripts).
+ * Enrichment workload throttle — lets the operator trade wall-clock time for
+ * lower CPU load on the long-running passes (VLM text, video OCR, transcripts,
+ * and the ffmpeg scrub-sprite generation).
  *
  * Two independent levers, both driven by one user-chosen preset stored in
  * `user_settings` (key `config.ai.throttle`):

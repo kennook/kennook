@@ -97,6 +97,10 @@ export interface SpriteSheetSpec {
   rows: number;
   /** ffmpeg -q:v (2 best … 31 worst). Default 4. */
   quality?: number;
+  /** Cap ffmpeg's thread count (processor-load throttle). 0/undefined = ffmpeg
+   *  default (all cores). Applied per invocation, so a change takes effect on
+   *  the next item. */
+  threads?: number;
 }
 
 /**
@@ -111,7 +115,7 @@ export async function generateSpriteSheet(
   outPath: string,
   spec: SpriteSheetSpec,
 ): Promise<void> {
-  const { intervalSec, tileW, tileH, cols, rows, quality = 4 } = spec;
+  const { intervalSec, tileW, tileH, cols, rows, quality = 4, threads = 0 } = spec;
   const vf = [
     `fps=1/${intervalSec}`,
     `scale=${tileW}:${tileH}:force_original_aspect_ratio=decrease`,
@@ -122,6 +126,9 @@ export async function generateSpriteSheet(
   return new Promise((resolve, reject) => {
     const ffmpeg = spawn('ffmpeg', [
       '-v', 'error',
+      // Cap decode/filter threads when the throttle asks for it (0 = omit =
+      // ffmpeg's all-cores default). Keeps the sprite pass from pinning the CPU.
+      ...(threads > 0 ? ['-threads', String(threads), '-filter_threads', String(threads)] : []),
       '-i', videoPath,
       '-frames:v', '1',
       '-vf', vf,
