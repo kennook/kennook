@@ -39,9 +39,9 @@ export interface Preferences {
   detailsExpanded: boolean;
   /** Per-photo dwell time in slideshow mode (milliseconds). */
   slideshowPhotoMs: number;
-  /** In slideshow mode, loop the current video on repeat instead of
-   *  advancing to the next item when it ends. Sticky toggle (R). */
-  loopSlideshowVideo: boolean;
+  // NOTE: the slideshow video-loop toggle is deliberately NOT here — it must be
+  // per-window (multi-screen), so it lives in sessionStorage via
+  // `useSessionFlag`, not this cross-tab store.
 }
 
 const DEFAULTS: Preferences = {
@@ -50,7 +50,6 @@ const DEFAULTS: Preferences = {
   defaultFit: 'cover',
   detailsExpanded: true,
   slideshowPhotoMs: 5500,
-  loopSlideshowVideo: false,
 };
 
 const STORAGE_KEY = 'kennook.preferences.v1';

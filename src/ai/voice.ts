@@ -24,6 +24,7 @@
 
 import { pipeline, type PipelineType } from '@huggingface/transformers';
 import nlp from 'compromise';
+import { aiSessionOptions } from './throttle';
 
 type Transcriber = (
   audio: Float32Array,
@@ -46,6 +47,7 @@ async function getTranscriber(): Promise<Transcriber> {
     transcriberPromise = pipeline(
       'automatic-speech-recognition' as PipelineType,
       ASR_MODEL,
+      { ...aiSessionOptions() },
     ) as unknown as Promise<Transcriber>;
   }
   return transcriberPromise;

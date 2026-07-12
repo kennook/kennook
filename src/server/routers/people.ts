@@ -105,7 +105,15 @@ export const peopleRouter = router({
   //     picker, which must be able to assign a face to someone not yet present
   //     in this library.
   list: publicProcedure
-    .input(z.object({ scope: z.enum(['library', 'all']).default('library') }).nullish())
+    .input(z.object({
+      scope: z.enum(['library', 'all']).default('library'),
+      // Hide the long tail of one-off/background faces from the sidebar: only
+      // surface people appearing in at least this many of the library's items.
+      // Named people are always kept regardless. UI passes 1 to reveal all.
+      // Only applied to 'library' scope; 'all' (the reassign picker) is never
+      // filtered so any person remains assignable.
+      minFaceCount: z.number().min(1).default(2),
+    }).nullish())
     .query(({ input, ctx }) => {
       const db = getUserSqlite();
       const rows = db.prepare(`
@@ -155,9 +163,11 @@ export const peopleRouter = router({
         // rather than a stale cross-library list.
       }
 
+      const minCount = input?.minFaceCount ?? 2;
       return rows
         .filter((p) => localCounts.has(p.id))
         .map((p) => toDto(p, localCounts.get(p.id) ?? 0))
+        .filter((p) => p.faceCount >= minCount || p.name != null)
         .sort(byProminence);
     }),
 

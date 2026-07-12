@@ -25,9 +25,22 @@ interface LibrarySwitcherProps {
    *  (suits top-bar usage where the trigger is near the right edge). Use 'left'
    *  when the trigger sits at the left edge of the viewport (e.g. admin sidebar). */
   align?: 'left' | 'right';
+  /** 'sidebar' renders a full-width trigger for the utilities aside. */
+  variant?: 'header' | 'sidebar';
+  /** Show the "+ New library…" action. Creating libraries is an admin task, so
+   *  only the admin sidebar opts in; the main app + mobile hide it. */
+  allowCreate?: boolean;
+  /** Hide the whole switcher when there's only one library (nothing to switch
+   *  between). Used in the main app, where it's just clutter with a single lib. */
+  hideWhenSingle?: boolean;
 }
 
-export function LibrarySwitcher({ align = 'right' }: LibrarySwitcherProps = {}) {
+export function LibrarySwitcher({
+  align = 'right',
+  variant = 'header',
+  allowCreate = false,
+  hideWhenSingle = false,
+}: LibrarySwitcherProps = {}) {
   const url = usePageState();
   const libraries = trpc.library.list.useQuery();
   const current = trpc.library.current.useQuery();
@@ -81,6 +94,7 @@ export function LibrarySwitcher({ align = 'right' }: LibrarySwitcherProps = {}) 
       query: '',
       similar: null,
       playlist: null,
+      source: null,
       person: null,
       kind: null,
       orientation: null,
@@ -122,22 +136,31 @@ export function LibrarySwitcher({ align = 'right' }: LibrarySwitcherProps = {}) 
     utils.invalidate();
   };
 
+  // Nothing to switch between with a single library — hide entirely in the
+  // main app. `?? 1` keeps it hidden while the list is still loading so the
+  // switcher doesn't flash in and then vanish.
+  if (hideWhenSingle && (libraries.data?.length ?? 1) <= 1) return null;
+
   return (
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 bg-zinc-900/80 border border-zinc-800
-                   hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition"
+        className={variant === 'sidebar'
+          ? `flex w-full items-center gap-2 bg-zinc-900/80 border border-zinc-800
+             hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition`
+          : `flex items-center gap-2 bg-zinc-900/80 border border-zinc-800
+             hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition`}
       >
-        <span className="w-2 h-2 rounded-full bg-emerald-400" />
-        <span className="text-zinc-200">{current.data?.name ?? '…'}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-500">
+        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+        <span className="text-zinc-200 truncate flex-1 text-left">{current.data?.name ?? '…'}</span>
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-500 shrink-0">
           <path d="M1 3 L5 7 L9 3" stroke="currentColor" strokeWidth="1.5" fill="none" />
         </svg>
       </button>
 
       {open && (
-        <div className={`absolute ${align === 'left' ? 'left-0' : 'right-0'} top-full mt-2 w-64
+        <div className={`absolute ${align === 'left' ? 'left-0' : 'right-0'} top-full mt-2
+                        ${variant === 'sidebar' ? 'w-full' : 'w-64'}
                         bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1 z-20`}>
           <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500">
             Libraries
@@ -159,18 +182,21 @@ export function LibrarySwitcher({ align = 'right' }: LibrarySwitcherProps = {}) 
             );
           })}
 
-          <div className="border-t border-zinc-800 my-1" />
-
-          <button
-            onClick={() => { setOpen(false); setCreateDialogOpen(true); }}
-            className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            + New library…
-          </button>
+          {allowCreate && (
+            <>
+              <div className="border-t border-zinc-800 my-1" />
+              <button
+                onClick={() => { setOpen(false); setCreateDialogOpen(true); }}
+                className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                + New library…
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {createDialogOpen && (
+      {allowCreate && createDialogOpen && (
         <CreateLibraryDialog
           onCancel={() => setCreateDialogOpen(false)}
           onCreated={handleCreated}

@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
-import { publishToAll, setScreensaverState } from '@/server/sync-broker';
-import { SHARED_DATA_USER_ID } from '@/server/auth';
+import { publishToUser, setScreensaverState, setAudioSolo } from '@/server/sync-broker';
+import { getSession } from '@/server/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,14 +21,20 @@ export async function POST(req: NextRequest) {
   try { payload = await req.json(); }
   catch { return new Response('Invalid JSON', { status: 400 }); }
 
-  // The client-published events (screensaver, audio.unmuted) are GLOBAL — they
-  // affect every window/device — so broadcast to all streams. Screensaver
-  // state persists under the shared id so a (re)connecting tab syncs to truth.
-  const evt = (payload as { event?: { type?: string; open?: boolean } })?.event;
+  // Every client-published event is PER-USER UI/device state — the screensaver
+  // and the solo-audio (unmute) rule — so it only reaches the signed-in user's
+  // own windows/devices, never other accounts. Screensaver additionally
+  // persists under the user's id so a (re)connecting tab syncs to their truth.
+  const userId = getSession(req.headers.get('cookie')).userId;
+  const env = payload as { sessionId?: string; event?: { type?: string; open?: boolean } };
+  const evt = env?.event;
   if (evt?.type === 'screensaver' && typeof evt.open === 'boolean') {
-    setScreensaverState(SHARED_DATA_USER_ID, evt.open);
+    setScreensaverState(userId, evt.open);
+  } else if (evt?.type === 'audio.unmuted') {
+    // Persist the solo owner (origin session) so cross-process devices mute via
+    // the poll — the in-memory publishToUser below only reaches this process.
+    setAudioSolo(userId, `${Date.now()}:${env.sessionId ?? ''}`);
   }
-
-  publishToAll(payload);
+  publishToUser(userId, payload);
   return new Response(null, { status: 204 });
 }

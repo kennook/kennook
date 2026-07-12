@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { router, publicProcedure } from '@/server/trpc';
-import { getRawSqlite } from '@/db/client';
+import { getRawSqlite, ensureLibraryUser } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
 import { embedText, floatArrayToBuffer } from '@/ai/embeddings';
 import type { Context } from '@/server/trpc';
 import { publishToUser, publishToAll } from '@/server/sync-broker';
+import { getConfigValue } from '@/server/app-config';
 import { NSFW_THRESHOLD, VIOLENCE_THRESHOLD } from '@/lib/sensitive-thresholds';
 import { getLibraryBySlug } from '@/server/libraries';
 import { getStorageRootPath, resolveMediaPath } from '@/server/storage';
@@ -29,6 +30,8 @@ interface MediaRow {
   size_bytes: number | null;
   path: string;
   like_count: number;
+  like_avg: number | null;
+  like_raters: number;
   rotation: number;
   nsfw_score: number;
   violence_score: number;
@@ -37,12 +40,17 @@ interface MediaRow {
 
 export const MAX_LIKES = 5;
 
-// SQL fragment that computes the current user's like count for a given row.
-// The single `?` placeholder is the user_id at bind time. Use whenever a
-// query selects from media_items aliased as `m`. Exported so the playlist
-// router (which reads cross-library items) can include the same field.
+// SQL fragment for the like columns on a row selecting from media_items `m`:
+//   like_count  — the CURRENT user's rating (0-5). The single `?` is user_id.
+//   like_avg    — the COMMUNITY average rating across everyone who rated it
+//                 (float 0-5, NULL when nobody has), i.e. "what others think".
+//   like_raters — how many users have rated it (for context on the average).
+// The two aggregates have no placeholder, so bind order is unchanged. Exported
+// so the playlist router can include the same columns.
 export const LIKE_COUNT_EXPR =
-  'COALESCE((SELECT count FROM media_likes WHERE media_item_id = m.id AND user_id = ?), 0) AS like_count';
+  'COALESCE((SELECT count FROM media_likes WHERE media_item_id = m.id AND user_id = ?), 0) AS like_count, ' +
+  '(SELECT AVG(count) FROM media_likes WHERE media_item_id = m.id) AS like_avg, ' +
+  '(SELECT COUNT(*) FROM media_likes WHERE media_item_id = m.id) AS like_raters';
 
 interface SearchRow extends MediaRow {
   vec_similarity: number;
@@ -148,24 +156,44 @@ function buildOrderBy(
     case 'added-asc':  expr = 'm.created_at ASC'; break;
     case 'likes':      expr = `like_count DESC, ${CHRON_TIEBREAK}`; break;
     case 'likes-all':  expr = `(SELECT COALESCE(SUM(count), 0) FROM media_likes WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
-    case 'views':      expr = `(SELECT COUNT(*) FROM media_views WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
+    case 'views':      expr = `(SELECT COALESCE(SUM(view_count), 0) FROM media_views WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
     default:           expr = fallback;
   }
   return { sql: `ORDER BY ${expr}`, params: [] };
 }
 
-// Records that the current user has interacted with the item — called from
-// every place an interaction happens (open in viewer, like, tag, playlist
-// add). Upsert so it's idempotent and the first viewed_at sticks.
+// Records that the current user has INTERACTED with the item (like, tag,
+// playlist add) — ensures a media_views row exists so the "seen" flag/filter
+// works, WITHOUT touching view_count (an interaction isn't a watch). Idempotent;
+// the first viewed_at sticks.
 function markViewed(
   sqlite: ReturnType<typeof getRawSqlite>,
   userId: number,
   mediaItemId: number,
 ) {
+  ensureLibraryUser(sqlite, userId);
   sqlite.prepare(`
     INSERT INTO media_views (user_id, media_item_id, viewed_at)
     VALUES (?, ?, ?)
     ON CONFLICT (user_id, media_item_id) DO NOTHING
+  `).run(userId, mediaItemId, Date.now());
+}
+
+// Records an actual WATCH (the user opened the item in the viewer): bumps the
+// per-user view_count and refreshes viewed_at to the latest watch. The viewer
+// dedupes per session, so this fires once per genuine open — not on re-renders
+// or a looping slideshow. Feeds future relevance ranking.
+function recordWatch(
+  sqlite: ReturnType<typeof getRawSqlite>,
+  userId: number,
+  mediaItemId: number,
+) {
+  ensureLibraryUser(sqlite, userId);
+  sqlite.prepare(`
+    INSERT INTO media_views (user_id, media_item_id, viewed_at, view_count)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT (user_id, media_item_id)
+    DO UPDATE SET view_count = view_count + 1, viewed_at = excluded.viewed_at
   `).run(userId, mediaItemId, Date.now());
 }
 
@@ -525,7 +553,7 @@ async function computeFacets(
 export const mediaRouter = router({
   list: publicProcedure
     .input(z.object({
-      limit: z.number().min(1).max(200).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       // Cursor is the path used by useInfiniteQuery on mobile. When set, it
       // overrides `offset`. Desktop pagination still uses `offset`; both
@@ -635,7 +663,7 @@ export const mediaRouter = router({
   similar: publicProcedure
     .input(z.object({
       uuid: z.string(),
-      limit: z.number().min(1).max(100).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       cursor: z.number().min(0).optional(),
       ...filterShape.shape,
@@ -723,7 +751,7 @@ export const mediaRouter = router({
   search: publicProcedure
     .input(z.object({
       query: z.string().min(1).max(500),
-      limit: z.number().min(1).max(100).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       cursor: z.number().min(0).optional(),
       ...filterShape.shape,
@@ -745,7 +773,7 @@ export const mediaRouter = router({
           FROM media_items m
           WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
         `).get(ctx.userId, input.query.trim(), ctx.sharedUserId) as unknown as MediaRow | undefined;
-        type SearchMatch = { source: 'ocr' | 'transcript'; tStartMs: number | null; tEndMs: number | null; text: string };
+        type SearchMatch = { source: 'ocr' | 'transcript' | 'bookmark'; tStartMs: number | null; tEndMs: number | null; text: string };
         return {
           items: row
             ? [{
@@ -827,7 +855,7 @@ export const mediaRouter = router({
         .split(/\s+/)
         .filter((t) => t.length >= 2);
       const matchesByItem = new Map<number, Array<{
-        source: 'ocr' | 'transcript';
+        source: 'ocr' | 'transcript' | 'bookmark';
         tStartMs: number | null;
         tEndMs: number | null;
         text: string;
@@ -870,6 +898,33 @@ export const mediaRouter = router({
         }
       }
 
+      // Bookmark matches — user-authored, timestamped labels ("tags"). Same
+      // shape as text occurrences so they deep-link identically, and visibility
+      // is respected (shared, or this user's own private ones). Prepended so a
+      // deliberate bookmark ranks above incidental OCR/transcript hits.
+      if (tokens.length > 0 && visible.length > 0) {
+        const itemPlaceholders = visible.map(() => '?').join(',');
+        const likeClause = tokens.map(() => 'LOWER(label) LIKE ?').join(' OR ');
+        const bmRows = sqlite.prepare(`
+          SELECT media_item_id, timestamp_ms, label
+          FROM media_bookmarks
+          WHERE media_item_id IN (${itemPlaceholders})
+            AND (visibility = 'shared' OR created_by = ?)
+            AND (${likeClause})
+          ORDER BY media_item_id, timestamp_ms
+        `).all(
+          ...visible.map((r) => r.id),
+          ctx.userId,
+          ...tokens.map((t) => `%${t}%`),
+        ) as Array<{ media_item_id: number; timestamp_ms: number; label: string }>;
+
+        for (const b of bmRows) {
+          const arr = matchesByItem.get(b.media_item_id) ?? [];
+          arr.unshift({ source: 'bookmark', tStartMs: b.timestamp_ms, tEndMs: null, text: b.label });
+          matchesByItem.set(b.media_item_id, arr.slice(0, 3));
+        }
+      }
+
       return {
         items: visible.map((r) => ({
           ...rowToDto(r, ctx.library.slug),
@@ -897,7 +952,7 @@ export const mediaRouter = router({
         'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
       ).get(input.uuid) as { id: number } | undefined;
       if (!item) throw new Error('Item not found');
-      markViewed(sqlite, ctx.userId, item.id);
+      recordWatch(sqlite, ctx.userId, item.id);
       return { uuid: input.uuid };
     }),
 
@@ -947,6 +1002,7 @@ export const mediaRouter = router({
           'DELETE FROM media_likes WHERE user_id = ? AND media_item_id = ?',
         ).run(ctx.userId, item.id);
       } else {
+        ensureLibraryUser(sqlite, ctx.userId); // FK: real users live in user.db
         sqlite.prepare(`
           INSERT INTO media_likes (user_id, media_item_id, count, updated_at)
           VALUES (?, ?, ?, ?)
@@ -1284,6 +1340,195 @@ export const mediaRouter = router({
       return { uuid: input.uuid, tag: normalized };
     }),
 
+  /** An item's tags (user + auto), for the in-viewer tag panel. Lightweight
+   *  vs. getDetails, which pulls AI metadata / faces / transcript too. */
+  listTags: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .query(({ input, ctx }) => {
+      const sqlite = getRawSqlite(input.librarySlug ?? ctx.library.slug);
+      return sqlite.prepare(`
+        SELECT t.name, mt.source
+        FROM media_tags mt
+        JOIN tags t ON t.id = mt.tag_id
+        JOIN media_items m ON m.id = mt.media_item_id
+        WHERE m.uuid = ?
+        ORDER BY mt.source = 'user' DESC, t.name
+      `).all(input.uuid) as Array<{ name: string; source: 'user' | 'auto' }>;
+    }),
+
+  // ── Video bookmarks — timestamped, tagged, searchable markers ────────────
+
+  /** Bookmarks visible to the current session for one item: every shared one
+   *  plus this user's own private ones, earliest first. Also returns the admin
+   *  default visibility so the "add" form can preselect it. */
+  listBookmarks: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .query(({ input, ctx }) => {
+      const sqlite = getRawSqlite(input.librarySlug ?? ctx.library.slug);
+      const rows = sqlite.prepare(`
+        SELECT b.id, b.timestamp_ms AS timestampMs, b.label,
+               b.visibility, b.created_by AS createdBy
+        FROM media_bookmarks b
+        JOIN media_items m ON m.id = b.media_item_id
+        WHERE m.uuid = ? AND (b.visibility = 'shared' OR b.created_by = ?)
+        ORDER BY b.timestamp_ms ASC
+      `).all(input.uuid, ctx.userId) as Array<{
+        id: number; timestampMs: number; label: string;
+        visibility: 'shared' | 'private'; createdBy: number;
+      }>;
+      return {
+        bookmarks: rows.map((r) => ({ ...r, mine: r.createdBy === ctx.userId })),
+        defaultShared: getConfigValue('bookmarks.defaultShared'),
+      };
+    }),
+
+  /** Add a bookmark at a timestamp with a free-text label (the searchable
+   *  "tags"). Visibility defaults to the admin setting unless overridden. */
+  addBookmark: publicProcedure
+    .input(z.object({
+      uuid: z.string(),
+      timestampMs: z.number().int().nonnegative(),
+      label: z.string().max(200).default(''),
+      shared: z.boolean().optional(),
+      librarySlug: z.string().optional(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const item = sqlite.prepare(
+        'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
+      ).get(input.uuid) as { id: number } | undefined;
+      if (!item) throw new Error('Item not found');
+
+      const shared = input.shared ?? getConfigValue('bookmarks.defaultShared');
+      const row = sqlite.prepare(`
+        INSERT INTO media_bookmarks (media_item_id, timestamp_ms, label, visibility, created_by)
+        VALUES (?, ?, ?, ?, ?)
+        RETURNING id
+      `).get(
+        item.id, input.timestampMs, input.label.trim(),
+        shared ? 'shared' : 'private', ctx.userId,
+      ) as { id: number };
+
+      markViewed(sqlite, ctx.userId, item.id);
+      publishToAll({
+        sessionId: ctx.sessionId,
+        event: { type: 'item.bookmark.changed', librarySlug: slug, uuid: input.uuid },
+      });
+      return { id: row.id };
+    }),
+
+  /** Edit a bookmark's label or visibility. Creator or an admin only. */
+  updateBookmark: publicProcedure
+    .input(z.object({
+      id: z.number().int().positive(),
+      label: z.string().max(200).optional(),
+      shared: z.boolean().optional(),
+      librarySlug: z.string().optional(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const bm = sqlite.prepare(`
+        SELECT b.created_by AS createdBy, m.uuid AS uuid
+        FROM media_bookmarks b JOIN media_items m ON m.id = b.media_item_id
+        WHERE b.id = ?
+      `).get(input.id) as { createdBy: number; uuid: string } | undefined;
+      if (!bm) throw new Error('Bookmark not found');
+      if (bm.createdBy !== ctx.userId && !ctx.isAdmin) throw new Error('Not allowed');
+
+      const sets: string[] = [];
+      const params: SqlParam[] = [];
+      if (input.label !== undefined) { sets.push('label = ?'); params.push(input.label.trim()); }
+      if (input.shared !== undefined) { sets.push('visibility = ?'); params.push(input.shared ? 'shared' : 'private'); }
+      if (sets.length) {
+        params.push(input.id);
+        sqlite.prepare(`UPDATE media_bookmarks SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+      }
+      publishToAll({
+        sessionId: ctx.sessionId,
+        event: { type: 'item.bookmark.changed', librarySlug: slug, uuid: bm.uuid },
+      });
+      return { ok: true };
+    }),
+
+  /** Remove a bookmark. Creator or an admin only. */
+  removeBookmark: publicProcedure
+    .input(z.object({ id: z.number().int().positive(), librarySlug: z.string().optional() }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const bm = sqlite.prepare(`
+        SELECT b.created_by AS createdBy, m.uuid AS uuid
+        FROM media_bookmarks b JOIN media_items m ON m.id = b.media_item_id
+        WHERE b.id = ?
+      `).get(input.id) as { createdBy: number; uuid: string } | undefined;
+      if (!bm) return { ok: true }; // already gone
+      if (bm.createdBy !== ctx.userId && !ctx.isAdmin) throw new Error('Not allowed');
+
+      sqlite.prepare('DELETE FROM media_bookmarks WHERE id = ?').run(input.id);
+      publishToAll({
+        sessionId: ctx.sessionId,
+        event: { type: 'item.bookmark.changed', librarySlug: slug, uuid: bm.uuid },
+      });
+      return { ok: true };
+    }),
+
+  // ── Autoplay trim — per-video start/stop applied during the slideshow ────
+
+  /** The autoplay trim (start/stop ms) for one video; nulls when unset. */
+  getTrim: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .query(({ input, ctx }) => {
+      const sqlite = getRawSqlite(input.librarySlug ?? ctx.library.slug);
+      const row = sqlite.prepare(
+        'SELECT trim_start_ms AS startMs, trim_end_ms AS endMs FROM media_items WHERE uuid = ?',
+      ).get(input.uuid) as { startMs: number | null; endMs: number | null } | undefined;
+      return { startMs: row?.startMs ?? null, endMs: row?.endMs ?? null };
+    }),
+
+  /** Set or clear the autoplay trim. Either bound may be null; if both are set
+   *  the end must exceed the start (a bad end is dropped). Shared per item. */
+  setTrim: publicProcedure
+    .input(z.object({
+      uuid: z.string(),
+      startMs: z.number().int().nonnegative().nullable(),
+      endMs: z.number().int().nonnegative().nullable(),
+      librarySlug: z.string().optional(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const start = input.startMs;
+      let end = input.endMs;
+      if (start != null && end != null && end <= start) end = null;
+      const info = sqlite.prepare(
+        'UPDATE media_items SET trim_start_ms = ?, trim_end_ms = ? WHERE uuid = ? AND deleted_at IS NULL',
+      ).run(start, end, input.uuid);
+      if (info.changes === 0) throw new Error('Item not found');
+      publishToAll({
+        sessionId: ctx.sessionId,
+        event: { type: 'item.trim.changed', librarySlug: slug, uuid: input.uuid },
+      });
+      return { startMs: start, endMs: end };
+    }),
+
+  /** Scrub-preview sprite for a video: the montage URL + grid manifest (maps a
+   *  hover time → tile), or null when it hasn't been generated. */
+  scrubSprite: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .query(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const row = sqlite.prepare(
+        'SELECT scrub_status AS status, scrub_meta AS meta FROM media_items WHERE uuid = ?',
+      ).get(input.uuid) as { status: string | null; meta: string | null } | undefined;
+      if (!row || row.status !== 'done' || !row.meta) return null;
+      let m: { intervalMs: number; cols: number; rows: number; tileW: number; tileH: number; count: number };
+      try { m = JSON.parse(row.meta); } catch { return null; }
+      return { url: `/api/scrub-sprite/${input.uuid}?lib=${encodeURIComponent(slug)}`, ...m };
+    }),
+
   // Drill-down facet aggregation for the current view + filter state.
   //
   // - Recent mode (no query/similarToUuid): aggregates over the filtered
@@ -1326,6 +1571,11 @@ function rowToDto(row: MediaRow, librarySlug: string) {
     cameraModel: row.camera_model,
     sizeBytes: row.size_bytes,
     likeCount: row.like_count,
+    // Community rating — the average across everyone who's rated it, and how
+    // many that is. avg is null when nobody has rated. Lets the UI show "what
+    // others think" (esp. when the current user hasn't rated it themselves).
+    communityLikeAvg: row.like_avg,
+    communityLikeCount: row.like_raters,
     rotation: row.rotation,
     nsfwScore: row.nsfw_score,
     violenceScore: row.violence_score,

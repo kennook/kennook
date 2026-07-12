@@ -171,6 +171,15 @@ export function Screensaver({ open, onExit }: Props) {
     setAuthError(false);
   }, []);
 
+  // Sign out from the screensaver — for switching accounts without first
+  // unlocking. Safe even when locked: it destroys the session and lands on
+  // /login, so it's an exit TO the gate, not a bypass of it.
+  const signOut = useCallback(async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST' }); }
+    catch { /* redirect to the gate regardless */ }
+    window.location.href = '/login';
+  }, []);
+
   // Escape cancels the prompt from anywhere — a window-level listener so it
   // works even if focus has left the input. Capture phase + stopPropagation
   // so it doesn't also reach the app underneath.
@@ -263,11 +272,17 @@ export function Screensaver({ open, onExit }: Props) {
         dismiss();
       }
     };
+    // Clicks/taps on the sign-out link must NOT be read as a dismiss gesture —
+    // let them through to the link's own handler.
+    const isSignOut = (e: Event) =>
+      (e.target as Element | null)?.closest?.('[data-kn-signout]') != null;
     const onMouseDown = (e: MouseEvent) => {
+      if (isSignOut(e)) return;
       e.stopPropagation();
       dismiss();
     };
     const onTouch = (e: TouchEvent) => {
+      if (isSignOut(e)) return;
       e.stopPropagation();
       dismiss();
     };
@@ -302,7 +317,7 @@ export function Screensaver({ open, onExit }: Props) {
 
       {prompting && (
         <div
-          className="absolute inset-0 flex items-center justify-center p-6"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6"
           // Clicking the dimmed area outside the card cancels back to the
           // bare screensaver (does not dismiss).
           onMouseDown={(e) => { if (e.target === e.currentTarget) cancelPrompt(); }}
@@ -377,6 +392,18 @@ export function Screensaver({ open, onExit }: Props) {
               </button>
             </div>
           </form>
+
+          {/* Sign out — only shown at the unlock prompt (when you can't just
+              dismiss), right under the modal for easy access. Switching users
+              is the reason to sign out here; it lands on /login. */}
+          <button
+            type="button"
+            data-kn-signout
+            onClick={signOut}
+            className="text-sm text-zinc-400 hover:text-zinc-100 transition cursor-pointer"
+          >
+            Sign out to switch user
+          </button>
         </div>
       )}
     </div>

@@ -42,7 +42,7 @@ export function AdminSidebar() {
         <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1.5 px-2">
           Library
         </div>
-        <LibrarySwitcher align="left" />
+        <LibrarySwitcher align="left" allowCreate />
       </div>
 
       <nav className="flex-1 px-2 py-3 space-y-0.5">

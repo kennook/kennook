@@ -10,8 +10,9 @@
  */
 
 import { useCurrentUser } from '@/lib/current-user';
+import { SIDEBAR_ROW } from '@/components/ui/sidebar-row';
 
-export function SignOutButton() {
+export function SignOutButton({ variant = 'header' }: { variant?: 'header' | 'sidebar' } = {}) {
   const { user } = useCurrentUser();
   if (!user) return null;
 
@@ -23,6 +24,16 @@ export function SignOutButton() {
     }
     window.location.href = '/login';
   };
+
+  if (variant === 'sidebar') {
+    return (
+      <button onClick={signOut} title={`Sign out — ${user.name}`} className={SIDEBAR_ROW}>
+        <SignOutIcon />
+        <span className="flex-1 truncate">Sign out</span>
+        <span className="text-xs text-zinc-500 truncate max-w-[6rem]">{user.name}</span>
+      </button>
+    );
+  }
 
   return (
     <button

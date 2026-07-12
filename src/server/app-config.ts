@@ -47,6 +47,16 @@ export const CONFIG_SCHEMA: ConfigItem[] = [
       'an admin can add accounts in Admin → Users.',
     default: false,
   },
+  {
+    key: 'bookmarks.defaultShared',
+    label: 'Bookmarks shared by default',
+    description:
+      'When someone adds a video bookmark, default it to "shared" (everyone in ' +
+      'the library sees it and its tags are searchable). Off → new bookmarks ' +
+      'default to private (only the creator). Either way it’s a toggle per ' +
+      'bookmark.',
+    default: true,
+  },
 ];
 
 const SCHEMA_BY_KEY = new Map(CONFIG_SCHEMA.map((c) => [c.key, c]));

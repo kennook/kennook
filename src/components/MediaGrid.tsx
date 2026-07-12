@@ -1,12 +1,14 @@
 'use client';
 
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { MasonryScroller, usePositioner, useResizeObserver, useInfiniteLoader, useScrollToIndex } from 'masonic';
 import { MediaCard } from './MediaCard';
 
 /** Per-item text occurrence match returned by the search router. Drives
  *  the "match at 0:45" tile + viewer auto-seek. Photos with OCR text have
  *  tStartMs=null (no timeline). */
 export interface TextMatch {
-  source: 'ocr' | 'transcript';
+  source: 'ocr' | 'transcript' | 'bookmark';
   tStartMs: number | null;
   tEndMs: number | null;
   text: string;
@@ -25,7 +27,13 @@ export interface MediaItemDto {
   cameraMake: string | null;
   cameraModel: string | null;
   sizeBytes: number | null;
+  /** The CURRENT user's rating, 0-5. */
   likeCount: number;
+  /** Community rating: the average across everyone who's rated this item
+   *  (0-5), null when nobody has — "what others think". */
+  communityLikeAvg: number | null;
+  /** How many users have rated it (context for the average). */
+  communityLikeCount: number;
   /** Client-applied rotation override in degrees (0/90/180/270). */
   rotation: number;
   /** Raw sensitive-content scores in [0, 1]. Client compares against the
@@ -50,6 +58,108 @@ export function selectionKey(librarySlug: string, itemUuid: string): string {
   return `${librarySlug}::${itemUuid}`;
 }
 
+interface Handlers {
+  onSelect: (item: MediaItemDto, match?: TextMatch) => void;
+  onToggleSelection?: (item: MediaItemDto, e: React.MouseEvent) => void;
+  onSetLikes?: (item: MediaItemDto, count: number) => Promise<void> | void;
+  selectionMode?: boolean;
+}
+
+// Handlers reach the (masonic-memoized) cells through a STABLE ref in context.
+// The ref identity never changes, so cells don't churn; they read `.current`
+// lazily on interaction, so there are no stale-closure calls even for cells
+// masonic didn't re-render.
+const HandlersCtx = createContext<React.MutableRefObject<Handlers> | null>(null);
+
+/** What masonic stores per cell: the item plus its (volatile) selected +
+ *  highlighted flags, baked in so a change busts the cell's memo. */
+interface Cell { item: MediaItemDto; selected: boolean; highlighted: boolean; }
+
+// Target tile width — bigger on large displays (fewer, larger tiles), which is
+// how a virtualized masonry scales up (the old CSS-zoom path can't, it desyncs
+// masonic's measurements). masonic derives the column COUNT from this.
+function targetColumnWidth(vw: number): number {
+  if (vw >= 3000) return 380;
+  if (vw >= 2200) return 300;
+  if (vw >= 1680) return 240;
+  if (vw >= 1024) return 190;
+  return 160;
+}
+
+function useColumnWidth(): number {
+  const [w, setW] = useState(() =>
+    typeof window === 'undefined' ? 190 : targetColumnWidth(window.innerWidth),
+  );
+  useEffect(() => {
+    const onResize = () => setW(targetColumnWidth(window.innerWidth));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return w;
+}
+
+// Measure the grid CONTAINER's own width + document offset via a ResizeObserver.
+// masonic's built-in <Masonry> only re-measures on WINDOW resize, so it misses
+// the sidebar sliding open/closed (which changes the column width without a
+// window resize) — the grid would then overflow off-screen. Feeding masonic
+// this measured width (via MasonryScroller) fixes that.
+function useMeasure(): [RefObject<HTMLDivElement>, { width: number; offset: number; viewportHeight: number }] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState({ width: 0, offset: 0, viewportHeight: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      let offset = 0;
+      let node: HTMLElement | null = el;
+      while (node) { offset += node.offsetTop || 0; node = node.offsetParent as HTMLElement | null; }
+      const width = el.offsetWidth;
+      const viewportHeight = window.innerHeight;
+      setRect((r) => (r.width === width && r.offset === offset && r.viewportHeight === viewportHeight
+        ? r : { width, offset, viewportHeight }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
+  return [ref, rect];
+}
+
+function GridCell({ data }: { index: number; data: Cell; width: number }) {
+  const ref = useContext(HandlersCtx)!;
+  const { item, selected, highlighted } = data;
+  return (
+    <MediaCard
+      id={item.id}
+      uuid={item.uuid}
+      highlighted={highlighted}
+      librarySlug={item.librarySlug}
+      thumbnailUrl={item.thumbnailUrl}
+      kind={item.kind}
+      filename={item.filename}
+      durationMs={item.durationMs}
+      width={item.width}
+      height={item.height}
+      score={item.scores?.final}
+      selected={selected}
+      selectionMode={ref.current.selectionMode}
+      likeCount={item.likeCount}
+      communityLikeAvg={item.communityLikeAvg}
+      communityLikeCount={item.communityLikeCount}
+      rotation={item.rotation}
+      nsfwScore={item.nsfwScore}
+      violenceScore={item.violenceScore}
+      sensitiveOverride={item.sensitiveOverride}
+      matches={item.matches}
+      onOpen={(match) => ref.current.onSelect(item, match)}
+      onToggleSelection={ref.current.onToggleSelection ? (e) => ref.current.onToggleSelection!(item, e) : undefined}
+      onSetLikes={ref.current.onSetLikes ? (count) => ref.current.onSetLikes!(item, count) : undefined}
+    />
+  );
+}
+
 interface Props {
   items: MediaItemDto[];
   /** Called when a tile is opened. `match` is set when the tile was a
@@ -61,64 +171,104 @@ interface Props {
   selectionMode?: boolean;
   onSetLikes?: (item: MediaItemDto, count: number) => Promise<void> | void;
   loading?: boolean;
+  /** Pull the next page when the user scrolls near the end. */
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  /** Identity of the current result set (view + filters). When it changes we
+   *  remount the masonry so positions + scroll reset for the new dataset. */
+  resetKey?: string;
+  /** uuid of the last item opened in the viewer — its tile gets a sky ring. */
+  highlightUuid?: string | null;
+  /** Bump to scroll the highlighted tile into view (e.g. on viewer close). */
+  scrollSignal?: number;
 }
 
 export function MediaGrid({
-  items, onSelect, onToggleSelection, selectedKeys, selectionMode, onSetLikes, loading,
+  items, onSelect, onToggleSelection, selectedKeys, selectionMode, onSetLikes,
+  loading, onLoadMore, hasMore, resetKey, highlightUuid, scrollSignal,
 }: Props) {
-  if (loading) {
-    // Varied-height skeletons so the masonry shape reads while loading.
-    const heights = [1, 0.72, 1.4, 1, 0.66, 1.25];
-    return (
-      <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
-        {Array.from({ length: 24 }).map((_, i) => (
-          <div
-            key={i}
-            style={{ aspectRatio: String(heights[i % heights.length]) }}
-            className="break-inside-avoid mb-2 rounded-lg bg-zinc-900 animate-pulse"
-          />
-        ))}
-      </div>
-    );
-  }
+  // Latest handlers in a stable ref (see HandlersCtx).
+  const handlersRef = useRef<Handlers>({ onSelect, onToggleSelection, onSetLikes, selectionMode });
+  handlersRef.current = { onSelect, onToggleSelection, onSetLikes, selectionMode };
 
-  if (!items.length) {
-    return (
-      <div className="text-center text-zinc-500 py-20">
-        No results. Try a different search, or index a folder with{' '}
-        <code className="text-zinc-300">pnpm indexer &lt;path&gt;</code>.
-      </div>
-    );
-  }
+  // Bake `selected` + `highlighted` into each cell so a change re-renders just
+  // the affected tiles (unchanged items keep their DTO reference, so memo holds).
+  const cells = useMemo<Cell[]>(
+    () => items.map((item) => ({
+      item,
+      selected: selectedKeys?.has(selectionKey(item.librarySlug, item.uuid)) ?? false,
+      highlighted: highlightUuid != null && item.uuid === highlightUuid,
+    })),
+    [items, selectedKeys, highlightUuid],
+  );
 
+  const columnWidth = useColumnWidth();
+  const [measureRef, { width, offset, viewportHeight }] = useMeasure();
+
+  // Recreate the positioner (clearing cached positions) when the width or the
+  // dataset changes; masonic re-lays-out at the correct column count/width.
+  const positioner = usePositioner({ width, columnWidth, columnGutter: 8 }, [resetKey ?? '']);
+  const resizeObserver = useResizeObserver(positioner);
+
+  // Scroll the highlighted tile into view when `scrollSignal` bumps (the grid is
+  // virtualized, so masonic's own scroll-to-index is required).
+  const scrollToIndex = useScrollToIndex(positioner, {
+    element: typeof window !== 'undefined' ? window : null,
+    align: 'center',
+    height: viewportHeight,
+    offset,
+  });
+  useEffect(() => {
+    if (scrollSignal == null || highlightUuid == null) return;
+    const idx = items.findIndex((it) => it.uuid === highlightUuid);
+    if (idx >= 0) scrollToIndex(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollSignal]);
+
+  const maybeLoadMore = useInfiniteLoader(
+    async () => { if (hasMore) onLoadMore?.(); },
+    { isItemLoaded: (index, loaded) => !hasMore || index < loaded.length, threshold: 16 },
+  );
+
+  // Varied-height skeletons so the masonry shape reads while loading.
+  const skeletonHeights = [1, 0.72, 1.4, 1, 0.66, 1.25];
+
+  // The measure div is ALWAYS rendered so its width is observable even during
+  // the loading/empty states — otherwise the first real grid render would see
+  // width 0 (and masonic would fall back to full-window width).
   return (
-    <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
-      {items.map((item) => (
-        <MediaCard
-          key={item.id}
-          id={item.id}
-          uuid={item.uuid}
-          librarySlug={item.librarySlug}
-          thumbnailUrl={item.thumbnailUrl}
-          kind={item.kind}
-          filename={item.filename}
-          durationMs={item.durationMs}
-          width={item.width}
-          height={item.height}
-          score={item.scores?.final}
-          selected={selectedKeys?.has(selectionKey(item.librarySlug, item.uuid)) ?? false}
-          selectionMode={selectionMode}
-          likeCount={item.likeCount}
-          rotation={item.rotation}
-          nsfwScore={item.nsfwScore}
-          violenceScore={item.violenceScore}
-          sensitiveOverride={item.sensitiveOverride}
-          matches={item.matches}
-          onOpen={(match) => onSelect(item, match)}
-          onToggleSelection={onToggleSelection ? (e) => onToggleSelection(item, e) : undefined}
-          onSetLikes={onSetLikes ? (count) => onSetLikes(item, count) : undefined}
-        />
-      ))}
+    <div ref={measureRef}>
+      {loading && items.length === 0 ? (
+        <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 2xl:columns-7 gap-2">
+          {Array.from({ length: 24 }).map((_, i) => (
+            <div
+              key={i}
+              style={{ aspectRatio: String(skeletonHeights[i % skeletonHeights.length]) }}
+              className="break-inside-avoid mb-2 rounded-lg bg-zinc-900 animate-pulse"
+            />
+          ))}
+        </div>
+      ) : !items.length ? (
+        <div className="text-center text-zinc-500 py-20">
+          No results. Try a different search, or index a folder with{' '}
+          <code className="text-zinc-300">pnpm indexer &lt;path&gt;</code>.
+        </div>
+      ) : width > 0 ? (
+        <HandlersCtx.Provider value={handlersRef}>
+          <MasonryScroller<Cell>
+            offset={offset}
+            height={viewportHeight}
+            positioner={positioner}
+            resizeObserver={resizeObserver}
+            items={cells}
+            overscanBy={2}
+            itemHeightEstimate={columnWidth}
+            itemKey={(d) => d.item.uuid}
+            render={GridCell}
+            onRender={maybeLoadMore}
+          />
+        </HandlersCtx.Provider>
+      ) : null}
     </div>
   );
 }

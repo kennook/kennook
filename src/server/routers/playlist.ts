@@ -4,7 +4,7 @@ import { getUserSqlite } from '@/db/user-client';
 import { getRawSqlite } from '@/db/client';
 import { listLibraries } from '@/server/libraries';
 import { LIKE_COUNT_EXPR, markItemViewedByUuid } from './media';
-import { publishToUser } from '@/server/sync-broker';
+import { publishToUser, bumpDataRev } from '@/server/sync-broker';
 
 interface PlaylistRow {
   id: number;
@@ -71,7 +71,7 @@ export const playlistRouter = router({
   get: publicProcedure
     .input(z.object({
       uuid: z.string(),
-      limit: z.number().min(1).max(200).default(60),
+      limit: z.number().min(1).max(500).default(60),
       offset: z.number().min(0).default(0),
       cursor: z.number().min(0).optional(),
     }))
@@ -175,6 +175,7 @@ export const playlistRouter = router({
         sessionId: ctx.sessionId,
         event: { type: 'playlist.changed' },
       });
+      bumpDataRev(ctx.userId);
       return rowToPlaylistSummary({ ...row, item_count: 0 });
     }),
 
@@ -201,6 +202,7 @@ export const playlistRouter = router({
         sessionId: ctx.sessionId,
         event: { type: 'playlist.changed' },
       });
+      bumpDataRev(ctx.userId);
       return { ok: true };
     }),
 
@@ -215,6 +217,7 @@ export const playlistRouter = router({
         sessionId: ctx.sessionId,
         event: { type: 'playlist.changed' },
       });
+      bumpDataRev(ctx.userId);
       return { ok: true };
     }),
 
@@ -269,6 +272,7 @@ export const playlistRouter = router({
         sessionId: ctx.sessionId,
         event: { type: 'playlist.changed' },
       });
+      bumpDataRev(ctx.userId);
       return { added, skipped: input.items.length - added };
     }),
 
@@ -300,6 +304,7 @@ export const playlistRouter = router({
         sessionId: ctx.sessionId,
         event: { type: 'playlist.changed' },
       });
+      bumpDataRev(ctx.userId);
       return { removed };
     }),
 });

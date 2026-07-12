@@ -14,7 +14,8 @@ import {
 } from '@/server/libraries';
 import { ensureFfmpegAvailable, extractFrame, probeVideo } from './ffmpeg';
 import { emitProgress } from './progress';
-import { buildStorageRouter, relativeMediaPath, type StorageRouter } from '@/server/storage';
+import { buildStorageRouter, relativeMediaPath, isPathUnder, type StorageRouter } from '@/server/storage';
+import { absoluteIgnoredPaths } from '@/server/storage-browse';
 import { IMAGE_EXTS, VIDEO_EXTS, kindForExt } from './media-extensions';
 
 const DEFAULT_USER_ID = 1;
@@ -88,7 +89,10 @@ function shouldSkipDir(name: string): boolean {
   return false;
 }
 
-async function* walkDirectory(dir: string): AsyncGenerator<PipelineCtx> {
+async function* walkDirectory(
+  dir: string,
+  isIgnored: (abs: string) => boolean = () => false,
+): AsyncGenerator<PipelineCtx> {
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -99,9 +103,10 @@ async function* walkDirectory(dir: string): AsyncGenerator<PipelineCtx> {
   }
 
   for (const entry of entries) {
+    const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (shouldSkipDir(entry.name)) continue;
-      yield* walkDirectory(path.join(dir, entry.name));
+      if (shouldSkipDir(entry.name) || isIgnored(full)) continue;
+      yield* walkDirectory(full, isIgnored);
       continue;
     }
     if (!entry.isFile()) continue;
@@ -109,8 +114,8 @@ async function* walkDirectory(dir: string): AsyncGenerator<PipelineCtx> {
     const ext = path.extname(entry.name).toLowerCase();
     const kind = IMAGE_EXTS.has(ext) ? 'photo' : VIDEO_EXTS.has(ext) ? 'video' : null;
     if (!kind) continue;
+    if (isIgnored(full)) continue;
 
-    const full = path.join(dir, entry.name);
     let stat: fs.Stats;
     try {
       stat = await fs.promises.stat(full);
@@ -165,9 +170,35 @@ async function sha256OfFile(p: string): Promise<string> {
   });
 }
 
+const NO_PHOTO_META = { capturedAt: null, capturedLat: null, capturedLon: null, cameraMake: null, cameraModel: null };
+
 async function readPhotoMetadata(p: string) {
+  // Read a bounded header ourselves and hand exifr a Buffer, rather than a path.
+  // Passing a path makes exifr open a FileHandle it doesn't reliably close on
+  // malformed files — and on Node 22+ a FileHandle GC'd without an explicit
+  // close throws ERR_INVALID_STATE, which aborts the whole indexer process.
+  // EXIF/TIFF lives at the very start of a JPEG, so 256 KB is ample.
+  let buf: Buffer | null = null;
+  const handle = await fs.promises.open(p, 'r').catch(() => null);
+  if (handle) {
+    try {
+      const { size } = await handle.stat();
+      const len = Math.min(256 * 1024, size);
+      if (len > 0) {
+        const b = Buffer.alloc(len);
+        await handle.read(b, 0, len, 0);
+        buf = b;
+      }
+    } catch {
+      // unreadable header — fall through to no-metadata
+    } finally {
+      await handle.close().catch(() => {});
+    }
+  }
+  if (!buf) return NO_PHOTO_META;
+
   try {
-    const exif = await exifr.parse(p, {
+    const exif = await exifr.parse(buf, {
       tiff: true, exif: true, gps: true, xmp: false, icc: false, jfif: false,
     });
     return {
@@ -180,7 +211,7 @@ async function readPhotoMetadata(p: string) {
       cameraModel: exif?.Model ?? null,
     };
   } catch {
-    return { capturedAt: null, capturedLat: null, capturedLon: null, cameraMake: null, cameraModel: null };
+    return NO_PHOTO_META;
   }
 }
 
@@ -214,7 +245,17 @@ async function generatePhotoVariants(
 async function generateVideoThumbnail(srcPath: string, dstPath: string) {
   const probe = await probeVideo(srcPath);
   const ts = probe.durationMs ? Math.max(1, probe.durationMs / 1000 * 0.1) : 1;
-  const frame = await extractFrame(srcPath, ts);
+  // Truncated / partial downloads claim a long duration but only have data near
+  // the start, so a 10%-of-duration seek gets "no packets received". Fall back
+  // toward the beginning (1s, then 0) so such files still get a thumbnail and
+  // index instead of failing outright.
+  const seeks = [...new Set([ts, 1, 0])];
+  let frame: Buffer | undefined;
+  let lastErr: unknown;
+  for (const s of seeks) {
+    try { frame = await extractFrame(srcPath, s); break; } catch (e) { lastErr = e; }
+  }
+  if (!frame) throw lastErr;
   await sharp(frame)
     .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 82 })
@@ -225,6 +266,11 @@ async function generateVideoThumbnail(srcPath: string, dstPath: string) {
 // ─── Core processing pipeline ─────────────────────────────────────────────
 async function processOne(ctx: PipelineCtx, librarySlug: string, router: StorageRouter) {
   const sqlite = getRawSqlite(librarySlug);
+
+  // Empty (0-byte) files — usually failed/partial downloads — have no moov atom
+  // and can't be probed or thumbnailed. Skip them cleanly up front instead of
+  // letting ffmpeg fail per-file with a scary multi-line dump.
+  if (ctx.stat.size === 0) return { status: 'skip-empty' as const };
 
   // Route this file to the storage_location whose root_path is the longest
   // matching prefix. The seeded default storage at root_path="/" acts as a
@@ -237,13 +283,43 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     );
   }
 
+  // media_items.path is stored relative to the storage's root_path.
+  const relPath = relativeMediaPath(storage.root_path, ctx.filepath);
+
+  // Fast path: any file the indexer has SEEN before — whether it was stored or
+  // skipped as a content-duplicate — is recorded in indexed_files by
+  // (storage, path, size). Match there and skip WITHOUT reading/hashing the
+  // file. This is what makes re-scans of a large drive fast, including the many
+  // "clip(1).mp4" duplicate downloads that never get their own media_items row.
+  const seen = sqlite
+    .prepare(`SELECT sha256 FROM indexed_files WHERE storage_location_id = ? AND path = ? AND size_bytes = ?`)
+    .get(storage.id, relPath, ctx.stat.size) as { sha256: string } | undefined;
+  if (seen) {
+    const item = sqlite.prepare('SELECT id, uuid FROM media_items WHERE sha256 = ? LIMIT 1')
+      .get(seen.sha256) as { id: number; uuid: string } | undefined;
+    // item carries the uuid so the progress panel can show its thumbnail. If it
+    // vanished (deleted), fall through and re-index.
+    if (item) return { status: 'skip-duplicate' as const, id: item.id, uuid: item.uuid };
+  }
+
+  // New or changed file — hash for content dedup. Record it in indexed_files
+  // (on success below) so future re-scans skip it on the cheap path above.
   const hash = await sha256OfFile(ctx.filepath);
+  const recordSeen = () => sqlite
+    .prepare(`INSERT OR REPLACE INTO indexed_files (storage_location_id, path, size_bytes, sha256) VALUES (?, ?, ?, ?)`)
+    .run(storage.id, relPath, ctx.stat.size, hash);
 
   const existing = sqlite
-    .prepare('SELECT id FROM media_items WHERE sha256 = ? LIMIT 1')
-    .get(hash) as { id: number } | undefined;
+    .prepare('SELECT id, uuid FROM media_items WHERE sha256 = ? LIMIT 1')
+    .get(hash) as { id: number; uuid: string } | undefined;
 
-  if (existing) return { status: 'skip-duplicate' as const, id: existing.id };
+  // Content-duplicate of a stored item (same bytes, different name): record the
+  // path so it's skipped cheaply next time, and carry the stored uuid for the
+  // progress thumbnail.
+  if (existing) {
+    recordSeen();
+    return { status: 'skip-duplicate' as const, id: existing.id, uuid: existing.uuid };
+  }
 
   const uuid = crypto.randomUUID();
   const thumbDir = libraryThumbnailsDir(librarySlug);
@@ -288,9 +364,6 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
 
   const embedding = await embedImage(thumbPath);
 
-  // media_items.path is stored relative to the storage's root_path.
-  const relPath = relativeMediaPath(storage.root_path, ctx.filepath);
-
   const insert = sqlite.prepare(`
     INSERT INTO media_items (
       uuid, user_id, storage_location_id, path, filename, kind,
@@ -334,7 +407,8 @@ async function processOne(ctx: PipelineCtx, librarySlug: string, router: Storage
     .prepare('INSERT INTO media_embeddings (rowid, embedding) VALUES (?, ?)')
     .run(BigInt(mediaId), floatArrayToBuffer(embedding));
 
-  return { status: 'indexed' as const, id: mediaId };
+  recordSeen(); // remember this path so re-scans skip it without hashing
+  return { status: 'indexed' as const, id: mediaId, uuid };
 }
 
 // ─── Run modes ────────────────────────────────────────────────────────────
@@ -356,19 +430,50 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
   // count + the file currently being processed.
   const PROGRESS_EVERY = 10;
   let processedSoFar = 0;
+  // The uuid of the most-recently-indexed item. Emitted as the progress
+  // currentItem (kind='uuid') so the admin panel resolves its freshly-made
+  // thumbnail — and so the "recent" strip stays thumbnailed rather than
+  // showing path placeholders during runs of skips/failures.
+  let lastUuid: string | null = null;
 
-  for await (const ctx of walkDirectory(absTarget)) {
+  // User ignore-list (storage file manager): skip these subtrees entirely.
+  const ignoredAbs = absoluteIgnoredPaths(getRawSqlite(library.slug));
+  const isIgnored = ignoredAbs.length
+    ? (abs: string) => ignoredAbs.some((ig) => abs === ig || isPathUnder(abs, ig))
+    : undefined;
+
+  for await (const ctx of walkDirectory(absTarget, isIgnored)) {
     if (ctx.kind === 'video' && !ffmpegOk) {
       skipped++;
       continue;
     }
+    // The uuid of the item processed THIS iteration — set for both freshly
+    // indexed items and duplicate-skips (both have a thumbnail on disk), so the
+    // panel shows a thumbnail even on all-duplicate re-index runs.
+    let itemUuid: string | null = null;
+    // Only freshly-indexed items trigger a per-file progress emit — they're slow
+    // (thumbnail + embedding), so smooth thumbnails are worth it. Skips are fast
+    // and only emit on the periodic tick, so a fast re-scan isn't throttled by a
+    // progress line (→ runner DB write + SSE) per skipped file.
+    let freshlyIndexed = false;
     try {
       const result = await processOne(ctx, library.slug, router);
       if (result.status === 'indexed') {
         indexed++;
+        itemUuid = result.uuid;
+        lastUuid = result.uuid;
+        freshlyIndexed = true;
         process.stdout.write(`\r✓ ${indexed} indexed, ${skipped} skipped, ${failed} failed   `);
       } else {
         skipped++;
+        if (result.status === 'skip-duplicate') {
+          itemUuid = result.uuid;
+          lastUuid = result.uuid;
+        } else if (result.status === 'skip-empty') {
+          // Note empty files on their own line so it's clear WHY they were
+          // skipped (not silently, not as a "failed" ffmpeg error).
+          process.stdout.write(`\n⊘ ${ctx.filename}: empty file (0 bytes), skipped\n`);
+        }
       }
     } catch (err) {
       failed++;
@@ -377,13 +482,18 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
       process.stdout.write(`\n✗ ${ctx.filename}: ${msg}\n`);
     }
     processedSoFar++;
-    if (processedSoFar % PROGRESS_EVERY === 0) {
+    // Per-file emit for freshly-indexed items (smooth thumbnails); otherwise a
+    // periodic tick — which still carries the latest item's uuid so the panel
+    // shows a thumbnail and the counts stay live through skip/fail stretches.
+    if (freshlyIndexed || processedSoFar % PROGRESS_EVERY === 0) {
+      const showUuid = itemUuid ?? lastUuid;
       emitProgress({
         step: 'Indexing',
         current: processedSoFar,
         label: `scanning files (${indexed} indexed, ${skipped} skipped, ${failed} failed)`,
-        currentItem: ctx.filepath,
-        currentItemKind: 'path',
+        currentItem: showUuid ?? ctx.filepath,
+        currentItemKind: showUuid ? 'uuid' : 'path',
+        currentItemLibrary: showUuid ? library.slug : undefined,
       });
     }
   }
@@ -461,7 +571,9 @@ async function runRetry(library: Library, ffmpegOk: boolean) {
 
     try {
       const result = await processOne(ctx, library.slug, router);
-      if (result.status === 'indexed' || result.status === 'skip-duplicate') {
+      // skip-empty resolves a prior failure (the file is 0 bytes — nothing to
+      // index), so it leaves the failing set rather than lingering forever.
+      if (result.status === 'indexed' || result.status === 'skip-duplicate' || result.status === 'skip-empty') {
         succeeded++;
         process.stdout.write(`\r✓ ${succeeded} succeeded, ${stillFailed.length} still failing   `);
       } else {
@@ -526,7 +638,12 @@ async function runSingleFile(absTarget: string, library: Library, ffmpegOk: bool
   try {
     const result = await processOne(ctx, library.slug, router);
     const done = result.status === 'indexed' ? 'indexed' : 'skipped (duplicate)';
-    emitProgress({ step: 'Indexing', current: 1, total: 1, label: `done — ${done}` });
+    emitProgress({
+      step: 'Indexing', current: 1, total: 1, label: `done — ${done}`,
+      ...(result.status === 'indexed' || result.status === 'skip-duplicate'
+        ? { currentItem: result.uuid, currentItemKind: 'uuid' as const, currentItemLibrary: library.slug }
+        : {}),
+    });
     console.log(result.status === 'indexed'
       ? `✓ Indexed ${ctx.filename}`
       : `↷ Skipped ${ctx.filename} (duplicate of item #${result.id})`);

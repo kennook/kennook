@@ -60,6 +60,54 @@ export function getScreensaverState(userId: number): boolean {
   return row?.value === '1';
 }
 
+// Solo-audio marker: the LAST window to unmute, as "<serverMs>:<sessionId>".
+// Persisted (like the screensaver) so cross-process devices — which never see
+// the in-memory SSE broadcast — converge via the /api/sync/state poll: a poller
+// mutes when it reads a marker whose session isn't its own.
+const AUDIO_SOLO_KEY = 'audio.solo';
+
+export function setAudioSolo(userId: number, token: string): void {
+  const db = getUserSqlite();
+  db.prepare(`
+    INSERT INTO user_settings (user_id, key, value, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (user_id, key) DO UPDATE
+      SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(userId, AUDIO_SOLO_KEY, token, Date.now());
+}
+
+export function getAudioSolo(userId: number): string | null {
+  const db = getUserSqlite();
+  const row = db.prepare(
+    'SELECT value FROM user_settings WHERE user_id = ? AND key = ?',
+  ).get(userId, AUDIO_SOLO_KEY) as { value: string | null } | undefined;
+  return row?.value ?? null;
+}
+
+// Sidebar "data revision" — bumped on any change to the per-user sidebar lists
+// (playlists, saved searches, external sources). Persisted so cross-process
+// devices (which miss the in-memory SSE broadcast) converge via the
+// /api/sync/state poll: a poller refetches those lists when the rev changes.
+const DATA_REV_KEY = 'data.rev';
+
+export function bumpDataRev(userId: number): void {
+  const db = getUserSqlite();
+  db.prepare(`
+    INSERT INTO user_settings (user_id, key, value, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (user_id, key) DO UPDATE
+      SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(userId, DATA_REV_KEY, String(Date.now()), Date.now());
+}
+
+export function getDataRev(userId: number): string | null {
+  const db = getUserSqlite();
+  const row = db.prepare(
+    'SELECT value FROM user_settings WHERE user_id = ? AND key = ?',
+  ).get(userId, DATA_REV_KEY) as { value: string | null } | undefined;
+  return row?.value ?? null;
+}
+
 export function addSubscriber(s: Subscriber): void {
   subscribers.add(s);
 }
@@ -86,9 +134,9 @@ export function publishToUser(userId: number, payload: unknown): void {
 
 /**
  * Fan out to EVERY active stream, regardless of user — for GLOBAL events that
- * everyone shares: the screensaver, instance config, and shared-media changes
- * (rotation, sensitivity, exclude, move, tags, per-asset framing). Personal
- * events (likes, playlists, saved searches) use `publishToUser` instead.
+ * everyone shares: instance config and shared-media changes (rotation,
+ * sensitivity, exclude, move, tags, per-asset framing). Personal events (likes,
+ * playlists, saved searches, and now the screensaver) use `publishToUser`.
  */
 export function publishToAll(payload: unknown): void {
   const frame = serialize(payload);

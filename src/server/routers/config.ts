@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { router, publicProcedure, adminProcedure } from '@/server/trpc';
 import { listConfig, setConfigValue } from '@/server/app-config';
+import { THROTTLE_PRESETS, getThrottleLevel, setThrottleLevel } from '@/ai/throttle';
 import { publishToAll } from '@/server/sync-broker';
+
+const THROTTLE_LEVELS = ['full', 'light', 'background'] as const;
 
 /**
  * Instance configuration. `list` is public (the app reads toggles like
@@ -20,6 +23,24 @@ export const configRouter = router({
         sessionId: ctx.sessionId,
         event: { type: 'config.changed' },
       });
+      return { ok: true };
+    }),
+
+  /** AI throttle: the presets (for the picker) + the current level. Public so
+   *  the Jobs UI can render it without admin, though `setThrottle` is admin. */
+  throttle: publicProcedure.query(() => ({
+    level: getThrottleLevel(),
+    presets: THROTTLE_LEVELS.map((l) => {
+      const p = THROTTLE_PRESETS[l];
+      return { level: p.level, label: p.label, hint: p.hint };
+    }),
+  })),
+
+  setThrottle: adminProcedure
+    .input(z.object({ level: z.enum(THROTTLE_LEVELS) }))
+    .mutation(({ input, ctx }) => {
+      setThrottleLevel(input.level);
+      publishToAll({ sessionId: ctx.sessionId, event: { type: 'config.changed' } });
       return { ok: true };
     }),
 });

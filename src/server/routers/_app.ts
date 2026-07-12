@@ -10,10 +10,12 @@ import { screensaverLockRouter } from './screensaverLock';
 import { usersRouter } from './users';
 import { mediaViewRouter } from './mediaView';
 import { configRouter } from './config';
+import { externalSourceRouter } from './externalSource';
 
 export const appRouter = router({
   media: mediaRouter,
   library: libraryRouter,
+  externalSource: externalSourceRouter,
   playlist: playlistRouter,
   people: peopleRouter,
   storage: storageRouter,

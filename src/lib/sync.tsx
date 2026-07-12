@@ -30,6 +30,10 @@ export type SyncEvent =
   | { type: 'screensaver.assignment'; index: number }
   | { type: 'item.like'; librarySlug: string; uuid: string; count: number }
   | { type: 'item.tag.changed'; librarySlug: string; uuid: string }
+  /** A video bookmark was added/removed/edited; open viewers refresh the list. */
+  | { type: 'item.bookmark.changed'; librarySlug: string; uuid: string }
+  /** A video's autoplay trim (start/stop) changed; open viewers refresh it. */
+  | { type: 'item.trim.changed'; librarySlug: string; uuid: string }
   | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
   /** Manual sensitivity override changed (1 sensitive / 0 safe / null auto). */
   | { type: 'item.sensitive'; librarySlug: string; uuid: string; override: number | null }
@@ -42,6 +46,9 @@ export type SyncEvent =
   | { type: 'playlist.changed' }
   /** A saved search was created or deleted; other tabs refresh the list. */
   | { type: 'savedSearch.changed' }
+  /** A per-user sidebar list changed (playlists / saved searches / external
+   *  sources). The cross-process poll emits this so other DEVICES refetch. */
+  | { type: 'data.changed' }
   /** An asset's saved pan/zoom framing changed (per orientation). Other open
    *  clients invalidate that key so their NEXT open is fresh. */
   | { type: 'mediaView.changed'; librarySlug: string; uuid: string; orientation: 'portrait' | 'landscape' }
@@ -242,25 +249,14 @@ class SyncBroker {
   private startStatePoll(): void {
     if (this.pollTimer != null) return;
     const POLL_MS = 2000;
-    const GUARD_MS = 3000;
     const poll = async () => {
       try {
         const res = await fetch('/api/sync/state', { cache: 'no-store' });
         if (!res.ok) return;
-        const data = (await res.json()) as { screensaver?: boolean };
-        if (typeof data.screensaver !== 'boolean') return;
-        const open = data.screensaver;
-        // Within the guard window, trust the just-made local toggle: track the
-        // observed state but don't emit (so a stale poll can't clobber it).
-        if (Date.now() - this.lastScreensaverAt < GUARD_MS) {
-          this.lastPolledScreensaver = open;
-          return;
-        }
-        if (open === this.lastPolledScreensaver) return; // no change since last look
-        this.lastPolledScreensaver = open;
-        const event: SyncEvent = { type: 'screensaver', open };
-        this.emitLocal(event);                                  // this (leader) tab
-        this.bc?.postMessage({ sessionId: SESSION_ID, event }); // sibling tabs
+        const data = (await res.json()) as { screensaver?: boolean; audio?: string | null; rev?: string | null };
+        this.handleScreensaverPoll(data.screensaver);
+        this.handleAudioPoll(data.audio);
+        this.handleDataRevPoll(data.rev);
       } catch { /* offline / transient — retry next tick */ }
     };
     this.pollTimer = setInterval(poll, POLL_MS);
@@ -268,10 +264,62 @@ class SyncBroker {
   }
 
   private lastPolledScreensaver: boolean | null = null;
+  private handleScreensaverPoll(open: boolean | undefined): void {
+    if (typeof open !== 'boolean') return;
+    const GUARD_MS = 3000;
+    // Within the guard window, trust the just-made local toggle: track the
+    // observed state but don't emit (so a stale poll can't clobber it).
+    if (Date.now() - this.lastScreensaverAt < GUARD_MS) {
+      this.lastPolledScreensaver = open;
+      return;
+    }
+    if (open === this.lastPolledScreensaver) return; // no change since last look
+    this.lastPolledScreensaver = open;
+    const event: SyncEvent = { type: 'screensaver', open };
+    this.emitLocal(event);                                  // this (leader) tab
+    this.bc?.postMessage({ sessionId: SESSION_ID, event }); // sibling tabs
+  }
+
+  // Solo-audio marker "<ms>:<sessionId>". `undefined` = not yet polled, so the
+  // marker already present at page load doesn't fire a spurious mute (videos
+  // start muted anyway). On a NEW marker owned by another session, mute here.
+  private lastPolledAudio: string | null | undefined = undefined;
+  private handleAudioPoll(token: string | null | undefined): void {
+    if (token == null) { this.lastPolledAudio = token ?? null; return; }
+    if (token === this.lastPolledAudio) return;
+    const first = this.lastPolledAudio === undefined;
+    this.lastPolledAudio = token;
+    if (first) return; // don't act on the marker that existed at load
+    const ownerSession = token.split(':')[1] ?? '';
+    if (!ownerSession || ownerSession === SESSION_ID) return; // our own unmute
+    const event: SyncEvent = { type: 'audio.unmuted' };
+    this.emitLocal(event); // this (leader) tab mutes
+    // Tag the relay with the OWNER's session so a same-browser owner tab skips
+    // it (stays unmuted) while every other tab mutes.
+    this.bc?.postMessage({ sessionId: ownerSession, event });
+  }
+
+  // Sidebar data revision. `undefined` = not yet polled (don't refetch on the
+  // first observation). On a change, emit `data.changed` so this device
+  // refetches its sidebar lists — this is what makes playlists / saved searches
+  // / external sources appear on OTHER devices without a reload.
+  private lastPolledRev: string | null | undefined = undefined;
+  private handleDataRevPoll(rev: string | null | undefined): void {
+    if (rev == null) { this.lastPolledRev = rev ?? null; return; }
+    if (rev === this.lastPolledRev) return;
+    const first = this.lastPolledRev === undefined;
+    this.lastPolledRev = rev;
+    if (first) return;
+    const event: SyncEvent = { type: 'data.changed' };
+    this.emitLocal(event);
+    this.bc?.postMessage({ sessionId: SESSION_ID, event });
+  }
 
   private stopStatePoll(): void {
     if (this.pollTimer != null) { clearInterval(this.pollTimer); this.pollTimer = null; }
     this.lastPolledScreensaver = null;
+    this.lastPolledRev = undefined;
+    this.lastPolledAudio = undefined;
   }
 
   /** Run handlers for a locally-sourced event (the poll) — no sessionId skip. */

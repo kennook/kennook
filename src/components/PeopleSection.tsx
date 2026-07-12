@@ -21,27 +21,14 @@ const COLLAPSED_LIMIT = 16;
  */
 export function PeopleSection({ activePersonUuid, onSelectPerson }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const people = trpc.people.list.useQuery();
+  // By default hide the long tail of one-off faces (minFaceCount defaults to 2
+  // server-side); the toggle drops to 1 to reveal every cluster.
+  const [includeRare, setIncludeRare] = useState(false);
+  const people = trpc.people.list.useQuery({ minFaceCount: includeRare ? 1 : 2 });
 
-  if (people.isLoading) {
-    return (
-      <section className="mb-5">
-        <SectionHeader />
-        <div className="px-3 py-1.5 text-sm text-zinc-500">Loading…</div>
-      </section>
-    );
-  }
-  if (!people.data || people.data.length === 0) {
-    return (
-      <section className="mb-5">
-        <SectionHeader />
-        <div className="px-3 py-1.5 text-xs text-zinc-600 leading-relaxed">
-          Run <span className="font-mono">pnpm enrich:faces</span> then{' '}
-          <span className="font-mono">pnpm enrich:people</span> to populate.
-        </div>
-      </section>
-    );
-  }
+  // Hidden until there are clustered people to show — face detection is a
+  // discoverable admin action, not a permanent sidebar hint.
+  if (!people.data || people.data.length === 0) return null;
 
   const list = people.data;
   const visible = expanded ? list : list.slice(0, COLLAPSED_LIMIT);
@@ -84,14 +71,23 @@ export function PeopleSection({ activePersonUuid, onSelectPerson }: Props) {
           );
         })}
       </div>
-      {remaining > 0 && (
+      <div className="flex items-center gap-3 px-3 mt-1.5">
+        {remaining > 0 && (
+          <button
+            onClick={() => setExpanded(true)}
+            className="text-xs text-zinc-500 hover:text-zinc-300 py-1 text-left"
+          >
+            + {remaining} more
+          </button>
+        )}
         <button
-          onClick={() => setExpanded(true)}
-          className="text-xs text-zinc-500 hover:text-zinc-300 px-3 py-1 mt-1.5 text-left"
+          onClick={() => { setIncludeRare((v) => !v); setExpanded(false); }}
+          className="text-xs text-zinc-600 hover:text-zinc-400 py-1 text-left"
+          title={includeRare ? 'Hide one-off faces' : 'Include people seen only once'}
         >
-          + {remaining} more
+          {includeRare ? 'frequent only' : 'show all faces'}
         </button>
-      )}
+      </div>
     </section>
   );
 }

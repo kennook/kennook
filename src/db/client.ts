@@ -59,9 +59,22 @@ export function getRawSqlite(librarySlug: string = DEFAULT_LIBRARY_SLUG): Databa
   return sqlite;
 }
 
+/**
+ * Ensure a row exists in this per-library `users` table for the given auth
+ * user id. The per-user tables (media_likes, media_views, playlists,
+ * saved_searches) FK to it, but the AUTH users live in the shared user.db —
+ * so a real signed-in user (e.g. admin = id 2) isn't here until we mirror a
+ * minimal row. Call before any per-user write. Idempotent.
+ */
+export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userId: number): void {
+  sqlite.prepare(
+    `INSERT OR IGNORE INTO users (id, uuid, display_name) VALUES (?, ?, ?)`,
+  ).run(userId, `auth-user-${userId}`, `User ${userId}`);
+}
+
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 20;
+const LATEST_SCHEMA_VERSION = 29;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -491,6 +504,143 @@ function applyMigrations(sqlite: DatabaseSync) {
       sqlite.exec('ALTER TABLE media_view_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
     } catch { /* column exists */ }
     version = 20;
+  }
+
+  // ── v21: user bookmarks on videos — a timestamp + free-text label (the
+  // "tags") that becomes searchable and deep-links back to the moment. Each
+  // bookmark is owned by its creator and either 'shared' (everyone in the
+  // library sees it) or 'private' (only the creator); the search + list
+  // queries filter on that. FK cascade drops them when the item is purged.
+  if (version < 21) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS media_bookmarks (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_item_id INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+        timestamp_ms  INTEGER NOT NULL,
+        label         TEXT NOT NULL DEFAULT '',
+        visibility    TEXT NOT NULL DEFAULT 'shared' CHECK(visibility IN ('shared','private')),
+        created_by    INTEGER NOT NULL DEFAULT 1,
+        created_at    INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+      );
+      CREATE INDEX IF NOT EXISTS idx_media_bookmarks_item
+        ON media_bookmarks(media_item_id, timestamp_ms);
+    `);
+    version = 21;
+  }
+
+  // ── v22: per-video autoplay trim. Nullable start/end (ms) — during the
+  // slideshow the video starts at trim_start_ms and stops (advances) at
+  // trim_end_ms, to skip intros / dead ends. Asset-level and shared (no
+  // user_id), like rotation: the intro is the intro for everyone.
+  if (version < 22) {
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN trim_start_ms INTEGER'); } catch { /* exists */ }
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN trim_end_ms INTEGER'); } catch { /* exists */ }
+    version = 22;
+  }
+
+  // ── v23: scrub-preview sprite sheets. `scrub_status` drives the enrich step
+  // (videos 'pending', photos 'n/a'); `scrub_meta` holds the grid manifest JSON
+  // ({intervalMs, cols, rows, tileW, tileH, count}) once generated. The sprite
+  // image itself lives on disk under data/<slug>/scrub-sprites/<uuid>/.
+  if (version < 23) {
+    try { sqlite.exec(`ALTER TABLE media_items ADD COLUMN scrub_status TEXT NOT NULL DEFAULT 'pending'`); } catch { /* exists */ }
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN scrub_meta TEXT'); } catch { /* exists */ }
+    sqlite.exec(`UPDATE media_items SET scrub_status = 'n/a' WHERE kind = 'photo' AND scrub_status = 'pending'`);
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS media_scrub_status_idx ON media_items(scrub_status) WHERE scrub_status = 'pending'`);
+    version = 23;
+  }
+
+  // ── v24: video faces. `video_face_status` drives the enrich step (videos
+  // 'pending', photos 'n/a'); `media_faces.t_ms` records the frame timestamp a
+  // face was seen at (NULL for photo faces). Video faces flow into the SAME
+  // media_faces / media_face_embeddings tables, so enrich:people clusters them
+  // together with photo faces automatically — no clustering change needed.
+  if (version < 24) {
+    try { sqlite.exec(`ALTER TABLE media_items ADD COLUMN video_face_status TEXT NOT NULL DEFAULT 'pending'`); } catch { /* exists */ }
+    try { sqlite.exec('ALTER TABLE media_faces ADD COLUMN t_ms INTEGER'); } catch { /* exists */ }
+    sqlite.exec(`UPDATE media_items SET video_face_status = 'n/a' WHERE kind = 'photo' AND video_face_status = 'pending'`);
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS media_video_face_status_idx ON media_items(video_face_status) WHERE video_face_status = 'pending'`);
+    version = 24;
+  }
+
+  // ── v25: watch count. Per (user, item) tally of actual WATCHES (viewer
+  // opens), a relevance signal for future ranking. Distinct from the "seen"
+  // flag: interactions (like/tag/playlist) still just ensure a row exists and
+  // leave the count at 0; a real watch increments it. Existing rows were seen
+  // at least once, so seed them to 1 rather than lose the signal.
+  if (version < 25) {
+    try { sqlite.exec(`ALTER TABLE media_views ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+    sqlite.exec(`UPDATE media_views SET view_count = 1 WHERE view_count = 0`);
+    version = 25;
+  }
+
+  // ── v26: ArcFace recognition upgrade + video faces retired. The old face-api
+  // ResNet-34 descriptor (128-d, weak: different people landed <0.6 apart, so
+  // enrich:people collapsed the whole library into one mega-person) is replaced
+  // by ArcFace (512-d, L2-normalized, different people ~1.0 apart). Old 128-d
+  // vectors are incompatible: drop + recreate the vec0 table at 512-d, wipe
+  // every face row, and re-arm PHOTO detection so enrich:faces re-embeds.
+  // enrich:people must be re-run afterwards. Video face recognition is disabled
+  // (frame crops embed too unreliably to cluster) — videos are marked n/a.
+  if (version < 26) {
+    sqlite.exec(`DROP TABLE IF EXISTS media_face_embeddings`);
+    sqlite.exec(`CREATE VIRTUAL TABLE media_face_embeddings USING vec0(embedding FLOAT[512])`);
+    sqlite.exec(`DELETE FROM media_faces`);
+    sqlite.exec(`UPDATE media_items SET face_status = 'pending' WHERE kind = 'photo'`);
+    sqlite.exec(`UPDATE media_items SET video_face_status = 'n/a' WHERE kind = 'video'`);
+    version = 26;
+  }
+
+  // ── v27: fast incremental re-index. An index on (storage_location_id, path)
+  // lets the indexer detect an already-indexed, unchanged file (matched by
+  // path + size) WITHOUT reading and SHA-256-hashing its full contents — so
+  // re-scanning a large drive becomes "stat and skip" instead of "re-hash
+  // everything".
+  if (version < 27) {
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS media_storage_path_idx ON media_items(storage_location_id, path)`);
+    version = 27;
+  }
+
+  // ── v28: remember EVERY file the indexer has seen (by storage + relative
+  // path + size → its content hash), not just the ones stored in media_items.
+  // Content-duplicate downloads (e.g. "clip(1).mp4" identical to "clip.mp4")
+  // are skip-duplicated and never stored, so the v27 media_items path check
+  // missed them and re-hashed the full file every scan. This lets a re-scan
+  // skip them on a cheap path lookup instead. Backfilled from existing items.
+  if (version < 28) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS indexed_files (
+        storage_location_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        seen_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        PRIMARY KEY (storage_location_id, path)
+      ) WITHOUT ROWID;
+    `);
+    sqlite.exec(`
+      INSERT OR IGNORE INTO indexed_files (storage_location_id, path, size_bytes, sha256)
+      SELECT storage_location_id, path, size_bytes, sha256
+      FROM media_items
+      WHERE deleted_at IS NULL AND sha256 IS NOT NULL AND path IS NOT NULL;
+    `);
+    version = 28;
+  }
+
+  // ── v29: user-managed ignore list for the storage file manager. A path
+  // (relative to a storage root) the indexer must skip on every scan — used to
+  // prune "garbage" folders that got swept into a library. Checked by the walk
+  // (skips the subtree) and used to hide already-indexed items underneath.
+  if (version < 29) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS ignored_paths (
+        storage_location_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        PRIMARY KEY (storage_location_id, path)
+      ) WITHOUT ROWID;
+    `);
+    version = 29;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

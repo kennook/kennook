@@ -8,7 +8,9 @@
  */
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import QRCode from 'react-qr-code';
+import { SIDEBAR_ROW } from '@/components/ui/sidebar-row';
 
 interface ConnectInfo {
   mdnsUrl: string;
@@ -16,7 +18,7 @@ interface ConnectInfo {
   port: number;
 }
 
-export function ConnectDeviceButton() {
+export function ConnectDeviceButton({ variant = 'header' }: { variant?: 'header' | 'sidebar' } = {}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -25,11 +27,15 @@ export function ConnectDeviceButton() {
         onClick={() => setOpen(true)}
         title="Connect another device"
         aria-label="Connect another device"
-        className="text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800
-                   rounded px-2 py-1 text-sm transition shrink-0 flex items-center gap-1.5"
+        className={variant === 'sidebar'
+          ? SIDEBAR_ROW
+          : `text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800
+             rounded px-2 py-1 text-sm transition shrink-0 flex items-center gap-1.5`}
       >
         <DeviceIcon />
-        <span className="hidden sm:inline">Connect</span>
+        {variant === 'sidebar'
+          ? <span className="flex-1">Connect a device</span>
+          : <span className="hidden sm:inline">Connect</span>}
       </button>
       {open && <ConnectModal onClose={() => setOpen(false)} />}
     </>
@@ -51,7 +57,10 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
   // option (mDNS isn't resolvable on every device, e.g. some Androids).
   const primary = info?.networkUrls[0] ?? info?.mdnsUrl ?? null;
 
-  return (
+  // Portal to <body> — launched from the zoomed (kn-app-scaled) sidebar, whose
+  // CSS `zoom` would otherwise trap this fixed overlay under the grid.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-6"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -103,7 +112,8 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

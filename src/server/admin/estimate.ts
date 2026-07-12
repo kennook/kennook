@@ -23,6 +23,8 @@ export function pendingCounts(sqlite: Sqlite): Record<string, number> {
     'enrich:transcript-tags': one(`SELECT COUNT(*) AS n FROM media_items
       WHERE transcript IS NOT NULL AND transcript != ''
         AND transcript_tags_status='pending' AND deleted_at IS NULL`),
+    'enrich:scrub': one(`SELECT COUNT(*) AS n FROM media_items
+      WHERE kind='video' AND scrub_status='pending' AND deleted_at IS NULL`),
     'enrich:faces': one(`SELECT COUNT(*) AS n FROM media_items
       WHERE kind='photo' AND face_status='pending' AND deleted_at IS NULL`),
     'enrich:sensitive': one(`SELECT COUNT(*) AS n FROM media_items
@@ -102,7 +104,7 @@ export function buildEstimates(sqlite: Sqlite): ActionEstimate[] {
   for (const c of [
     'backfill:vectors', 'backfill:previews', 'backfill:views',
     'enrich:text', 'enrich:video-text', 'enrich:transcript', 'enrich:transcript-tags',
-    'enrich:faces', 'enrich:sensitive', 'enrich:people',
+    'enrich:scrub', 'enrich:faces', 'enrich:sensitive', 'enrich:people',
   ]) {
     const e = single(c);
     if (e) out.push(e);
