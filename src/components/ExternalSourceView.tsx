@@ -16,10 +16,21 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
     { slug },
     { getNextPageParam: (last) => last.nextCursor, initialCursor: undefined },
   );
-  // Index into `videos` of the video the player queue starts at (null = closed).
-  const [playIndex, setPlayIndex] = useState<number | null>(null);
+  // Open player: which video the queue starts at + whether it auto-advances.
+  const [player, setPlayer] = useState<{ startIndex: number; autoplay: boolean } | null>(null);
+  // Where playback left off when the player was closed — powers "Resume".
+  const [resume, setResume] = useState<{ index: number; autoplay: boolean } | null>(null);
 
   const videos = q.data?.pages.flatMap((p) => p.items) ?? [];
+
+  const openAt = (startIndex: number, autoplay: boolean) => {
+    setResume(null);            // starting fresh replaces any old resume point
+    setPlayer({ startIndex, autoplay });
+  };
+
+  // Switching to a different source is a fresh session — drop any open player
+  // + resume point (their indices belong to the previous source's list).
+  useEffect(() => { setPlayer(null); setResume(null); }, [slug]);
 
   // Tail sentinel → fetch the next page as the user nears the end.
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -44,7 +55,7 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
         </div>
         {videos.length > 0 && (
           <button
-            onClick={() => setPlayIndex(0)}
+            onClick={() => openAt(0, true)}
             className="shrink-0 inline-flex items-center gap-2 rounded-md bg-emerald-400 hover:bg-emerald-300
                        text-zinc-900 font-medium text-sm px-3 py-1.5 transition"
           >
@@ -69,7 +80,7 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {videos.map((v, i) => (
-            <button key={v.videoId} onClick={() => setPlayIndex(i)} className="group text-left">
+            <button key={v.videoId} onClick={() => openAt(i, false)} className="group text-left">
               <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-900 ring-1 ring-transparent group-hover:ring-zinc-600 transition">
                 {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-cover" />}
                 <div className="absolute inset-0 grid place-items-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
@@ -86,12 +97,36 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
       <div ref={sentinelRef} className="h-8" />
       {q.isFetchingNextPage && <div className="py-4 text-center text-xs text-zinc-600">Loading more…</div>}
 
-      {playIndex !== null && (
+      {/* Resume bar — reappears after you exit the player mid-session, so you
+          don't have to hunt for the video in the grid. Restores position +
+          autoplay. */}
+      {!player && resume && videos[resume.index] && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
+                        bg-zinc-900/95 backdrop-blur ring-1 ring-zinc-700 rounded-full pl-4 pr-2 py-2 shadow-2xl">
+          <button
+            onClick={() => setPlayer({ startIndex: resume.index, autoplay: resume.autoplay })}
+            className="flex items-center gap-2 text-sm text-zinc-100"
+          >
+            <span className="grid place-items-center w-6 h-6 rounded-full bg-emerald-400 text-zinc-900">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
+            </span>
+            <span className="max-w-[16rem] truncate">
+              {resume.autoplay ? 'Resume playing' : 'Resume'}: {videos[resume.index].title}
+            </span>
+            <span className="text-xs text-zinc-500 tabular-nums">{resume.index + 1}/{videos.length}</span>
+          </button>
+          <button onClick={() => setResume(null)} title="Dismiss" className="text-zinc-500 hover:text-zinc-200 px-1.5">×</button>
+        </div>
+      )}
+
+      {player && (
         <YouTubePlayer
           videos={videos.map((v) => ({ videoId: v.videoId, title: v.title }))}
-          startIndex={playIndex}
+          startIndex={player.startIndex}
+          autoplay={player.autoplay}
           suspended={suspended}
-          onClose={() => setPlayIndex(null)}
+          onProgress={(index, autoplay) => setResume({ index, autoplay })}
+          onClose={() => setPlayer(null)}
         />
       )}
     </div>

@@ -21,15 +21,23 @@ export interface QueueVideo { videoId: string; title: string }
 export function YouTubePlayer({
   videos,
   startIndex,
+  autoplay = false,
   suspended,
   onClose,
+  onProgress,
 }: {
   videos: QueueVideo[];
   startIndex: number;
+  /** Auto-advance to the next video when one ends. Play-All opens with true;
+   *  a single clicked video opens with false. Toggleable in-player. */
+  autoplay?: boolean;
   suspended?: boolean;
   onClose: () => void;
+  /** Reports the current position + autoplay so the parent can offer Resume. */
+  onProgress?: (index: number, autoplay: boolean) => void;
 }) {
   const [index, setIndex] = useState(startIndex);
+  const [autoplayNext, setAutoplayNext] = useState(autoplay);
   const [muted, setMuted] = useState(true);
   const [ready, setReady] = useState(false);
 
@@ -39,17 +47,27 @@ export function YouTubePlayer({
   queueRef.current = videos;
   const indexRef = useRef(index);
   indexRef.current = index;
+  const autoplayRef = useRef(autoplayNext);
+  autoplayRef.current = autoplayNext;
   const wasPlayingRef = useRef(false);
   const lastMutedRef = useRef(true);
+  // Ref so onProgress's (unstable) identity doesn't retrigger the effect below.
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
   const sync = useSync();
 
   const current = videos[index];
+
+  // Report position + autoplay upward so the parent can show a Resume affordance.
+  useEffect(() => { onProgressRef.current?.(index, autoplayNext); }, [index, autoplayNext]);
 
   // Create the player once, on an imperatively-appended node so YT can replace
   // it with its iframe without fighting React's reconciliation.
   useEffect(() => {
     let cancelled = false;
+    // Only auto-advance when the toggle is on (read live via ref).
     const advance = () => {
+      if (!autoplayRef.current) return;
       const q = queueRef.current;
       const next = indexRef.current + 1;
       if (next < q.length) { setIndex(next); playerRef.current?.loadVideoById(q[next].videoId); }
@@ -145,6 +163,18 @@ export function YouTubePlayer({
           <span className="text-xs text-zinc-500 tabular-nums shrink-0">{index + 1} / {videos.length}</span>
         )}
         <span className="flex-1 truncate">{current?.title}</span>
+        {videos.length > 1 && (
+          <button
+            onClick={() => setAutoplayNext((v) => !v)}
+            title={autoplayNext ? 'Autoplay on — plays the next video automatically' : 'Autoplay off — stops at the end of this video'}
+            className={`text-xs px-2 py-0.5 rounded ring-1 transition
+                        ${autoplayNext
+                          ? 'text-emerald-300 ring-emerald-500/50 bg-emerald-950/40'
+                          : 'text-zinc-400 ring-zinc-700 hover:text-zinc-200'}`}
+          >
+            Autoplay {autoplayNext ? 'on' : 'off'}
+          </button>
+        )}
         <button onClick={toggleMute} title={muted ? 'Unmute (solo)' : 'Mute'}
           className={`px-2 ${muted ? 'text-zinc-400 hover:text-zinc-100' : 'text-emerald-400 hover:text-emerald-300'}`}>
           {muted ? 'Muted' : 'Sound on'}
