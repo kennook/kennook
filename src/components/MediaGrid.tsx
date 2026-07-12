@@ -127,6 +127,74 @@ function useMeasure(): [RefObject<HTMLDivElement>, { width: number; offset: numb
   return [ref, rect];
 }
 
+/**
+ * The masonic-driven body. Split out from MediaGrid so its hooks
+ * (usePositioner / useResizeObserver / useScrollToIndex / useInfiniteLoader)
+ * never run during SSR — `useResizeObserver` instantiates a `new ResizeObserver`
+ * at RENDER time, which throws on the server. MediaGrid only mounts this once it
+ * has a measured `width > 0`, which can't happen until the client-side measure
+ * effect runs, so the whole component is effectively client-only.
+ */
+function MasonryBody({
+  cells, items, width, columnWidth, resetKey, offset, viewportHeight,
+  highlightUuid, scrollSignal, hasMore, onLoadMore, handlersRef,
+}: {
+  cells: Cell[];
+  items: MediaItemDto[];
+  width: number;
+  columnWidth: number;
+  resetKey?: string;
+  offset: number;
+  viewportHeight: number;
+  highlightUuid?: string | null;
+  scrollSignal?: number;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  handlersRef: React.MutableRefObject<Handlers>;
+}) {
+  // Recreate the positioner (clearing cached positions) when the width or the
+  // dataset changes; masonic re-lays-out at the correct column count/width.
+  const positioner = usePositioner({ width, columnWidth, columnGutter: 8 }, [resetKey ?? '']);
+  const resizeObserver = useResizeObserver(positioner);
+
+  // Scroll the highlighted tile into view when `scrollSignal` bumps (the grid is
+  // virtualized, so masonic's own scroll-to-index is required).
+  const scrollToIndex = useScrollToIndex(positioner, {
+    element: typeof window !== 'undefined' ? window : null,
+    align: 'center',
+    height: viewportHeight,
+    offset,
+  });
+  useEffect(() => {
+    if (scrollSignal == null || highlightUuid == null) return;
+    const idx = items.findIndex((it) => it.uuid === highlightUuid);
+    if (idx >= 0) scrollToIndex(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollSignal]);
+
+  const maybeLoadMore = useInfiniteLoader(
+    async () => { if (hasMore) onLoadMore?.(); },
+    { isItemLoaded: (index, loaded) => !hasMore || index < loaded.length, threshold: 16 },
+  );
+
+  return (
+    <HandlersCtx.Provider value={handlersRef}>
+      <MasonryScroller<Cell>
+        offset={offset}
+        height={viewportHeight}
+        positioner={positioner}
+        resizeObserver={resizeObserver}
+        items={cells}
+        overscanBy={2}
+        itemHeightEstimate={columnWidth}
+        itemKey={(d) => d.item.uuid}
+        render={GridCell}
+        onRender={maybeLoadMore}
+      />
+    </HandlersCtx.Provider>
+  );
+}
+
 function GridCell({ data }: { index: number; data: Cell; width: number }) {
   const ref = useContext(HandlersCtx)!;
   const { item, selected, highlighted } = data;
@@ -205,31 +273,6 @@ export function MediaGrid({
   const columnWidth = useColumnWidth();
   const [measureRef, { width, offset, viewportHeight }] = useMeasure();
 
-  // Recreate the positioner (clearing cached positions) when the width or the
-  // dataset changes; masonic re-lays-out at the correct column count/width.
-  const positioner = usePositioner({ width, columnWidth, columnGutter: 8 }, [resetKey ?? '']);
-  const resizeObserver = useResizeObserver(positioner);
-
-  // Scroll the highlighted tile into view when `scrollSignal` bumps (the grid is
-  // virtualized, so masonic's own scroll-to-index is required).
-  const scrollToIndex = useScrollToIndex(positioner, {
-    element: typeof window !== 'undefined' ? window : null,
-    align: 'center',
-    height: viewportHeight,
-    offset,
-  });
-  useEffect(() => {
-    if (scrollSignal == null || highlightUuid == null) return;
-    const idx = items.findIndex((it) => it.uuid === highlightUuid);
-    if (idx >= 0) scrollToIndex(idx);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollSignal]);
-
-  const maybeLoadMore = useInfiniteLoader(
-    async () => { if (hasMore) onLoadMore?.(); },
-    { isItemLoaded: (index, loaded) => !hasMore || index < loaded.length, threshold: 16 },
-  );
-
   // Varied-height skeletons so the masonry shape reads while loading.
   const skeletonHeights = [1, 0.72, 1.4, 1, 0.66, 1.25];
 
@@ -254,20 +297,20 @@ export function MediaGrid({
           <code className="text-zinc-300">pnpm indexer &lt;path&gt;</code>.
         </div>
       ) : width > 0 ? (
-        <HandlersCtx.Provider value={handlersRef}>
-          <MasonryScroller<Cell>
-            offset={offset}
-            height={viewportHeight}
-            positioner={positioner}
-            resizeObserver={resizeObserver}
-            items={cells}
-            overscanBy={2}
-            itemHeightEstimate={columnWidth}
-            itemKey={(d) => d.item.uuid}
-            render={GridCell}
-            onRender={maybeLoadMore}
-          />
-        </HandlersCtx.Provider>
+        <MasonryBody
+          cells={cells}
+          items={items}
+          width={width}
+          columnWidth={columnWidth}
+          resetKey={resetKey}
+          offset={offset}
+          viewportHeight={viewportHeight}
+          highlightUuid={highlightUuid}
+          scrollSignal={scrollSignal}
+          hasMore={hasMore}
+          onLoadMore={onLoadMore}
+          handlersRef={handlersRef}
+        />
       ) : null}
     </div>
   );
