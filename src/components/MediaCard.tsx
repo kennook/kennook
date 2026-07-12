@@ -177,6 +177,17 @@ export function MediaCard({
         <TextMatchBadge matches={matches} />
       )}
 
+      {/* "Last viewed" chip — mirrors the external-source chip. Fades on hover
+          so it never blocks the selection checkbox that appears there. */}
+      {highlighted && (
+        <div className="absolute top-2 left-2 z-20 flex items-center gap-1 bg-sky-400 text-zinc-900
+                        text-[10px] font-semibold px-1.5 py-0.5 rounded-full shadow
+                        pointer-events-none group-hover:opacity-0 transition">
+          <svg width="8" height="8" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z" /></svg>
+          Last viewed
+        </div>
+      )}
+
       {onToggleSelection && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleSelection(e); }}
