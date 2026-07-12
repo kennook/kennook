@@ -21,6 +21,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   now shows tags for photos too.
 
 ### Changed
+- The enrichment processor-load throttle now applies its **core cap live**: an
+  AI model rebuilds with the new core count on the next item after you change the
+  level, so switching to Light/Background lowers CPU on an already-running job
+  (previously only the pacing took effect live; the core cap needed a restart).
+  The item in flight when you switch still finishes at the old cap, and the
+  change costs a one-time model reload.
 - Reorganized the viewer's details sidebar: the Tags and Bookmarks editors no
   longer render as odd floating boxes inside the panel, tags are no longer
   duplicated (one editor, shown for photos and videos), and editable

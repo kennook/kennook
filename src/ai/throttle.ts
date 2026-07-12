@@ -6,9 +6,11 @@
  * `user_settings` (key `config.ai.throttle`):
  *
  *   1. Core cap  — `intraOpNumThreads` passed into every ONNX InferenceSession.
- *      Fewer cores per inference = lower peak load, more cores left free. This
- *      is fixed when a model's session is CREATED, so a change only affects the
- *      NEXT job that starts, not one already running.
+ *      Fewer cores per inference = lower peak load, more cores left free. It's
+ *      fixed when a session is CREATED, so cached models are tagged with the
+ *      level they were built at (see `levelAwareLoader`) and rebuilt on the next
+ *      item when the level changes — so a change applies LIVE to a running job,
+ *      after the in-flight item finishes plus a one-time model reload.
  *
  *   2. Duty-cycle pacing — `pace()` sleeps between items in the enrich loops in
  *      proportion to how long the item took. Re-read every item, so a change
@@ -100,12 +102,43 @@ export function setThrottleLevel(level: ThrottleLevel): void {
 /**
  * ONNX session options for the current throttle — spread into every
  * `from_pretrained` / `pipeline` call. Empty at Full speed (ONNX default).
- * Read ONCE at model-load time, so it reflects the level when the job started.
+ * Read at model-load time; models rebuild when the level changes (see
+ * `levelAwareLoader`), so a new cap applies on the next item.
  */
 export function aiSessionOptions(): { session_options?: { intraOpNumThreads: number; interOpNumThreads: number } } {
   const { threads } = getThrottle();
   if (threads <= 0) return {};
   return { session_options: { intraOpNumThreads: threads, interOpNumThreads: 1 } };
+}
+
+/**
+ * Wrap a model's lazy loader so its cached session is rebuilt when the throttle
+ * level changes — the only way to change the ONNX core cap, which is immutable
+ * once a session exists. Returns a getter with the SAME cache-on-first-call
+ * shape as before: repeat calls at the same level reuse the cached model; a call
+ * after a level change drops the old model (disposed best-effort to free its
+ * native session memory) and rebuilds with the new cap.
+ *
+ * Since the enrich loops run inference sequentially and await each item, the old
+ * model is never mid-inference when a rebuild is triggered.
+ */
+export function levelAwareLoader<T>(
+  build: () => Promise<T>,
+  dispose?: (loaded: T) => void,
+): () => Promise<T> {
+  let cached: Promise<T> | null = null;
+  let cachedLevel: ThrottleLevel | null = null;
+  return () => {
+    const level = getThrottleLevel();
+    if (cached && cachedLevel === level) return cached;
+    if (cached && dispose) {
+      const stale = cached;
+      void stale.then((v) => { try { dispose(v); } catch { /* best-effort */ } });
+    }
+    cachedLevel = level;
+    cached = build();
+    return cached;
+  };
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

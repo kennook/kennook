@@ -24,7 +24,7 @@
 
 import { pipeline, type PipelineType } from '@huggingface/transformers';
 import nlp from 'compromise';
-import { aiSessionOptions } from './throttle';
+import { aiSessionOptions, levelAwareLoader } from './throttle';
 
 type Transcriber = (
   audio: Float32Array,
@@ -39,19 +39,17 @@ type Transcriber = (
 // still falls short (diminishing returns past small for this task).
 const ASR_MODEL = 'Xenova/whisper-small.en';
 
-let transcriberPromise: Promise<Transcriber> | null = null;
-async function getTranscriber(): Promise<Transcriber> {
-  if (!transcriberPromise) {
-    // The pipeline factory accepts a task name; cast to satisfy the
-    // generic-typed `pipeline()` overload.
-    transcriberPromise = pipeline(
-      'automatic-speech-recognition' as PipelineType,
-      ASR_MODEL,
-      { ...aiSessionOptions() },
-    ) as unknown as Promise<Transcriber>;
-  }
-  return transcriberPromise;
-}
+// The pipeline factory accepts a task name; cast to satisfy the generic-typed
+// `pipeline()` overload. Rebuilds with the current core cap when the throttle
+// level changes.
+const getTranscriber = levelAwareLoader<Transcriber>(
+  () => pipeline(
+    'automatic-speech-recognition' as PipelineType,
+    ASR_MODEL,
+    { ...aiSessionOptions() },
+  ) as unknown as Promise<Transcriber>,
+  (t) => (t as unknown as { dispose?: () => void }).dispose?.(),
+);
 
 /**
  * Convert raw signed-16-bit little-endian PCM bytes (ffmpeg's `s16le`

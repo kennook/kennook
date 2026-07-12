@@ -23,7 +23,7 @@
  */
 
 import { pipeline, env, type PipelineType } from '@huggingface/transformers';
-import { aiSessionOptions } from './throttle';
+import { aiSessionOptions, levelAwareLoader } from './throttle';
 
 if (process.env.TRANSFORMERS_CACHE) {
   env.cacheDir = process.env.TRANSFORMERS_CACHE;
@@ -62,17 +62,15 @@ type TextGenerator = (
   options?: Record<string, unknown>,
 ) => Promise<Array<{ generated_text: string | ChatMessage[] }>>;
 
-let generatorPromise: Promise<TextGenerator> | null = null;
-function getGenerator(): Promise<TextGenerator> {
-  if (!generatorPromise) {
-    generatorPromise = pipeline(
-      'text-generation' as PipelineType,
-      MODEL,
-      { dtype: DTYPE, ...aiSessionOptions() },
-    ) as unknown as Promise<TextGenerator>;
-  }
-  return generatorPromise;
-}
+// Rebuilds with the current core cap whenever the throttle level changes.
+const getGenerator = levelAwareLoader<TextGenerator>(
+  () => pipeline(
+    'text-generation' as PipelineType,
+    MODEL,
+    { dtype: DTYPE, ...aiSessionOptions() },
+  ) as unknown as Promise<TextGenerator>,
+  (g) => (g as unknown as { dispose?: () => void }).dispose?.(),
+);
 
 const SYSTEM_PROMPT =
   'You extract concise topical tags from the spoken transcript of a video. ' +

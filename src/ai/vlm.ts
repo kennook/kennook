@@ -22,7 +22,7 @@ import {
   type PreTrainedTokenizer,
   type Tensor,
 } from '@huggingface/transformers';
-import { aiSessionOptions } from './throttle';
+import { aiSessionOptions, levelAwareLoader } from './throttle';
 
 // Florence-2's processor has a post_process_generation() method that the base
 // Processor type doesn't expose. Narrow shape we actually use:
@@ -46,11 +46,9 @@ interface VlmState {
   tokenizer: PreTrainedTokenizer;
 }
 
-let _state: Promise<VlmState> | null = null;
-
-function loadModel(): Promise<VlmState> {
-  if (_state) return _state;
-  _state = (async () => {
+// Rebuilds with the current core cap whenever the throttle level changes.
+const loadModel = levelAwareLoader<VlmState>(
+  async () => {
     // q8 for the encoder/decoder. q4 produced garbage text (coordinate tokens
     // only — over-quantization). fp16 would be ideal but the upstream
     // onnx-community/Florence-2-base-ft has an invalid fp16 decoder graph.
@@ -68,9 +66,9 @@ function loadModel(): Promise<VlmState> {
       AutoTokenizer.from_pretrained(MODEL_ID),
     ]);
     return { model, processor, tokenizer };
-  })();
-  return _state;
-}
+  },
+  (s) => (s.model as unknown as { dispose?: () => void }).dispose?.(),
+);
 
 async function runTask<T = unknown>(imagePath: string, task: string): Promise<T> {
   const { model, processor, tokenizer } = await loadModel();
