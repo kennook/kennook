@@ -140,13 +140,22 @@ function HomeContent() {
   const [quietMode, setQuietMode] = useState(false);
   // Collapsible filters/facets sidebar. Default open; persisted per-browser.
   // Hydrated from localStorage after mount to avoid an SSR/client mismatch.
-  // Panel open = the Level-2 section panel is slid into place (over the rail).
-  // Default closed (rail shown); remembered per browser.
+  // Whole-sidebar visibility (the header icon shows/hides BOTH levels); and, when
+  // visible, whether the Level-2 section panel is slid over the rail. Both
+  // remembered per browser.
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   useEffect(() => {
+    const vis = localStorage.getItem('kennook.sidebar-visible');
+    if (vis !== null) setSidebarVisible(vis === '1');
     const v = localStorage.getItem('kennook.sidebar-open');
     if (v !== null) setSidebarOpen(v === '1');
   }, []);
+  const toggleSidebarVisible = () => setSidebarVisible((v) => {
+    const next = !v;
+    try { localStorage.setItem('kennook.sidebar-visible', next ? '1' : '0'); } catch { /* private */ }
+    return next;
+  });
   // Gate the slide/width transitions until after first paint so the localStorage
   // hydration (open state, rail-collapsed) snaps in without an animate-on-load.
   const [sbAnimate, setSbAnimate] = useState(false);
@@ -878,10 +887,10 @@ function HomeContent() {
       <header ref={headerRef} className={`kn-app-scaled sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
         <div className="px-5 py-4 flex items-center gap-4">
           <button
-            onClick={toggleSidebar}
-            aria-pressed={sidebarOpen}
-            title={sidebarOpen ? 'Hide filters' : 'Show filters'}
-            aria-label="Toggle filters sidebar"
+            onClick={toggleSidebarVisible}
+            aria-pressed={sidebarVisible}
+            title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+            aria-label="Toggle sidebar"
             className="hidden md:flex items-center justify-center text-zinc-400 hover:text-zinc-100
                        hover:bg-zinc-800 rounded px-2 py-1.5 transition shrink-0"
           >
@@ -900,9 +909,10 @@ function HomeContent() {
             Un-zoomed scroll wrapper (dvh clamp is unreliable under CSS `zoom`);
             overflow-x-hidden clips the off-screen pane. */}
         <div
-          className={`shrink-0 sticky self-start overflow-hidden relative mr-6
-                     ${sbAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}
-                     ${sidebarOpen ? 'w-80' : railCollapsed ? 'w-16' : 'w-56'}`}
+          className={`shrink-0 sticky self-start overflow-hidden relative
+                     ${sbAnimate ? 'transition-[width,margin] duration-300 ease-in-out' : ''}
+                     ${!sidebarVisible ? 'w-0 mr-0'
+                       : `mr-6 ${sidebarOpen ? 'w-80' : railCollapsed ? 'w-16' : 'w-56'}`}`}
           style={{ top: headerH, height: `calc(100dvh - ${headerH}px)` }}
         >
           {/* Rail pane (Level 1) — slides out left when a section opens. Each
