@@ -142,10 +142,8 @@ export function FilterSidebar({
   };
 
   return (
-    <aside
-      className="hidden md:block w-56 shrink-0 sticky top-20 self-start
-                 max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] overflow-y-auto pr-2"
-    >
+    // Fills the Level-2 panel; the panel owns the sticky positioning + scroll.
+    <div className="w-full">
       <FilterSection title="Type">
         <FilterRow
           active={kind === null}
@@ -322,7 +320,7 @@ export function FilterSidebar({
           Reset all filters
         </button>
       )}
-    </aside>
+    </div>
   );
 }
 
