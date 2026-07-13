@@ -4,6 +4,7 @@ import { trpc } from '@/lib/trpc-client';
 
 interface Props {
   activeSourceSlug: string | null;
+  activeCategory: string | null;
   /** Open the in-sidebar sources manager (slides over the sidebar). */
   onOpenManager: () => void;
 }
@@ -15,10 +16,12 @@ interface Props {
  * delete). The panel itself lives at the sidebar level so it can slide as a
  * second layer rather than float on top of the page.
  */
-export function SourcesSection({ activeSourceSlug, onOpenManager }: Props) {
+export function SourcesSection({ activeSourceSlug, activeCategory, onOpenManager }: Props) {
   const sources = trpc.externalSource.list.useQuery();
   const list = sources.data ?? [];
   const active = list.find((s) => s.slug === activeSourceSlug) ?? null;
+  const activeLabel = activeCategory ?? active?.name ?? 'External sources';
+  const isActive = active != null || activeCategory != null;
 
   return (
     <section className="mb-5">
@@ -29,12 +32,12 @@ export function SourcesSection({ activeSourceSlug, onOpenManager }: Props) {
           onClick={onOpenManager}
           title="Manage external sources"
           className={`w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition border
-                      ${active
+                      ${isActive
                         ? 'bg-zinc-800/80 text-zinc-100 border-zinc-700'
                         : 'bg-zinc-900/60 text-zinc-300 border-zinc-800 hover:border-zinc-700'}`}
         >
           <YouTubeMark />
-          <span className="flex-1 truncate text-left">{active ? active.name : 'External sources'}</span>
+          <span className="flex-1 truncate text-left">{activeLabel}</span>
           {list.length > 0 && (
             <span className="text-[10px] text-zinc-500 shrink-0 tabular-nums">{list.length}</span>
           )}

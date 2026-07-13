@@ -4,24 +4,47 @@ import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { YouTubePlayer } from './YouTubePlayer';
 
+type Props = { suspended?: boolean } & (
+  | { slug: string; category?: undefined }
+  | { category: string; slug?: undefined }
+);
+
 /**
- * The external-source realm: a uniform 16:9 grid of a YouTube channel/playlist's
- * videos (deliberately NOT the masonry — different content, different
- * presentation), with infinite scroll and a click-to-embed player. Self-contained
- * so HomeClient just mounts it when a source is selected.
+ * The external-source realm: a uniform 16:9 grid of videos (deliberately NOT the
+ * masonry — different content, different presentation) with a click-to-embed
+ * player queue. Serves two shapes: a single source's videos (channel/playlist,
+ * with infinite scroll), OR a CATEGORY — one tile per single-video/live source
+ * in the group, so all the "news" (etc.) live channels sit side by side.
  */
-export function ExternalSourceView({ slug, suspended }: { slug: string; suspended?: boolean }) {
-  const source = trpc.externalSource.get.useQuery({ slug });
+export function ExternalSourceView(props: Props) {
+  const { suspended } = props;
+  const slug = 'slug' in props ? props.slug : undefined;
+  const category = 'category' in props ? props.category : undefined;
+  const isCategory = category != null;
+
+  const source = trpc.externalSource.get.useQuery({ slug: slug ?? '' }, { enabled: !!slug });
   const q = trpc.externalSource.items.useInfiniteQuery(
-    { slug },
-    { getNextPageParam: (last) => last.nextCursor, initialCursor: undefined },
+    { slug: slug ?? '' },
+    { getNextPageParam: (last) => last.nextCursor, initialCursor: undefined, enabled: !!slug },
   );
+  const cq = trpc.externalSource.categoryItems.useQuery(
+    { category: category ?? '' },
+    { enabled: isCategory },
+  );
+
   // Open player: which video the queue starts at + whether it auto-advances.
   const [player, setPlayer] = useState<{ startIndex: number; autoplay: boolean } | null>(null);
   // Where playback left off when the player was closed — powers "Resume".
   const [resume, setResume] = useState<{ index: number; autoplay: boolean } | null>(null);
 
-  const videos = q.data?.pages.flatMap((p) => p.items) ?? [];
+  const videos = isCategory
+    ? (cq.data?.items.map((i) => i.video) ?? [])
+    : (q.data?.pages.flatMap((p) => p.items) ?? []);
+  const isLoading = isCategory ? cq.isLoading : q.isLoading;
+  const isError = isCategory ? cq.isError : q.isError;
+  const errorMsg = isCategory ? cq.error?.message : q.error?.message;
+  const name = isCategory ? category : source.data?.name;
+  const label = isCategory ? 'Category' : 'External source';
 
   const openAt = (startIndex: number, autoplay: boolean) => {
     setResume(null);            // starting fresh replaces any old resume point
@@ -32,9 +55,9 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
   // to highlight its tile so you can find where the queue is.
   const currentVideoId = resume != null ? videos[resume.index]?.videoId ?? null : null;
 
-  // Switching to a different source is a fresh session — drop any open player
-  // + resume point (their indices belong to the previous source's list).
-  useEffect(() => { setPlayer(null); setResume(null); }, [slug]);
+  // Switching source/category is a fresh session — drop any open player +
+  // resume point (their indices belong to the previous list).
+  useEffect(() => { setPlayer(null); setResume(null); }, [slug, category]);
 
   // On exiting the player, scroll the highlighted tile into view so continuing
   // the queue doesn't mean hunting for it.
@@ -63,8 +86,8 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
     <div>
       <div className="mb-4 flex items-end gap-4">
         <div className="flex-1 min-w-0">
-          <div className="text-xs text-zinc-500 uppercase tracking-wider">External source</div>
-          <div className="text-lg text-zinc-100 font-medium truncate">{source.data?.name ?? '…'}</div>
+          <div className="text-xs text-zinc-500 uppercase tracking-wider">{label}</div>
+          <div className="text-lg text-zinc-100 font-medium truncate">{name ?? '…'}</div>
         </div>
         {videos.length > 0 && (
           <button
@@ -78,18 +101,20 @@ export function ExternalSourceView({ slug, suspended }: { slug: string; suspende
         )}
       </div>
 
-      {q.isError ? (
+      {isError ? (
         <div className="text-center text-rose-400/90 py-16 text-sm max-w-md mx-auto">
-          {q.error?.message ?? 'Failed to load videos.'}
+          {errorMsg ?? 'Failed to load videos.'}
         </div>
-      ) : q.isLoading ? (
+      ) : isLoading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-video rounded-lg bg-zinc-900 animate-pulse" />
           ))}
         </div>
       ) : videos.length === 0 ? (
-        <div className="text-center text-zinc-500 py-16 text-sm">No videos in this source.</div>
+        <div className="text-center text-zinc-500 py-16 text-sm">
+          {isCategory ? 'No live channels in this category yet.' : 'No videos in this source.'}
+        </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {videos.map((v, i) => {

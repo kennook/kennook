@@ -13,6 +13,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- External-source categories: group single-video / live sources into categories
+  (e.g. "news", "music", "funny") in the sources manager, then pick a category to
+  see all of those live channels together as one grid — Play All or click any tile
+  to watch, with prev/next flipping between channels. (Channels/playlists keep
+  their own video lists and aren't grouped.)
 - Add-to-playlist shortcut (`p`) in the viewer, and the playlist picker is now
   fully keyboard-navigable — ↑/↓ to choose a playlist, Enter to add, Escape to
   close — so you can file items without touching the mouse.

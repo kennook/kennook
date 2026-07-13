@@ -9,11 +9,14 @@ interface Source {
   slug: string;
   name: string;
   kind: ExternalSourceKind;
+  category?: string;
 }
 
 interface Props {
   activeSourceSlug: string | null;
+  activeCategory: string | null;
   onSelectSource: (slug: string | null) => void;
+  onSelectCategory: (category: string | null) => void;
   /** Close the panel and return to the main sidebar content. */
   onBack: () => void;
 }
@@ -24,7 +27,9 @@ interface Props {
  * by clicking away; the "‹ Back" header returns to the main sidebar). Add,
  * filter, drag-to-reorder, inline-rename, and delete, with room for full titles.
  */
-export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Props) {
+export function SourcesManager({
+  activeSourceSlug, activeCategory, onSelectSource, onSelectCategory, onBack,
+}: Props) {
   const utils = trpc.useUtils();
   const sources = trpc.externalSource.list.useQuery();
   const [adding, setAdding] = useState(false);
@@ -35,7 +40,7 @@ export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Pro
   // reorder isn't clobbered by the refetch our own mutation triggers.
   const [items, setItems] = useState<Source[]>([]);
   useEffect(() => {
-    const incoming = (sources.data ?? []).map((s) => ({ slug: s.slug, name: s.name, kind: s.kind }));
+    const incoming = (sources.data ?? []).map((s) => ({ slug: s.slug, name: s.name, kind: s.kind, category: s.category }));
     setItems((prev) => {
       const a = new Set(prev.map((s) => s.slug));
       const b = new Set(incoming.map((s) => s.slug));
@@ -56,12 +61,22 @@ export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Pro
   const rename = trpc.externalSource.rename.useMutation({
     onSuccess: () => void utils.externalSource.list.invalidate(),
   });
+  const setCategory = trpc.externalSource.setCategory.useMutation({
+    onSuccess: () => void utils.externalSource.list.invalidate(),
+  });
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? items.filter((s) => s.name.toLowerCase().includes(q)) : items;
   }, [items, query]);
   const canReorder = query.trim() === '';
+
+  // Distinct categories across single-video/live sources — the group chips.
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of items) if (s.kind === 'video' && s.category) set.add(s.category);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [items]);
 
   const [dragSlug, setDragSlug] = useState<string | null>(null);
   const [overSlug, setOverSlug] = useState<string | null>(null);
@@ -80,11 +95,17 @@ export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Pro
     setOverSlug(null);
   };
 
-  // Picking a source switches the grid AND closes the panel (you're done here).
+  // Picking a source / category switches the grid AND closes the panel.
   const pick = (slug: string | null) => { onSelectSource(slug); onBack(); };
+  const pickCategory = (c: string | null) => { onSelectCategory(c); onBack(); };
 
   return (
     <div className="flex flex-col pr-2">
+      {/* Shared datalist so each video source's category field suggests the
+          categories already in use. */}
+      <datalist id="kn-src-categories">
+        {categories.map((c) => <option key={c} value={c} />)}
+      </datalist>
       <button
         onClick={onBack}
         className="flex items-center gap-1.5 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 transition"
@@ -117,10 +138,31 @@ export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Pro
         )}
       </div>
 
+      {categories.length > 0 && (
+        <div className="px-3 pb-2">
+          <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Categories</div>
+          <div className="flex flex-wrap gap-1">
+            {categories.map((c) => (
+              <button
+                key={c}
+                onClick={() => pickCategory(c)}
+                title={`View all "${c}" live channels`}
+                className={`px-2 py-0.5 rounded-full text-xs border transition
+                            ${activeCategory === c
+                              ? 'bg-sky-500/20 text-sky-300 border-sky-600/50'
+                              : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-700'}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col">
         <Row
           label="Back to library"
-          active={activeSourceSlug === null}
+          active={activeSourceSlug === null && activeCategory === null}
           onClick={() => pick(null)}
           leading={<LibraryIcon />}
         />
@@ -146,6 +188,7 @@ export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Pro
             onDragEnd={() => { setDragSlug(null); setOverSlug(null); }}
             onOpen={() => pick(s.slug)}
             onRename={(name) => rename.mutate({ slug: s.slug, name })}
+            onSetCategory={(category) => setCategory.mutate({ slug: s.slug, category })}
             onRemove={() => remove.mutate({ slug: s.slug })}
           />
         ))}
@@ -167,7 +210,7 @@ export function SourcesManager({ activeSourceSlug, onSelectSource, onBack }: Pro
 
 function SourceRow({
   source, active, draggable, dragging, dragOver,
-  onDragStart, onDragOver, onDrop, onDragEnd, onOpen, onRename, onRemove,
+  onDragStart, onDragOver, onDrop, onDragEnd, onOpen, onRename, onSetCategory, onRemove,
 }: {
   source: Source;
   active: boolean;
@@ -180,6 +223,7 @@ function SourceRow({
   onDragEnd: () => void;
   onOpen: () => void;
   onRename: (name: string) => void;
+  onSetCategory: (category: string) => void;
   onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -190,6 +234,11 @@ function SourceRow({
     if (v && v !== source.name) onRename(v);
     setEditing(false);
   };
+
+  // Category field (single-video / live sources only) — commits on blur/Enter.
+  const [cat, setCat] = useState(source.category ?? '');
+  useEffect(() => { setCat(source.category ?? ''); }, [source.category]);
+  const commitCat = () => { if (cat.trim() !== (source.category ?? '')) onSetCategory(cat.trim()); };
 
   return (
     <div
@@ -230,6 +279,25 @@ function SourceRow({
         >
           {source.name}
         </button>
+      )}
+      {source.kind === 'video' && !editing && (
+        <input
+          list="kn-src-categories"
+          value={cat}
+          onChange={(e) => setCat(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+            else if (e.key === 'Escape') { setCat(source.category ?? ''); (e.currentTarget as HTMLInputElement).blur(); }
+          }}
+          onBlur={commitCat}
+          onMouseDown={(e) => e.stopPropagation()}
+          placeholder="category"
+          title="Group this live channel under a category"
+          className={`w-[4.5rem] shrink-0 bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[11px]
+                      text-zinc-300 outline-none focus:border-zinc-600 focus:w-24 transition-all
+                      ${cat ? 'opacity-90' : 'opacity-0 group-hover:opacity-70 focus:opacity-100'}`}
+        />
       )}
       <button
         onClick={() => { setDraft(source.name); setEditing(true); }}

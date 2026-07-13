@@ -28,6 +28,9 @@ export interface ExternalSource {
   /** The concrete playlist to page through (a channel's "uploads" playlist),
    *  resolved once at creation so fetches don't re-resolve. */
   playlistId: string;
+  /** Optional user-defined group (e.g. "news", "music") for single-video / live
+   *  sources, so they can be viewed together as a grid. */
+  category?: string;
   createdAt: number;
 }
 
@@ -113,6 +116,18 @@ export function renameExternalSource(slug: string, name: string): ExternalSource
   const src = reg.sources.find((s) => s.slug === slug);
   if (!src) return null;
   src.name = name;
+  writeRegistry(reg);
+  return src;
+}
+
+/** Assign (or clear, with null/'') a source's category. */
+export function setExternalSourceCategory(slug: string, category: string | null): ExternalSource | null {
+  const reg = readRegistry();
+  const src = reg.sources.find((s) => s.slug === slug);
+  if (!src) return null;
+  const c = (category ?? '').trim();
+  if (c) src.category = c;
+  else delete src.category;
   writeRegistry(reg);
   return src;
 }

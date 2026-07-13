@@ -8,6 +8,7 @@ import {
   removeExternalSource,
   reorderExternalSources,
   renameExternalSource,
+  setExternalSourceCategory,
 } from '@/server/external-sources';
 import { parseYouTubeUrl, resolveYouTubeSource, fetchPlaylistPage, fetchVideoAsItem } from '@/server/youtube';
 import { publishToUser, bumpDataRev } from '@/server/sync-broker';
@@ -85,6 +86,35 @@ export const externalSourceRouter = router({
       if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
       notifySidebar(ctx.userId, ctx.sessionId);
       return src;
+    }),
+
+  /** Assign a source to a category (or clear it with an empty string). */
+  setCategory: publicProcedure
+    .input(z.object({ slug: z.string(), category: z.string().trim().max(60) }))
+    .mutation(({ input, ctx }) => {
+      const src = setExternalSourceCategory(input.slug, input.category);
+      if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
+      notifySidebar(ctx.userId, ctx.sessionId);
+      return src;
+    }),
+
+  /** One video per single-video/live source in a category — the grid for that
+   *  group. Fetched in parallel; a source that fails to resolve is skipped so a
+   *  single dead stream doesn't blank the whole category. */
+  categoryItems: publicProcedure
+    .input(z.object({ category: z.string() }))
+    .query(async ({ input }) => {
+      const cat = input.category.trim().toLowerCase();
+      const sources = listExternalSources().filter(
+        (s) => s.kind === 'video' && (s.category ?? '').toLowerCase() === cat,
+      );
+      const settled = await Promise.allSettled(
+        sources.map(async (s) => ({ slug: s.slug, video: await fetchVideoAsItem(s.ref) })),
+      );
+      const items = settled
+        .filter((r): r is PromiseFulfilledResult<{ slug: string; video: Awaited<ReturnType<typeof fetchVideoAsItem>> }> => r.status === 'fulfilled')
+        .map((r) => r.value);
+      return { items };
     }),
 
   /** A page of the source's videos — cursor is the YouTube page token, shaped

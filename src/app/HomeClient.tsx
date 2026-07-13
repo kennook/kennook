@@ -320,13 +320,15 @@ function HomeContent() {
 
   // An external source (YouTube) takes over the whole view — the internal
   // library modes below are all suppressed while one is selected.
-  const inExternal = url.source != null;
+  const inCategory = url.category != null;
+  const inExternal = !inCategory && url.source != null;
+  const externalMode = inCategory || inExternal; // either external realm view
 
   // View modes derived from URL — playlist > similar > search > recent.
-  const inPlaylist = !inExternal && !!url.playlist;
-  const inSimilar = !inExternal && !inPlaylist && !!url.similar;
-  const inSearch = !inExternal && !inPlaylist && !inSimilar && url.query !== '';
-  const inRecent = !inExternal && !inPlaylist && !inSimilar && !inSearch;
+  const inPlaylist = !externalMode && !!url.playlist;
+  const inSimilar = !externalMode && !inPlaylist && !!url.similar;
+  const inSearch = !externalMode && !inPlaylist && !inSimilar && url.query !== '';
+  const inRecent = !externalMode && !inPlaylist && !inSimilar && !inSearch;
 
   const filterArgs = {
     kind: url.kind ?? undefined,
@@ -349,7 +351,7 @@ function HomeContent() {
     ...filterArgs,
     query: inSearch ? url.query : undefined,
     similarToUuid: inSimilar ? (url.similar ?? undefined) : undefined,
-  }, { enabled: !inPlaylist && !inExternal });
+  }, { enabled: !inPlaylist && !externalMode });
 
   // Person header data — only fetched when a person is selected; cheap
   // (one row from user.db). The grid query above already filters by
@@ -658,7 +660,7 @@ function HomeContent() {
 
   const onSeeSimilar = (item: MediaItemDto) => {
     url.set({
-      similar: item.uuid, query: '', playlist: null, person: null, source: null,
+      similar: item.uuid, query: '', playlist: null, person: null, source: null, category: null,
       item: null, view: null,
     });
   };
@@ -666,13 +668,13 @@ function HomeContent() {
   const clearSimilar = () => url.set({ similar: null });
 
   const handleSearchSubmit = (q: string) => {
-    url.set({ query: q, similar: q ? null : undefined, playlist: q ? null : undefined, source: q ? null : undefined });
+    url.set({ query: q, similar: q ? null : undefined, playlist: q ? null : undefined, source: q ? null : undefined, category: q ? null : undefined });
   };
 
   const handlePlaylistSelect = (uuid: string | null) => {
     // view:null clears slideshow (it's derived from view) along with the viewer.
     url.set({
-      playlist: uuid, similar: null, query: '', person: null, source: null,
+      playlist: uuid, similar: null, query: '', person: null, source: null, category: null,
       item: null, view: null,
     });
     setSelection([]);
@@ -680,17 +682,27 @@ function HomeContent() {
 
   const handlePersonSelect = (uuid: string | null) => {
     url.set({
-      person: uuid, playlist: null, similar: null, source: null,
+      person: uuid, playlist: null, similar: null, source: null, category: null,
       item: null, view: null,
     });
     setSelection([]);
   };
 
   // Select an external source (or null to return to the internal library).
-  // Clears every internal view axis so the two realms never blend.
+  // Clears every internal view axis (and the category) so realms never blend.
   const handleSelectSource = (slug: string | null) => {
     url.set({
-      source: slug, playlist: null, similar: null, query: '', person: null,
+      source: slug, category: null, playlist: null, similar: null, query: '', person: null,
+      item: null, view: null,
+    });
+    setSelection([]);
+  };
+
+  // Select an external-source CATEGORY (a group of live channels) — or null to
+  // return to the library. Clears the single-source + every internal view axis.
+  const handleSelectCategory = (category: string | null) => {
+    url.set({
+      category, source: null, playlist: null, similar: null, query: '', person: null,
       item: null, view: null,
     });
     setSelection([]);
@@ -873,6 +885,7 @@ function HomeContent() {
           />
           <SourcesSection
             activeSourceSlug={url.source}
+            activeCategory={url.category}
             onOpenManager={() => setSourcesOpen(true)}
           />
           <SavedSearchesSection />
@@ -913,7 +926,9 @@ function HomeContent() {
           <div className="w-1/2 shrink-0 pr-2">
             <SourcesManager
               activeSourceSlug={url.source}
+              activeCategory={url.category}
               onSelectSource={handleSelectSource}
+              onSelectCategory={handleSelectCategory}
               onBack={() => setSourcesOpen(false)}
             />
           </div>
@@ -923,7 +938,9 @@ function HomeContent() {
         </aside>
 
         <div className="flex-1 min-w-0">
-          {inExternal ? (
+          {inCategory ? (
+            <ExternalSourceView category={url.category!} suspended={screensaverOpen} />
+          ) : inExternal ? (
             <ExternalSourceView slug={url.source!} suspended={screensaverOpen} />
           ) : (
           <>
