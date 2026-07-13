@@ -434,8 +434,14 @@ export function MediaViewer({
     if (savedView.isLoading) return;
     lastPanUuidRef.current = item.uuid;
     const saved = savedView.data;
-    if (!saved) {
-      // No manual framing yet — default the pan to CENTRE ON THE FACES when we
+    // A saved framing that's still the trivial identity (dead-centre, zoom 1) is
+    // almost always a leftover DEFAULT row — an old open, a fit-toggle, or a zoom
+    // round-trip persisted (0, 0, 1) — not a deliberate framing. Treat it like
+    // "no framing" so faces still frame correctly on previously-opened images.
+    const trivialSaved = saved
+      && saved.x === 0 && saved.y === 0 && Math.abs(saved.zoom - 1) < 1e-6;
+    if (!saved || trivialSaved) {
+      // No real manual framing — default the pan to CENTRE ON THE FACES when we
       // have a focal point. At zoom 1 this renders as object-position within the
       // cover-overflow, so it never shows empty margins. pan.x = cw·(0.5 − focusX)
       // centres the focal point in the (source) cover box; the media's rotate()
@@ -456,7 +462,9 @@ export function MediaViewer({
       }
       setPan({ x: px, y: py });
       setZoom(1);
-      viewVersionRef.current = 0;
+      // Seed the OCC base from the leftover row (if any) so a later user framing
+      // writes on top of it correctly.
+      viewVersionRef.current = saved?.version ?? 0;
       return;
     }
     viewVersionRef.current = saved.version; // seed the OCC base from this read
