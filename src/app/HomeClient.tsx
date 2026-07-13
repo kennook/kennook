@@ -856,10 +856,19 @@ function HomeContent() {
             its content clips/slides rather than reflowing while the outer shrinks.
             Quiet-mode fade lives on the inner div so its opacity transition
             doesn't collide with the width transition here. */}
+        {/* The sticky SCROLL container is intentionally NOT zoomed — viewport
+            units (dvh) under CSS `zoom` are unreliable, so a tall sidebar (e.g. a
+            long sources list) wasn't clamped to the viewport and only its bottom
+            showed at the end of the page. Keeping max-height on an un-zoomed
+            wrapper clamps it correctly and scrolls the zoomed <aside> inside. */}
+        <div
+          className={`shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
+                     max-h-[calc(100dvh_-_5rem)] ${slideClass}
+                     ${sidebarOpen ? 'mr-6' : 'mr-0'}`}
+        >
         <aside
-          className={`kn-app-scaled shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
-                     max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
-                     ${sidebarOpen ? (sourcesOpen ? 'w-96 mr-6' : 'w-56 mr-6') : 'w-0 mr-0'}`}
+          className={`kn-app-scaled ${slideClass}
+                     ${sidebarOpen ? (sourcesOpen ? 'w-96' : 'w-56') : 'w-0'}`}
         >
           <div className="kn-sidebar-body" data-open={sidebarOpen}>
           {/* Two-pane horizontal track: the main sidebar and the sources
@@ -938,6 +947,7 @@ function HomeContent() {
           </div>
           </div>
         </aside>
+        </div>
 
         <div className="flex-1 min-w-0">
           {inCategory ? (
