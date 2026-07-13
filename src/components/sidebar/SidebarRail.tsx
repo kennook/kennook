@@ -32,8 +32,7 @@ export function SidebarRail({
   const [connectOpen, setConnectOpen] = useState(false);
 
   return (
-    <nav className={`kn-app-scaled flex flex-col ${collapsed ? 'w-14' : 'w-52'} shrink-0
-                     transition-[width] duration-200`}>
+    <nav className="flex flex-col w-full min-h-full">
       <div className="flex items-center px-2 h-10 mb-3">
         {collapsed ? (
           <span className="mx-auto grid place-items-center w-8 h-8 rounded-lg bg-zinc-100 text-zinc-900 font-bold text-sm">

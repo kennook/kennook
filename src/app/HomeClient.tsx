@@ -899,37 +899,43 @@ function HomeContent() {
             Un-zoomed scroll wrapper (dvh clamp is unreliable under CSS `zoom`);
             overflow-x-hidden clips the off-screen pane. */}
         <div
-          className="shrink-0 sticky self-start overflow-x-hidden overflow-y-auto mr-6"
-          style={{ top: headerH, maxHeight: `calc(100dvh - ${headerH}px)` }}
+          className={`shrink-0 sticky self-start overflow-hidden relative mr-6
+                     ${sbAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}
+                     ${sidebarOpen ? 'w-80' : railCollapsed ? 'w-16' : 'w-56'}`}
+          style={{ top: headerH, height: `calc(100dvh - ${headerH}px)` }}
         >
-          <div className={`kn-app-scaled ${chromeQuietClass}
-                          ${sbAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}
-                          ${sidebarOpen ? 'w-72' : railCollapsed ? 'w-16' : 'w-52'}`}>
-            <div className={`flex w-[200%] items-start
-                            ${sbAnimate ? 'transition-transform duration-300 ease-in-out' : ''}
-                            ${sidebarOpen ? '-translate-x-1/2' : ''}`}>
-              {/* Pane 1 — the rail (Level 1). */}
-              <div className="w-1/2 shrink-0">
-                <SidebarRail
-                  active={activeSection}
-                  onSelect={handleRailSelect}
-                  collapsed={railCollapsed}
-                  onToggleCollapsed={toggleRailCollapsed}
-                  hasSaved={hasSavedSearches}
-                  hasPlaylists={hasPlaylists}
-                  onOpenHelp={() => setHelpOpen(true)}
-                />
-              </div>
-              {/* Pane 2 — the active section panel (Level 2). */}
-              <div className="w-1/2 shrink-0 pr-1">
-                <button
-                  onClick={() => setSidebarOpen(false)}
-                  title="Back to menu"
-                  className="flex items-center gap-1.5 px-3 py-2 mb-1 text-sm text-zinc-400 hover:text-zinc-100 transition"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  <span>Menu</span>
-                </button>
+          {/* Rail pane (Level 1) — slides out left when a section opens. Each
+              pane is absolute + own overflow-y-auto, so a tall panel scrolls
+              WITHIN the sidebar and can never grow past it. */}
+          <div
+            className={`absolute inset-0 overflow-y-auto ${chromeQuietClass}
+                       ${sbAnimate ? 'transition-transform duration-300 ease-in-out' : ''}`}
+            style={{ transform: sidebarOpen ? 'translateX(-100%)' : 'translateX(0)' }}
+          >
+            <SidebarRail
+              active={activeSection}
+              onSelect={handleRailSelect}
+              collapsed={railCollapsed}
+              onToggleCollapsed={toggleRailCollapsed}
+              hasSaved={hasSavedSearches}
+              hasPlaylists={hasPlaylists}
+              onOpenHelp={() => setHelpOpen(true)}
+            />
+          </div>
+          {/* Panel pane (Level 2) — slides in from the right to replace the rail. */}
+          <div
+            className={`absolute inset-0 overflow-y-auto ${chromeQuietClass}
+                       ${sbAnimate ? 'transition-transform duration-300 ease-in-out' : ''}`}
+            style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(100%)' }}
+          >
+            <button
+              onClick={() => setSidebarOpen(false)}
+              title="Back to menu"
+              className="flex items-center gap-1.5 px-3 py-2 mb-1 text-sm text-zinc-400 hover:text-zinc-100 transition"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span>Menu</span>
+            </button>
               {activeSection === 'library' && (
                 <div className="flex flex-col">
                   <div className="px-1 mb-4">
@@ -985,8 +991,6 @@ function HomeContent() {
                 />
               )}
               {activeSection === 'profile' && <ProfilePanel />}
-              </div>
-            </div>
           </div>
         </div>
 

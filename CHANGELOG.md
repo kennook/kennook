@@ -98,11 +98,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
-- Sidebar now scrolls independently within the viewport, offset by the ACTUAL
-  header height (measured live) so its top no longer slips under the sticky
-  search bar on large / zoomed displays. A long list also no longer runs off the
-  bottom of the screen — the sidebar clamps to the viewport and gets its own
-  scrollbar.
+- Sidebar scrolling reworked so the second-level panel can never exceed the
+  sidebar: the rail and the panel are now absolute sliding panes each with their
+  OWN scroll, bounded to the sidebar's height (viewport minus the live-measured
+  header height). Fixes the panel running off-screen, the odd offset scrollbar,
+  and the top slipping under the sticky search bar. (The sidebar no longer uses
+  CSS `zoom`, which was the source of those glitches.)
 - Full-screen viewer chrome (the "coming up" reel + controls) no longer stays
   pinned on screen after reloading a display until you move the mouse — it now
   auto-hides reliably on a cold load.
