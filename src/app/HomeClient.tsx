@@ -205,6 +205,12 @@ function HomeContent() {
     if (s === activeSection && sidebarOpen) { toggleSidebar(); return; }
     setActiveSection(s);
     try { localStorage.setItem('kennook.rail-section', s); } catch { /* private */ }
+    // "Library" IS the internal library view — selecting it navigates back there
+    // (clears any external source/category + other view axes).
+    if (s === 'library') {
+      url.set({ source: null, category: null, playlist: null, similar: null, query: '', person: null, item: null, view: null });
+      setSelection([]);
+    }
     if (!sidebarOpen) toggleSidebar();
   };
 

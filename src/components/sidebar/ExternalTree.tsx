@@ -123,14 +123,6 @@ export function ExternalTree({ activeSourceSlug, activeCategory, onSelectSource,
         </button>
       </div>
 
-      <button
-        onClick={() => onSelectSource(null)}
-        className={`flex items-center gap-2 px-3 mx-1 py-2 rounded-md text-sm text-left
-                    ${activeSourceSlug === null && activeCategory === null ? 'bg-zinc-800/80 text-zinc-100' : 'text-zinc-300 hover:bg-zinc-900'}`}
-      >
-        <LibraryGlyph /> Back to library
-      </button>
-
       <div className="mt-1">
         {/* User categories */}
         {categories.map((cat) => {
@@ -336,4 +328,3 @@ function GroupMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () 
 function CaretIcon() { return (<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden><path d="M2 3l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" /></svg>); }
 function GripIcon() { return (<svg width="9" height="14" viewBox="0 0 10 16" aria-hidden><g fill="currentColor"><circle cx="3" cy="4" r="1" /><circle cx="7" cy="4" r="1" /><circle cx="3" cy="8" r="1" /><circle cx="7" cy="8" r="1" /><circle cx="3" cy="12" r="1" /><circle cx="7" cy="12" r="1" /></g></svg>); }
 function KebabIcon() { return (<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden><circle cx="8" cy="3" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="8" cy="13" r="1.3" /></svg>); }
-function LibraryGlyph() { return (<svg width="15" height="15" viewBox="0 0 24 24" className="shrink-0 text-zinc-500" aria-hidden><rect x="3" y="4" width="7" height="7" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.6" /><rect x="14" y="4" width="7" height="7" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.6" /><rect x="3" y="15" width="7" height="5" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.6" /><rect x="14" y="15" width="7" height="5" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>); }
