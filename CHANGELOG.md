@@ -13,6 +13,9 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- Add-to-playlist shortcut (`p`) in the viewer, and the playlist picker is now
+  fully keyboard-navigable — ↑/↓ to choose a playlist, Enter to add, Escape to
+  close — so you can file items without touching the mouse.
 - Face-aware framing: photos are now framed on the people in them. A focal point
   (the centre of the detected faces) is computed during face enrichment and used
   to anchor the thumbnail crop (so faces aren't cut off in the grid) and to

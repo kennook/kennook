@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 
 interface ItemRef {
@@ -73,6 +73,50 @@ export function AddToPlaylistDialog({ item, onClose, onAdded }: Props) {
     });
   };
 
+  // ── Keyboard navigation (no mouse required) ────────────────────────────────
+  // ↑/↓ move the highlight, Enter adds to the highlighted playlist, Escape
+  // closes (or cancels the create form). A window-level capture listener so it
+  // works the instant the dialog opens — and stopPropagation keeps the arrows /
+  // Enter / Escape from reaching the viewer's shortcuts underneath.
+  const list = playlists.data ?? [];
+  const [highlight, setHighlight] = useState(0);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Keep the highlight in range as the list loads / changes.
+  useEffect(() => {
+    setHighlight((h) => Math.max(0, Math.min(h, list.length - 1)));
+  }, [list.length]);
+
+  // Scroll the highlighted row into view.
+  useEffect(() => {
+    itemRefs.current[highlight]?.scrollIntoView({ block: 'nearest' });
+  }, [highlight]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        if (creating) { setCreating(false); setNewName(''); } else onClose();
+        return;
+      }
+      if (creating) return; // the create input owns typing / Enter
+      if (e.key === 'ArrowDown') {
+        e.preventDefault(); e.stopPropagation();
+        setHighlight((h) => Math.max(0, Math.min(h + 1, list.length - 1)));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault(); e.stopPropagation();
+        setHighlight((h) => Math.max(h - 1, 0));
+      } else if (e.key === 'Enter') {
+        e.preventDefault(); e.stopPropagation();
+        if (!submitting && list[highlight]) addTo(list[highlight].uuid);
+        else if (list.length === 0) setCreating(true);
+      }
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creating, list, highlight, submitting, onClose]);
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <button
@@ -106,18 +150,21 @@ export function AddToPlaylistDialog({ item, onClose, onAdded }: Props) {
           {playlists.isLoading && (
             <div className="px-4 py-3 text-sm text-zinc-500">Loading…</div>
           )}
-          {playlists.data?.length === 0 && !creating && (
+          {list.length === 0 && !creating && !playlists.isLoading && (
             <div className="px-4 py-6 text-sm text-zinc-500 text-center">
               No playlists yet. Create one below.
             </div>
           )}
-          {playlists.data?.map((p) => (
+          {list.map((p, i) => (
             <button
               key={p.uuid}
+              ref={(el) => { itemRefs.current[i] = el; }}
               onClick={() => addTo(p.uuid)}
+              onMouseMove={() => setHighlight(i)}
               disabled={submitting}
-              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2.5
-                         hover:bg-zinc-800 text-zinc-200 disabled:opacity-50"
+              className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2.5
+                         text-zinc-200 disabled:opacity-50
+                         ${i === highlight ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}
             >
               {p.coverThumbnailUrl ? (
                 <img

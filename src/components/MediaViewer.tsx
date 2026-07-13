@@ -864,6 +864,11 @@ export function MediaViewer({
   }, { enabled: !!item && maxed });
   // Toggle the details/info sidebar (same as the (i) toolbar button).
   useShortcut('viewer.toggleInfo', () => toggleInfo(), { enabled: !!item && maxed });
+  // Add the current item to a playlist (opens the keyboard-navigable picker).
+  useShortcut('viewer.addToPlaylist', () => {
+    if (item && onAddToPlaylist) onAddToPlaylist(item);
+    pulseChrome();
+  }, { enabled: !!item && !!onAddToPlaylist });
   useShortcut('viewer.trimStart', () => {
     if (!item) return;
     setTrimMutation.mutate({

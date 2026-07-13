@@ -48,6 +48,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'viewer.slideshowFaster', label: 'Slideshow: speed up',  category: 'viewer', defaultKeys: ['.'], description: 'Slideshow mode only · −1s per photo' },
   { id: 'viewer.loopVideo', label: 'Slideshow: loop video', category: 'viewer', defaultKeys: ['r', 'R'], description: 'Slideshow mode only · repeat the current video instead of advancing' },
   { id: 'viewer.toggleInfo', label: 'Toggle info panel', category: 'viewer', defaultKeys: ['i', 'I'], description: 'Details / tags / bookmarks sidebar' },
+  { id: 'viewer.addToPlaylist', label: 'Add to playlist', category: 'viewer', defaultKeys: ['p', 'P'], description: 'Opens the playlist picker — ↑/↓ to choose, Enter to add' },
   { id: 'viewer.addTag', label: 'Add tag', category: 'viewer', defaultKeys: ['t', 'T'], description: 'Opens the tag input; stays open as you add tags — Escape to finish' },
   { id: 'viewer.addBookmark', label: 'Add bookmark (tags)', category: 'viewer', defaultKeys: ['b', 'B'], description: 'Video · opens the tag input at the current moment' },
   { id: 'viewer.trimStart', label: 'Set trim start (in)', category: 'viewer', defaultKeys: ['['], description: 'Video · autoplay starts here' },
