@@ -6,10 +6,10 @@
  * and videos alike. Not timestamped (unlike bookmarks); these plug straight
  * into the tag facets + search that already exist.
  *
- * `focusSignal` (bumped by the parent's Add-tag shortcut) focuses the input;
- * `onDone` fires when the user finishes a shortcut-initiated add (submitted or
- * cancelled with Escape) so the parent can auto-close the panel — mirroring the
- * bookmark add flow.
+ * `focusSignal` (bumped by the parent's Add-tag shortcut) focuses the input.
+ * Adding a tag (Enter) keeps the panel open + the field focused so you can add
+ * several; `onDone` fires only on Escape (which also blurs) so the parent closes
+ * the panel — and the released focus lets the next `i`/shortcut work again.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -23,7 +23,9 @@ interface Props {
   librarySlug: string;
   /** Bump to focus the tag input (the Add-tag shortcut does this). */
   focusSignal?: number;
-  /** Fired when a shortcut-initiated add finishes (submit or Escape). */
+  /** Fired when the user finishes tagging (Escape) so the parent can close the
+   *  panel. Adding a tag (Enter) does NOT fire this — the panel stays open for
+   *  the next tag. */
   onDone?: () => void;
 }
 
@@ -63,7 +65,10 @@ export function VideoTags({ uuid, librarySlug, focusSignal, onDone }: Props) {
     if (!names.length) return;
     for (const name of names) addTag.mutate({ uuid, librarySlug, name });
     setInput('');
-    onDone?.(); // finished adding — let the parent close the panel if it opened for this
+    // Keep the panel open + the field focused so you can add another tag; the
+    // user finishes with Escape (onDone). Closing here would leave the hidden
+    // field focused and swallow the next `i`/shortcut keypress.
+    inputRef.current?.focus();
   };
 
   const list = tags.data ?? [];

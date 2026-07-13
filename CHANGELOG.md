@@ -28,6 +28,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 ### Changed
 - External sources now show a compact per-kind icon (channel / playlist / video)
   instead of the "CHANNEL/VIDEO" text label, leaving room for the full title.
+- Add-tag flow: adding a tag with Enter now keeps the info panel open with the
+  field focused so you can add several tags in a row; Escape finishes and closes.
+  (Previously Enter closed the panel but left the hidden field focused, which
+  swallowed the next keypress — e.g. `i` typed into the field instead of
+  reopening the panel.)
 
 ## [0.3.2] - 2026-07-12
 
