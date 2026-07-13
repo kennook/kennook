@@ -435,7 +435,25 @@ export function MediaViewer({
     lastPanUuidRef.current = item.uuid;
     const saved = savedView.data;
     if (!saved) {
-      setPan({ x: 0, y: 0 });
+      // No manual framing yet — default the pan to CENTRE ON THE FACES when we
+      // have a focal point (photos only; skipped for rotated items since the
+      // focus is in unrotated pixel space). At zoom 1 this renders as
+      // object-position within the cover-overflow, so it never shows empty
+      // margins. pan.x = cw·(0.5 − focusX) shifts the focal point to centre.
+      let px = 0, py = 0;
+      if (item.focusX != null && item.focusY != null && !item.rotation
+          && item.width && item.height && typeof window !== 'undefined') {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const r = item.width / item.height;
+        const vr = vw / vh;
+        const cw = r > vr ? vh * r : vw;
+        const ch = r > vr ? vh : vw / r;
+        const mx = Math.max(0, (cw - vw) / 2);
+        const my = Math.max(0, (ch - vh) / 2);
+        px = Math.max(-mx, Math.min(mx, cw * (0.5 - item.focusX)));
+        py = Math.max(-my, Math.min(my, ch * (0.5 - item.focusY)));
+      }
+      setPan({ x: px, y: py });
       setZoom(1);
       viewVersionRef.current = 0;
       return;

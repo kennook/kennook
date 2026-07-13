@@ -36,6 +36,10 @@ interface MediaCardProps {
   height?: number | null;
   /** Client-applied rotation override in degrees (0/90/180/270). */
   rotation?: number;
+  /** Face-aware focal point (0..1). When set (and unrotated) the cover-crop is
+   *  anchored here via object-position so faces aren't cropped out. */
+  focusX?: number | null;
+  focusY?: number | null;
   nsfwScore?: number;
   violenceScore?: number;
   /** Manual sensitivity override: null = auto, 1 = forced sensitive, 0 = safe. */
@@ -68,6 +72,8 @@ export function MediaCard({
   width,
   height,
   rotation = 0,
+  focusX = null,
+  focusY = null,
   nsfwScore = 0,
   violenceScore = 0,
   sensitiveOverride = null,
@@ -162,7 +168,15 @@ export function MediaCard({
           loading="lazy"
           className={`absolute inset-0 h-full w-full object-cover transition
                       ${selected ? 'scale-95 brightness-75' : 'group-hover:scale-[1.02]'}`}
-          style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
+          // Anchor the cover-crop on the faces (object-position) when we have a
+          // focal point. Only for unrotated tiles — object-position is in the
+          // pre-transform box, so it'd fight a rotate(); rotated tiles stay centred.
+          style={{
+            ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
+            ...(!rotation && focusX != null && focusY != null
+              ? { objectPosition: `${(focusX * 100).toFixed(1)}% ${(focusY * 100).toFixed(1)}%` }
+              : {}),
+          }}
           // If the frame-at-timestamp 256px JPEG isn't on disk (e.g. legacy
           // occurrences from before enrich-video-text shipped), fall back
           // to the item's main thumbnail.

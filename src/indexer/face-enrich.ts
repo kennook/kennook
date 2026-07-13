@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 import { getRawSqlite } from '@/db/client';
 import { parseRootPath, resolveMediaPath } from '@/server/storage';
-import { detectFaces, faceEmbeddingToBuffer, FRONTAL_MAX_ASYMMETRY } from '@/ai/face';
+import { detectFaces, faceEmbeddingToBuffer, faceFocusPoint, FRONTAL_MAX_ASYMMETRY } from '@/ai/face';
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
@@ -61,6 +61,8 @@ interface PendingRow {
   filename: string;
   rel_path: string;
   storage_config: string;
+  width: number | null;
+  height: number | null;
 }
 
 async function main() {
@@ -78,7 +80,8 @@ async function main() {
 
   const limitClause = args.limit ? `LIMIT ${args.limit}` : '';
   const pending = sqlite.prepare(`
-    SELECT m.id, m.uuid, m.filename, m.path AS rel_path, sl.config AS storage_config
+    SELECT m.id, m.uuid, m.filename, m.path AS rel_path, sl.config AS storage_config,
+           m.width, m.height
     FROM media_items m
     JOIN storage_locations sl ON sl.id = m.storage_location_id
     WHERE m.kind = 'photo'
@@ -106,6 +109,11 @@ async function main() {
   `);
   const markStatus = sqlite.prepare(`
     UPDATE media_items SET face_status = ? WHERE id = ?
+  `);
+  // Face-aware default framing: centre of the union of the stored (quality-gated)
+  // faces, normalized. NULL clears it (e.g. re-run that now finds no faces).
+  const setFocus = sqlite.prepare(`
+    UPDATE media_items SET face_focus_x = ?, face_focus_y = ? WHERE id = ?
   `);
 
   let done = 0;
@@ -158,6 +166,8 @@ async function main() {
           insertEmbedding.run(faceId, faceEmbeddingToBuffer(f.embedding));
         }
         markStatus.run(detected.length > 0 ? 'done' : 'no-faces', row.id);
+        const focus = faceFocusPoint(detected, row.width, row.height);
+        setFocus.run(focus?.x ?? null, focus?.y ?? null, row.id);
         sqlite.exec('COMMIT');
       } catch (e) {
         sqlite.exec('ROLLBACK');

@@ -44,6 +44,8 @@ interface MediaItemRow {
   nsfw_score: number;
   violence_score: number;
   sensitive_override: number | null;
+  face_focus_x: number | null;
+  face_focus_y: number | null;
 }
 
 const itemRefSchema = z.object({
@@ -117,6 +119,7 @@ export const playlistRouter = router({
             SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                    m.captured_at, m.captured_place, m.camera_make, m.camera_model,
                    m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
+                   m.face_focus_x, m.face_focus_y,
                    ${LIKE_COUNT_EXPR}
             FROM media_items m
             WHERE m.uuid = ? AND m.deleted_at IS NULL
@@ -351,6 +354,8 @@ function rowToDto(row: MediaItemRow, librarySlug: string) {
     sizeBytes: row.size_bytes,
     likeCount: row.like_count,
     rotation: row.rotation ?? 0,
+    focusX: row.face_focus_x ?? null,
+    focusY: row.face_focus_y ?? null,
     nsfwScore: row.nsfw_score ?? 0,
     violenceScore: row.violence_score ?? 0,
     sensitiveOverride: row.sensitive_override ?? null,

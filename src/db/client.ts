@@ -74,7 +74,7 @@ export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userI
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 29;
+const LATEST_SCHEMA_VERSION = 30;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -641,6 +641,36 @@ function applyMigrations(sqlite: DatabaseSync) {
       ) WITHOUT ROWID;
     `);
     version = 29;
+  }
+
+  // ── v30: face-aware default framing. A normalized focal point (centre of the
+  // union of an item's face boxes, 0..1 of width/height) so the UI can crop
+  // thumbnails onto faces and default the viewer's pan there. NULL when the item
+  // has no faces. Computed at face-enrich time; backfilled once here from any
+  // faces already detected (a single grouped UPDATE — cheap even on big libs).
+  if (version < 30) {
+    let added = false;
+    try {
+      sqlite.exec('ALTER TABLE media_items ADD COLUMN face_focus_x REAL');
+      sqlite.exec('ALTER TABLE media_items ADD COLUMN face_focus_y REAL');
+      added = true;
+    } catch { /* columns already exist */ }
+    if (added) {
+      sqlite.exec(`
+        UPDATE media_items
+           SET face_focus_x = min(1.0, max(0.0, s.cx / media_items.width)),
+               face_focus_y = min(1.0, max(0.0, s.cy / media_items.height))
+          FROM (
+            SELECT media_item_id,
+                   (min(bbox_x) + max(bbox_x + bbox_w)) / 2.0 AS cx,
+                   (min(bbox_y) + max(bbox_y + bbox_h)) / 2.0 AS cy
+              FROM media_faces GROUP BY media_item_id
+          ) AS s
+         WHERE media_items.id = s.media_item_id
+           AND media_items.width > 0 AND media_items.height > 0
+      `);
+    }
+    version = 30;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

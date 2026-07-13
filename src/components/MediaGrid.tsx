@@ -36,6 +36,11 @@ export interface MediaItemDto {
   communityLikeCount: number;
   /** Client-applied rotation override in degrees (0/90/180/270). */
   rotation: number;
+  /** Face-aware focal point (0..1 of width/height) — centre of the item's
+   *  faces, for framing thumbnails + defaulting the viewer's pan. null when the
+   *  item has no detected faces. */
+  focusX: number | null;
+  focusY: number | null;
   /** Raw sensitive-content scores in [0, 1]. Client compares against the
    *  shared thresholds in `lib/sensitive-thresholds.ts` to decide whether
    *  to show a badge. */
@@ -210,6 +215,8 @@ function GridCell({ data }: { index: number; data: Cell; width: number }) {
       durationMs={item.durationMs}
       width={item.width}
       height={item.height}
+      focusX={item.focusX}
+      focusY={item.focusY}
       score={item.scores?.final}
       selected={selected}
       selectionMode={ref.current.selectionMode}

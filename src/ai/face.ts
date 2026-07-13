@@ -58,6 +58,29 @@ export interface DetectedFace {
 /** Faces above this yaw asymmetry are too non-frontal to embed reliably. */
 export const FRONTAL_MAX_ASYMMETRY = 0.35;
 
+/**
+ * Normalized focal point (0..1 of width/height) for framing an image on its
+ * faces — the centre of the UNION of all face boxes, so a group photo keeps
+ * everyone roughly in frame rather than biasing to one face. Returns null when
+ * there are no faces or the dimensions are unknown.
+ */
+export function faceFocusPoint(
+  faces: Array<{ bbox: { x: number; y: number; width: number; height: number } }>,
+  width: number | null,
+  height: number | null,
+): { x: number; y: number } | null {
+  if (!faces.length || !width || !height || width <= 0 || height <= 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const f of faces) {
+    minX = Math.min(minX, f.bbox.x);
+    minY = Math.min(minY, f.bbox.y);
+    maxX = Math.max(maxX, f.bbox.x + f.bbox.width);
+    maxY = Math.max(maxY, f.bbox.y + f.bbox.height);
+  }
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  return { x: clamp((minX + maxX) / 2 / width), y: clamp((minY + maxY) / 2 / height) };
+}
+
 // ── Model loading ───────────────────────────────────────────────────────────
 async function fileExists(p: string): Promise<boolean> {
   try { await fs.stat(p); return true; } catch { return false; }

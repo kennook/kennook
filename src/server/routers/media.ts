@@ -36,6 +36,8 @@ interface MediaRow {
   nsfw_score: number;
   violence_score: number;
   sensitive_override: number | null;
+  face_focus_x: number | null;
+  face_focus_y: number | null;
 }
 
 export const MAX_LIKES = 5;
@@ -571,6 +573,7 @@ export const mediaRouter = router({
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
                m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
+               m.face_focus_x, m.face_focus_y,
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE ${where}
@@ -600,6 +603,7 @@ export const mediaRouter = router({
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
                m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
+               m.face_focus_x, m.face_focus_y,
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE m.id = ? AND m.user_id = ? AND m.deleted_at IS NULL
@@ -675,6 +679,7 @@ export const mediaRouter = router({
         SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                m.captured_at, m.captured_place, m.camera_make, m.camera_model,
                m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
+               m.face_focus_x, m.face_focus_y,
                ${LIKE_COUNT_EXPR}
         FROM media_items m
         WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
@@ -769,6 +774,7 @@ export const mediaRouter = router({
           SELECT m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
                  m.captured_at, m.captured_place, m.camera_make, m.camera_model,
                  m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
+               m.face_focus_x, m.face_focus_y,
                  ${LIKE_COUNT_EXPR}
           FROM media_items m
           WHERE m.uuid = ? AND m.user_id = ? AND m.deleted_at IS NULL
@@ -1577,6 +1583,10 @@ function rowToDto(row: MediaRow, librarySlug: string) {
     communityLikeAvg: row.like_avg,
     communityLikeCount: row.like_raters,
     rotation: row.rotation,
+    // Face-aware default framing (0..1 of width/height). null when the item has
+    // no detected faces — the UI falls back to centre.
+    focusX: row.face_focus_x,
+    focusY: row.face_focus_y,
     nsfwScore: row.nsfw_score,
     violenceScore: row.violence_score,
     sensitiveOverride: row.sensitive_override,

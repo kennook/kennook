@@ -13,6 +13,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- Face-aware framing: photos are now framed on the people in them. A focal point
+  (the centre of the detected faces) is computed during face enrichment and used
+  to anchor the thumbnail crop (so faces aren't cut off in the grid) and to
+  default the full-screen viewer's pan onto the faces. Your manual framing still
+  overrides, and items without faces stay centred.
 - External sources manager: a second sidebar layer that slides over the sidebar
   column (opened from the "Sources" button) to add, filter, drag-to-reorder,
   rename, and delete your YouTube sources — replacing the cramped dropdown once
