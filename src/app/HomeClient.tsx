@@ -352,6 +352,7 @@ function HomeContent() {
     trpcUtils.playlist.get.invalidate();
     trpcUtils.savedSearch.list.invalidate();
     trpcUtils.externalSource.list.invalidate();
+    trpcUtils.externalSource.categoryItems.invalidate();
   });
 
   // Quietly warm the browser cache with the screensaver video during idle

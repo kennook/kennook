@@ -37,9 +37,12 @@ export function ExternalSourceView(props: Props) {
   // Where playback left off when the player was closed — powers "Resume".
   const [resume, setResume] = useState<{ index: number; autoplay: boolean } | null>(null);
 
+  // Each tile needs a STABLE, UNIQUE key. In category mode two sources can point
+  // at the same video (or the same live stream added twice), so key by the
+  // source slug there; in source mode the videoId is unique within a playlist.
   const videos = isCategory
-    ? (cq.data?.items.map((i) => i.video) ?? [])
-    : (q.data?.pages.flatMap((p) => p.items) ?? []);
+    ? (cq.data?.items.map((i) => ({ ...i.video, key: i.slug })) ?? [])
+    : (q.data?.pages.flatMap((p) => p.items).map((v) => ({ ...v, key: v.videoId })) ?? []);
   const isLoading = isCategory ? cq.isLoading : q.isLoading;
   const isError = isCategory ? cq.isError : q.isError;
   const errorMsg = isCategory ? cq.error?.message : q.error?.message;
@@ -121,7 +124,7 @@ export function ExternalSourceView(props: Props) {
             const isCurrent = currentVideoId === v.videoId;
             return (
               <button
-                key={v.videoId}
+                key={v.key}
                 ref={isCurrent ? currentTileRef : undefined}
                 onClick={() => openAt(i, false)}
                 className="group text-left"

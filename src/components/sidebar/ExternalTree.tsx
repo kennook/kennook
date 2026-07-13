@@ -39,13 +39,19 @@ export function ExternalTree({ activeSourceSlug, activeCategory, onSelectSource,
     });
   }, [q.data]);
 
-  const move = trpc.externalSource.move.useMutation({ onSuccess: () => void utils.externalSource.list.invalidate() });
+  // Any structural change also invalidates the category grid (categoryItems), or
+  // a viewed category would show a stale/merged set from an earlier fetch.
+  const refresh = () => {
+    void utils.externalSource.list.invalidate();
+    void utils.externalSource.categoryItems.invalidate();
+  };
+  const move = trpc.externalSource.move.useMutation({ onSuccess: refresh });
   const remove = trpc.externalSource.remove.useMutation({
-    onSuccess: (_d, v) => { void utils.externalSource.list.invalidate(); if (v.slug === activeSourceSlug) onSelectSource(null); },
+    onSuccess: (_d, v) => { refresh(); if (v.slug === activeSourceSlug) onSelectSource(null); },
   });
-  const rename = trpc.externalSource.rename.useMutation({ onSuccess: () => void utils.externalSource.list.invalidate() });
-  const renameCat = trpc.externalSource.renameCategory.useMutation({ onSuccess: () => void utils.externalSource.list.invalidate() });
-  const deleteCat = trpc.externalSource.deleteCategory.useMutation({ onSuccess: () => void utils.externalSource.list.invalidate() });
+  const rename = trpc.externalSource.rename.useMutation({ onSuccess: refresh });
+  const renameCat = trpc.externalSource.renameCategory.useMutation({ onSuccess: refresh });
+  const deleteCat = trpc.externalSource.deleteCategory.useMutation({ onSuccess: refresh });
 
   const [adding, setAdding] = useState(false);
   const [pendingCats, setPendingCats] = useState<string[]>([]);
