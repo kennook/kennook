@@ -38,6 +38,8 @@ Anything under **Upgrade notes** requires action on the operator's part
   instead of the "CHANNEL/VIDEO" text label, leaving room for the full title.
 - The sidebar now widens when the sources manager is open, so source titles and
   the category field have room instead of being cramped in the narrow column.
+- Each source's actions (rename, set category, remove) moved into a per-row kebab
+  (⋮) menu, so the row is just the drag handle, kind icon, and full title.
 - Add-tag flow: adding a tag with Enter now keeps the info panel open with the
   field focused so you can add several tags in a row; Escape finishes and closes.
   (Previously Enter closed the panel but left the hidden field focused, which

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { trpc } from '@/lib/trpc-client';
 import type { ExternalSourceKind } from '@/server/external-sources';
@@ -226,19 +226,24 @@ function SourceRow({
   onSetCategory: (category: string) => void;
   onRemove: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(source.name);
+  // A single inline edit slot — either the name (rename) or the category, chosen
+  // from the kebab menu. Keeps the row itself down to grip · icon · name · ⋮.
+  const [editMode, setEditMode] = useState<null | 'name' | 'category'>(null);
+  const [nameDraft, setNameDraft] = useState(source.name);
+  const [catDraft, setCatDraft] = useState(source.category ?? '');
+  useEffect(() => { setCatDraft(source.category ?? ''); }, [source.category]);
+  const editing = editMode !== null;
 
-  const commit = () => {
-    const v = draft.trim();
+  const commitName = () => {
+    const v = nameDraft.trim();
     if (v && v !== source.name) onRename(v);
-    setEditing(false);
+    setEditMode(null);
   };
-
-  // Category field (single-video / live sources only) — commits on blur/Enter.
-  const [cat, setCat] = useState(source.category ?? '');
-  useEffect(() => { setCat(source.category ?? ''); }, [source.category]);
-  const commitCat = () => { if (cat.trim() !== (source.category ?? '')) onSetCategory(cat.trim()); };
+  const commitCat = () => {
+    const v = catDraft.trim();
+    if (v !== (source.category ?? '')) onSetCategory(v);
+    setEditMode(null);
+  };
 
   return (
     <div
@@ -258,62 +263,121 @@ function SourceRow({
         </span>
       )}
       <KindIcon kind={source.kind} />
-      {editing ? (
+      {editMode === 'name' ? (
         <input
           autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          value={nameDraft}
+          onChange={(e) => setNameDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            else if (e.key === 'Escape') { setDraft(source.name); setEditing(false); }
+            if (e.key === 'Enter') commitName();
+            else if (e.key === 'Escape') { setNameDraft(source.name); setEditMode(null); }
           }}
-          onBlur={commit}
+          onBlur={commitName}
+          className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-1.5 py-1 my-1 text-sm outline-none focus:border-zinc-500"
+        />
+      ) : editMode === 'category' ? (
+        <input
+          autoFocus
+          list="kn-src-categories"
+          value={catDraft}
+          onChange={(e) => setCatDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitCat();
+            else if (e.key === 'Escape') { setCatDraft(source.category ?? ''); setEditMode(null); }
+          }}
+          onBlur={commitCat}
+          placeholder="category (e.g. news)"
           className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-1.5 py-1 my-1 text-sm outline-none focus:border-zinc-500"
         />
       ) : (
         <button
           onClick={onOpen}
-          onDoubleClick={() => { setDraft(source.name); setEditing(true); }}
+          onDoubleClick={() => { setNameDraft(source.name); setEditMode('name'); }}
           title={source.name}
           className={`flex-1 min-w-0 text-left py-2 text-sm truncate ${active ? 'text-zinc-100' : 'text-zinc-300'}`}
         >
           {source.name}
+          {source.category && (
+            <span className="ml-1.5 text-[10px] text-zinc-500">· {source.category}</span>
+          )}
         </button>
       )}
-      {source.kind === 'video' && !editing && (
-        <input
-          list="kn-src-categories"
-          value={cat}
-          onChange={(e) => setCat(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
-            else if (e.key === 'Escape') { setCat(source.category ?? ''); (e.currentTarget as HTMLInputElement).blur(); }
-          }}
-          onBlur={commitCat}
-          onMouseDown={(e) => e.stopPropagation()}
-          placeholder="category"
-          title="Group this live channel under a category"
-          className={`w-[4.5rem] shrink-0 bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[11px]
-                      text-zinc-300 outline-none focus:border-zinc-600 focus:w-24 transition-all
-                      ${cat ? 'opacity-90' : 'opacity-0 group-hover:opacity-70 focus:opacity-100'}`}
+      {!editing && (
+        <RowMenu
+          canCategory={source.kind === 'video'}
+          onRename={() => { setNameDraft(source.name); setEditMode('name'); }}
+          onCategory={() => { setCatDraft(source.category ?? ''); setEditMode('category'); }}
+          onRemove={onRemove}
         />
       )}
-      <button
-        onClick={() => { setDraft(source.name); setEditing(true); }}
-        title="Rename"
-        className="text-zinc-600 hover:text-zinc-200 opacity-0 group-hover:opacity-100 px-0.5 shrink-0"
-      >
-        <PencilIcon />
-      </button>
-      <button
-        onClick={onRemove}
-        title="Remove source"
-        className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 px-1 text-base leading-none shrink-0"
-      >
-        ×
-      </button>
     </div>
+  );
+}
+
+/** Per-source kebab (⋮) menu — Rename / Category / Remove. Portaled to <body>
+ *  and positioned at the button so the sidebar's overflow can't clip it. */
+function RowMenu({
+  canCategory, onRename, onCategory, onRemove,
+}: {
+  canCategory: boolean;
+  onRename: () => void;
+  onCategory: () => void;
+  onRemove: () => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const open = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, left: Math.max(8, r.right - 180) });
+  };
+  const close = () => setPos(null);
+
+  useEffect(() => {
+    if (!pos) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pos]);
+
+  const item = 'w-full text-left px-3 py-2 text-sm hover:bg-zinc-800 flex items-center gap-2.5';
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => (pos ? close() : open())}
+        onMouseDown={(e) => e.stopPropagation()}
+        title="More actions"
+        aria-label="More actions"
+        className="text-zinc-600 hover:text-zinc-100 hover:bg-zinc-800 rounded px-1 py-1 shrink-0 transition"
+      >
+        <KebabIcon />
+      </button>
+      {pos && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0 z-[75]" onMouseDown={close} />
+          <div
+            style={{ top: pos.top, left: pos.left }}
+            className="fixed z-[76] w-44 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1"
+          >
+            <button className={`${item} text-zinc-200`} onClick={() => { close(); onRename(); }}>
+              <PencilIcon /> Rename
+            </button>
+            {canCategory && (
+              <button className={`${item} text-zinc-200`} onClick={() => { close(); onCategory(); }}>
+                <FolderIcon /> Set category
+              </button>
+            )}
+            <div className="border-t border-zinc-800 my-1" />
+            <button className={`${item} text-red-300 hover:bg-red-950/40 hover:text-red-200`} onClick={() => { close(); onRemove(); }}>
+              <TrashIcon /> Remove
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -386,6 +450,30 @@ function PencilIcon() {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
       <path d="M4 20h4L18 10l-4-4L4 16z" strokeLinejoin="round" />
       <path d="M13 6l4 4" />
+    </svg>
+  );
+}
+
+function KebabIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <circle cx="8" cy="3" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="8" cy="13" r="1.4" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+      <path d="M4 7h16M9 7V5h6v2M6 7l1 12h10l1-12" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
