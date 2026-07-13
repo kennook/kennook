@@ -168,12 +168,13 @@ export function MediaCard({
           loading="lazy"
           className={`absolute inset-0 h-full w-full object-cover transition
                       ${selected ? 'scale-95 brightness-75' : 'group-hover:scale-[1.02]'}`}
-          // Anchor the cover-crop on the faces (object-position) when we have a
-          // focal point. Only for unrotated tiles — object-position is in the
-          // pre-transform box, so it'd fight a rotate(); rotated tiles stay centred.
+          // Anchor the cover-crop on the faces (object-position). This is applied
+          // in the pre-transform (source) box, and any rotate() pivots around the
+          // tile centre — so biasing the crop toward the faces keeps them in view
+          // for rotated tiles too, no coordinate swap needed.
           style={{
             ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
-            ...(!rotation && focusX != null && focusY != null
+            ...(focusX != null && focusY != null
               ? { objectPosition: `${(focusX * 100).toFixed(1)}% ${(focusY * 100).toFixed(1)}%` }
               : {}),
           }}

@@ -436,12 +436,13 @@ export function MediaViewer({
     const saved = savedView.data;
     if (!saved) {
       // No manual framing yet — default the pan to CENTRE ON THE FACES when we
-      // have a focal point (photos only; skipped for rotated items since the
-      // focus is in unrotated pixel space). At zoom 1 this renders as
-      // object-position within the cover-overflow, so it never shows empty
-      // margins. pan.x = cw·(0.5 − focusX) shifts the focal point to centre.
+      // have a focal point. At zoom 1 this renders as object-position within the
+      // cover-overflow, so it never shows empty margins. pan.x = cw·(0.5 − focusX)
+      // centres the focal point in the (source) cover box; the media's rotate()
+      // pivots around that same centre, so this stays correct for rotated photos
+      // without transforming the coordinates.
       let px = 0, py = 0;
-      if (item.focusX != null && item.focusY != null && !item.rotation
+      if (item.focusX != null && item.focusY != null
           && item.width && item.height && typeof window !== 'undefined') {
         const vw = window.innerWidth, vh = window.innerHeight;
         const r = item.width / item.height;
