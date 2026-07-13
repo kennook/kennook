@@ -140,10 +140,19 @@ function HomeContent() {
   const [quietMode, setQuietMode] = useState(false);
   // Collapsible filters/facets sidebar. Default open; persisted per-browser.
   // Hydrated from localStorage after mount to avoid an SSR/client mismatch.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Panel open = the Level-2 section panel is slid into place (over the rail).
+  // Default closed (rail shown); remembered per browser.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   useEffect(() => {
     const v = localStorage.getItem('kennook.sidebar-open');
     if (v !== null) setSidebarOpen(v === '1');
+  }, []);
+  // Gate the slide/width transitions until after first paint so the localStorage
+  // hydration (open state, rail-collapsed) snaps in without an animate-on-load.
+  const [sbAnimate, setSbAnimate] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setSbAnimate(true));
+    return () => cancelAnimationFrame(id);
   }, []);
   const toggleSidebar = () => setSidebarOpen((v) => {
     const next = !v;
@@ -868,26 +877,40 @@ function HomeContent() {
       </header>
 
       <div className="px-4 py-5 flex">
-        {/* Two-level sidebar. Each column is its own sticky, un-zoomed scroll
-            container (dvh clamp is unreliable under CSS `zoom`), with the zoomed
-            content inside — so each scrolls independently within the viewport.
-            Level 1 — thin, collapsible rail: */}
-        <div className="shrink-0 sticky top-20 self-start max-h-[calc(100dvh_-_5rem)] overflow-y-auto mr-3">
-          <SidebarRail
-            active={activeSection}
-            onSelect={handleRailSelect}
-            collapsed={railCollapsed}
-            onToggleCollapsed={toggleRailCollapsed}
-            hasSaved={hasSavedSearches}
-            hasPlaylists={hasPlaylists}
-            onOpenHelp={() => setHelpOpen(true)}
-          />
-        </div>
-
-        {/* Level 2 — wide contextual panel for the active rail section. */}
-        {sidebarOpen && (
-          <div className="shrink-0 sticky top-20 self-start max-h-[calc(100dvh_-_5rem)] overflow-y-auto mr-6 w-72">
-            <div className={`kn-app-scaled ${chromeQuietClass}`}>
+        {/* Two-level sidebar as ONE viewport: the thin rail (Level 1) and the
+            wide section panel (Level 2) sit side by side in a track; picking a
+            section slides the panel in to REPLACE the rail, "Menu" slides back.
+            Un-zoomed scroll wrapper (dvh clamp is unreliable under CSS `zoom`);
+            overflow-x-hidden clips the off-screen pane. */}
+        <div className="shrink-0 sticky top-20 self-start max-h-[calc(100dvh_-_5rem)] overflow-x-hidden overflow-y-auto mr-6">
+          <div className={`kn-app-scaled ${chromeQuietClass}
+                          ${sbAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}
+                          ${sidebarOpen ? 'w-72' : railCollapsed ? 'w-16' : 'w-52'}`}>
+            <div className={`flex w-[200%] items-start
+                            ${sbAnimate ? 'transition-transform duration-300 ease-in-out' : ''}
+                            ${sidebarOpen ? '-translate-x-1/2' : ''}`}>
+              {/* Pane 1 — the rail (Level 1). */}
+              <div className="w-1/2 shrink-0">
+                <SidebarRail
+                  active={activeSection}
+                  onSelect={handleRailSelect}
+                  collapsed={railCollapsed}
+                  onToggleCollapsed={toggleRailCollapsed}
+                  hasSaved={hasSavedSearches}
+                  hasPlaylists={hasPlaylists}
+                  onOpenHelp={() => setHelpOpen(true)}
+                />
+              </div>
+              {/* Pane 2 — the active section panel (Level 2). */}
+              <div className="w-1/2 shrink-0 pr-1">
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  title="Back to menu"
+                  className="flex items-center gap-1.5 px-3 py-2 mb-1 text-sm text-zinc-400 hover:text-zinc-100 transition"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  <span>Menu</span>
+                </button>
               {activeSection === 'library' && (
                 <div className="flex flex-col">
                   <div className="px-1 mb-4">
@@ -943,9 +966,10 @@ function HomeContent() {
                 />
               )}
               {activeSection === 'profile' && <ProfilePanel />}
+              </div>
             </div>
           </div>
-        )}
+        </div>
 
         <div className="flex-1 min-w-0">
           {inCategory ? (

@@ -13,14 +13,14 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
-- Redesigned sidebar as a **two-level layout**: a thin, collapsible **rail**
-  (toggle between icon-only and icon + label, remembered) for top-level
-  navigation — Saved searches, Playlists, Library, External sources, plus
-  Connect-a-device, Keyboard shortcuts, Admin, and Profile — and a wide
-  **contextual panel** that shows the selected section's content (library filters
-  & facets, the sources tree, a playlists/saved-searches list, or the profile
-  menu). Each column scrolls independently. Replaces the single cramped column
-  (and fixes the facets-vs-tools overlap).
+- Redesigned sidebar as a **two-level, single-viewport** layout: a thin,
+  collapsible **rail** (toggle between icon-only and icon + label, remembered)
+  for top-level navigation — Saved searches, Playlists, Library, External
+  sources, plus Connect-a-device, Keyboard shortcuts, Admin, and Profile.
+  Selecting a section **slides a wide panel in to replace the rail** (with its
+  content — library filters & facets, the sources tree, a playlists/saved-
+  searches list, or the profile menu); "Menu" slides back. Replaces the single
+  cramped column (and fixes the facets-vs-tools overlap).
 - External sources are now a **drag-and-drop tree**: file single-video / live
   sources into categories by dragging (onto a category to group, onto another
   source to reorder), create / rename / delete categories, with Playlists and
