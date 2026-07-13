@@ -120,6 +120,28 @@ export function renameExternalSource(slug: string, name: string): ExternalSource
   return src;
 }
 
+/**
+ * Move a source in the drag/drop tree: set its category (video sources only —
+ * '' / null clears it) AND reposition it in the flat order, inserted directly
+ * before `beforeSlug` (or appended when null). One write so a drag is atomic.
+ */
+export function moveExternalSource(
+  slug: string, category: string | null, beforeSlug: string | null,
+): ExternalSource[] {
+  const reg = readRegistry();
+  const src = reg.sources.find((s) => s.slug === slug);
+  if (!src) return reg.sources;
+  const c = (category ?? '').trim();
+  if (c) src.category = c;
+  else delete src.category;
+  reg.sources = reg.sources.filter((s) => s.slug !== slug);
+  const idx = beforeSlug ? reg.sources.findIndex((s) => s.slug === beforeSlug) : -1;
+  if (idx >= 0) reg.sources.splice(idx, 0, src);
+  else reg.sources.push(src);
+  writeRegistry(reg);
+  return reg.sources;
+}
+
 /** Assign (or clear, with null/'') a source's category. */
 export function setExternalSourceCategory(slug: string, category: string | null): ExternalSource | null {
   const reg = readRegistry();
@@ -130,4 +152,21 @@ export function setExternalSourceCategory(slug: string, category: string | null)
   else delete src.category;
   writeRegistry(reg);
   return src;
+}
+
+/** Rename a category everywhere it's used. */
+export function renameExternalCategory(from: string, to: string): ExternalSource[] {
+  const reg = readRegistry();
+  const t = to.trim();
+  if (t) for (const s of reg.sources) if (s.category === from) s.category = t;
+  writeRegistry(reg);
+  return reg.sources;
+}
+
+/** Delete a category — its sources become uncategorized (not removed). */
+export function deleteExternalCategory(name: string): ExternalSource[] {
+  const reg = readRegistry();
+  for (const s of reg.sources) if (s.category === name) delete s.category;
+  writeRegistry(reg);
+  return reg.sources;
 }

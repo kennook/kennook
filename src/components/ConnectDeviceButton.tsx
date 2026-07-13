@@ -42,7 +42,7 @@ export function ConnectDeviceButton({ variant = 'header' }: { variant?: 'header'
   );
 }
 
-function ConnectModal({ onClose }: { onClose: () => void }) {
+export function ConnectModal({ onClose }: { onClose: () => void }) {
   const [info, setInfo] = useState<ConnectInfo | null>(null);
   const [error, setError] = useState(false);
 

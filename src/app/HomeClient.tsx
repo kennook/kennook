@@ -19,15 +19,14 @@ import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar
 import { SortControl } from '@/components/SortControl';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { MobileApp } from '@/components/mobile/MobileApp';
-import { KenNookLogo } from '@/components/KenNookLogo';
+import { SidebarRail, type RailSection } from '@/components/sidebar/SidebarRail';
+import { ExternalTree } from '@/components/sidebar/ExternalTree';
+import { ProfilePanel } from '@/components/sidebar/ProfilePanel';
 import { LibrarySwitcher } from '@/components/LibrarySwitcher';
-import { SidebarTools } from '@/components/SidebarTools';
 import { ShortcutHelp } from '@/components/ShortcutHelp';
 import { useIsMobile } from '@/lib/use-media-query';
 import { FilterSidebar } from '@/components/FilterSidebar';
 import { PlaylistsSection } from '@/components/PlaylistsSection';
-import { SourcesSection } from '@/components/SourcesSection';
-import { SourcesManager } from '@/components/SourcesManager';
 import { ExternalSourceView } from '@/components/ExternalSourceView';
 import { SavedSearchesSection } from '@/components/SavedSearchesSection';
 import { PeopleSection } from '@/components/PeopleSection';
@@ -142,9 +141,6 @@ function HomeContent() {
   // Collapsible filters/facets sidebar. Default open; persisted per-browser.
   // Hydrated from localStorage after mount to avoid an SSR/client mismatch.
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  // Sub-sidebar: the external-sources manager slides over the sidebar column as
-  // a second layer (no backdrop — a "Back" link returns to the main content).
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   useEffect(() => {
     const v = localStorage.getItem('kennook.sidebar-open');
     if (v !== null) setSidebarOpen(v === '1');
@@ -154,6 +150,35 @@ function HomeContent() {
     try { localStorage.setItem('kennook.sidebar-open', next ? '1' : '0'); } catch { /* private mode */ }
     return next;
   });
+
+  // Two-level sidebar: which Level-2 section the wide panel shows, and whether
+  // the Level-1 rail is collapsed to icons-only (both persisted per-browser).
+  const [activeSection, setActiveSection] = useState<RailSection>('library');
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  useEffect(() => {
+    const s = localStorage.getItem('kennook.rail-section');
+    if (s === 'saved' || s === 'playlists' || s === 'library' || s === 'sources' || s === 'profile') setActiveSection(s);
+    setRailCollapsed(localStorage.getItem('kennook.rail-collapsed') === '1');
+  }, []);
+  const toggleRailCollapsed = () => setRailCollapsed((v) => {
+    const next = !v;
+    try { localStorage.setItem('kennook.rail-collapsed', next ? '1' : '0'); } catch { /* private */ }
+    return next;
+  });
+  // Rail click: switch the panel to that section (and open it); clicking the
+  // already-active section toggles the panel closed.
+  const handleRailSelect = (s: RailSection) => {
+    if (s === activeSection && sidebarOpen) { toggleSidebar(); return; }
+    setActiveSection(s);
+    try { localStorage.setItem('kennook.rail-section', s); } catch { /* private */ }
+    if (!sidebarOpen) toggleSidebar();
+  };
+
+  // Section lists — used to hide empty rail entries.
+  const railPlaylists = trpc.playlist.list.useQuery();
+  const railSaved = trpc.savedSearch.list.useQuery(undefined);
+  const hasPlaylists = (railPlaylists.data?.length ?? 0) > 0;
+  const hasSavedSearches = (railSaved.data?.length ?? 0) > 0;
 
   // Results per page — user-adjustable, persisted per-browser. Default 100.
   // Hydrated after mount to avoid an SSR/client mismatch.
@@ -168,16 +193,6 @@ function HomeContent() {
     // Changing the batch size changes the query key, so the infinite query
     // resets to the first page on its own — nothing else to do here.
   };
-
-  // Enable the sidebar slide transitions only AFTER the first paint, so the
-  // initial localStorage-driven open/closed state snaps into place without an
-  // unwanted animate-on-load. User toggles thereafter slide smoothly.
-  const [sidebarAnimate, setSidebarAnimate] = useState(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setSidebarAnimate(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-  const slideClass = sidebarAnimate ? 'transition-[width,margin] duration-300 ease-in-out' : '';
 
   const selectedKeys = useMemo(
     () => new Set(selection.map((s) => selectionKey(s.librarySlug, s.itemUuid))),
@@ -695,6 +710,7 @@ function HomeContent() {
       source: slug, category: null, playlist: null, similar: null, query: '', person: null,
       item: null, view: null,
     });
+    setActiveSection(slug ? 'sources' : 'library');
     setSelection([]);
   };
 
@@ -705,6 +721,7 @@ function HomeContent() {
       category, source: null, playlist: null, similar: null, query: '', person: null,
       item: null, view: null,
     });
+    setActiveSection(category ? 'sources' : 'library');
     setSelection([]);
   };
 
@@ -851,59 +868,31 @@ function HomeContent() {
       </header>
 
       <div className="px-4 py-5 flex">
-        {/* Collapse by ANIMATING width (not display:none) so the grid is pushed
-            smoothly instead of snapping. The inner wrapper stays a fixed w-56 so
-            its content clips/slides rather than reflowing while the outer shrinks.
-            Quiet-mode fade lives on the inner div so its opacity transition
-            doesn't collide with the width transition here. */}
-        {/* The sticky SCROLL container is intentionally NOT zoomed — viewport
-            units (dvh) under CSS `zoom` are unreliable, so a tall sidebar (e.g. a
-            long sources list) wasn't clamped to the viewport and only its bottom
-            showed at the end of the page. Keeping max-height on an un-zoomed
-            wrapper clamps it correctly and scrolls the zoomed <aside> inside. */}
-        <div
-          className={`shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
-                     max-h-[calc(100dvh_-_5rem)] ${slideClass}
-                     ${sidebarOpen ? 'mr-6' : 'mr-0'}`}
-        >
-        <aside
-          className={`kn-app-scaled ${slideClass}
-                     ${sidebarOpen ? (sourcesOpen ? 'w-96' : 'w-56') : 'w-0'}`}
-        >
-          <div className="kn-sidebar-body" data-open={sidebarOpen}>
-          {/* Two-pane horizontal track: the main sidebar and the sources
-              manager sit side by side; opening the manager slides the track
-              left so it "comes out of" the sidebar (the aside's overflow-x-hidden
-              clips the off-screen pane) AND widens the sidebar so the manager has
-              room for full titles + the category field. No backdrop — Back returns. */}
-          <div className={`${sourcesOpen ? 'w-96' : 'w-56'} ${chromeQuietClass}
-                          ${sidebarAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}`}>
-          <div className={`flex w-[200%] items-start
-                          ${sidebarAnimate ? 'transition-transform duration-300 ease-in-out' : ''}
-                          ${sourcesOpen ? '-translate-x-1/2' : ''}`}>
-          <div className="w-1/2 shrink-0 pr-2">
-          <h1 className="px-3 mb-5">
-            <KenNookLogo height={24} />
-            <span className="sr-only">KenNook</span>
-          </h1>
-          {/* Library selection — hidden when there's only one library. */}
-          <div className="px-1 mb-5">
-            <LibrarySwitcher variant="sidebar" align="left" hideWhenSingle />
-          </div>
-          <PlaylistsSection
-            activePlaylistUuid={url.playlist}
-            onSelectPlaylist={handlePlaylistSelect}
+        {/* Two-level sidebar. Each column is its own sticky, un-zoomed scroll
+            container (dvh clamp is unreliable under CSS `zoom`), with the zoomed
+            content inside — so each scrolls independently within the viewport.
+            Level 1 — thin, collapsible rail: */}
+        <div className="shrink-0 sticky top-20 self-start max-h-[calc(100dvh_-_5rem)] overflow-y-auto mr-3">
+          <SidebarRail
+            active={activeSection}
+            onSelect={handleRailSelect}
+            collapsed={railCollapsed}
+            onToggleCollapsed={toggleRailCollapsed}
+            hasSaved={hasSavedSearches}
+            hasPlaylists={hasPlaylists}
+            onOpenHelp={() => setHelpOpen(true)}
           />
-          <SourcesSection
-            activeSourceSlug={url.source}
-            activeCategory={url.category}
-            onOpenManager={() => setSourcesOpen(true)}
-          />
-          <SavedSearchesSection />
-          <PeopleSection
-            activePersonUuid={url.person}
-            onSelectPerson={handlePersonSelect}
-          />
+        </div>
+
+        {/* Level 2 — wide contextual panel for the active rail section. */}
+        {sidebarOpen && (
+          <div className="shrink-0 sticky top-20 self-start max-h-[calc(100dvh_-_5rem)] overflow-y-auto mr-6 w-72">
+            <div className={`kn-app-scaled ${chromeQuietClass}`}>
+              {activeSection === 'library' && (
+                <div className="flex flex-col">
+                  <div className="px-1 mb-4">
+                    <LibrarySwitcher variant="sidebar" align="left" hideWhenSingle />
+                  </div>
           {!inPlaylist && (
             <FilterSidebar
               facets={facetsQuery.data ?? null}
@@ -932,22 +921,31 @@ function HomeContent() {
               onSensitiveChange={(v) => url.set({ sensitive: v })}
             />
           )}
-          <SidebarTools onOpenHelp={() => setHelpOpen(true)} />
+                  <PeopleSection
+                    activePersonUuid={url.person}
+                    onSelectPerson={handlePersonSelect}
+                  />
+                </div>
+              )}
+              {activeSection === 'sources' && (
+                <ExternalTree
+                  activeSourceSlug={url.source}
+                  activeCategory={url.category}
+                  onSelectSource={handleSelectSource}
+                  onSelectCategory={handleSelectCategory}
+                />
+              )}
+              {activeSection === 'saved' && <SavedSearchesSection />}
+              {activeSection === 'playlists' && (
+                <PlaylistsSection
+                  activePlaylistUuid={url.playlist}
+                  onSelectPlaylist={handlePlaylistSelect}
+                />
+              )}
+              {activeSection === 'profile' && <ProfilePanel />}
+            </div>
           </div>
-          <div className="w-1/2 shrink-0 pr-2">
-            <SourcesManager
-              activeSourceSlug={url.source}
-              activeCategory={url.category}
-              onSelectSource={handleSelectSource}
-              onSelectCategory={handleSelectCategory}
-              onBack={() => setSourcesOpen(false)}
-            />
-          </div>
-          </div>
-          </div>
-          </div>
-        </aside>
-        </div>
+        )}
 
         <div className="flex-1 min-w-0">
           {inCategory ? (

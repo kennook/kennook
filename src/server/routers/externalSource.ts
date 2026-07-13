@@ -9,6 +9,9 @@ import {
   reorderExternalSources,
   renameExternalSource,
   setExternalSourceCategory,
+  moveExternalSource,
+  renameExternalCategory,
+  deleteExternalCategory,
 } from '@/server/external-sources';
 import { parseYouTubeUrl, resolveYouTubeSource, fetchPlaylistPage, fetchVideoAsItem } from '@/server/youtube';
 import { publishToUser, bumpDataRev } from '@/server/sync-broker';
@@ -96,6 +99,38 @@ export const externalSourceRouter = router({
       if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
       notifySidebar(ctx.userId, ctx.sessionId);
       return src;
+    }),
+
+  /** Drag/drop move in the tree: set a source's category + reposition it before
+   *  `beforeSlug` (null = end). One atomic write. */
+  move: publicProcedure
+    .input(z.object({
+      slug: z.string(),
+      category: z.string().trim().max(60).nullable(),
+      beforeSlug: z.string().nullable(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const sources = moveExternalSource(input.slug, input.category, input.beforeSlug);
+      notifySidebar(ctx.userId, ctx.sessionId);
+      return sources;
+    }),
+
+  /** Rename a category everywhere it's used. */
+  renameCategory: publicProcedure
+    .input(z.object({ from: z.string(), to: z.string().trim().min(1).max(60) }))
+    .mutation(({ input, ctx }) => {
+      const sources = renameExternalCategory(input.from, input.to);
+      notifySidebar(ctx.userId, ctx.sessionId);
+      return sources;
+    }),
+
+  /** Delete a category — its sources become uncategorized. */
+  deleteCategory: publicProcedure
+    .input(z.object({ name: z.string() }))
+    .mutation(({ input, ctx }) => {
+      const sources = deleteExternalCategory(input.name);
+      notifySidebar(ctx.userId, ctx.sessionId);
+      return sources;
     }),
 
   /** One video per single-video/live source in a category — the grid for that
