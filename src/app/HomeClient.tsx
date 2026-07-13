@@ -154,6 +154,22 @@ function HomeContent() {
     const id = requestAnimationFrame(() => setSbAnimate(true));
     return () => cancelAnimationFrame(id);
   }, []);
+
+  // The header is kn-app-scaled (zoomed), so its RENDERED height grows with the
+  // display scale — a fixed `top-20` let it overlap the sidebar on big displays.
+  // Measure the header and offset the sticky sidebar by exactly that height.
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerH, setHeaderH] = useState(72);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const measure = () => setHeaderH(el.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
   const toggleSidebar = () => setSidebarOpen((v) => {
     const next = !v;
     try { localStorage.setItem('kennook.sidebar-open', next ? '1' : '0'); } catch { /* private mode */ }
@@ -858,7 +874,7 @@ function HomeContent() {
       {/* kn-app-scaled (large-screen zoom) lives on the header + sidebars only —
           NOT the grid/content column, since CSS zoom desyncs masonic's
           virtualization math. The grid scales via responsive columnWidth. */}
-      <header className={`kn-app-scaled sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
+      <header ref={headerRef} className={`kn-app-scaled sticky top-0 z-30 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 ${chromeQuietClass}`}>
         <div className="px-5 py-4 flex items-center gap-4">
           <button
             onClick={toggleSidebar}
@@ -882,7 +898,10 @@ function HomeContent() {
             section slides the panel in to REPLACE the rail, "Menu" slides back.
             Un-zoomed scroll wrapper (dvh clamp is unreliable under CSS `zoom`);
             overflow-x-hidden clips the off-screen pane. */}
-        <div className="shrink-0 sticky top-20 self-start max-h-[calc(100dvh_-_5rem)] overflow-x-hidden overflow-y-auto mr-6">
+        <div
+          className="shrink-0 sticky self-start overflow-x-hidden overflow-y-auto mr-6"
+          style={{ top: headerH, maxHeight: `calc(100dvh - ${headerH}px)` }}
+        >
           <div className={`kn-app-scaled ${chromeQuietClass}
                           ${sbAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}
                           ${sidebarOpen ? 'w-72' : railCollapsed ? 'w-16' : 'w-52'}`}>
