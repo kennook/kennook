@@ -36,6 +36,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 ### Changed
 - External sources now show a compact per-kind icon (channel / playlist / video)
   instead of the "CHANNEL/VIDEO" text label, leaving room for the full title.
+- The sidebar now widens when the sources manager is open, so source titles and
+  the category field have room instead of being cramped in the narrow column.
 - Add-tag flow: adding a tag with Enter now keeps the info panel open with the
   field focused so you can add several tags in a row; Escape finishes and closes.
   (Previously Enter closed the panel but left the hidden field focused, which

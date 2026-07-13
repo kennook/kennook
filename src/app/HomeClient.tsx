@@ -859,14 +859,16 @@ function HomeContent() {
         <aside
           className={`kn-app-scaled shrink-0 sticky top-20 self-start overflow-x-hidden overflow-y-auto
                      max-h-[calc((100vh-6rem)/var(--kn-chrome-scale,1))] ${slideClass}
-                     ${sidebarOpen ? 'w-56 mr-6' : 'w-0 mr-0'}`}
+                     ${sidebarOpen ? (sourcesOpen ? 'w-96 mr-6' : 'w-56 mr-6') : 'w-0 mr-0'}`}
         >
           <div className="kn-sidebar-body" data-open={sidebarOpen}>
           {/* Two-pane horizontal track: the main sidebar and the sources
               manager sit side by side; opening the manager slides the track
               left so it "comes out of" the sidebar (the aside's overflow-x-hidden
-              clips the off-screen pane). No backdrop — Back returns. */}
-          <div className={`w-56 ${chromeQuietClass}`}>
+              clips the off-screen pane) AND widens the sidebar so the manager has
+              room for full titles + the category field. No backdrop — Back returns. */}
+          <div className={`${sourcesOpen ? 'w-96' : 'w-56'} ${chromeQuietClass}
+                          ${sidebarAnimate ? 'transition-[width] duration-300 ease-in-out' : ''}`}>
           <div className={`flex w-[200%] items-start
                           ${sidebarAnimate ? 'transition-transform duration-300 ease-in-out' : ''}
                           ${sourcesOpen ? '-translate-x-1/2' : ''}`}>
