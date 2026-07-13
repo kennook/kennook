@@ -48,6 +48,7 @@ export function YouTubePlayer({
   captionsRef.current = captions;
 
   const hostRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const queueRef = useRef(videos);
   queueRef.current = videos;
@@ -105,6 +106,18 @@ export function YouTubePlayer({
     window.addEventListener('keydown', onKey, { capture: true });
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [onClose]);
+
+  // Keep keyboard focus on OUR overlay, not the YouTube iframe. A focused
+  // cross-origin iframe swallows keydowns — they never reach the window listener
+  // above — so Escape (and any shortcut) would be dead until the user clicked our
+  // chrome. Pull focus to the overlay on open and once the iframe mounts (ready);
+  // a short delayed retry beats YT grabbing focus back on autoplay.
+  useEffect(() => {
+    const grab = () => rootRef.current?.focus({ preventScroll: true });
+    grab();
+    const t = window.setTimeout(grab, 60);
+    return () => window.clearTimeout(t);
+  }, [ready]);
 
   // Poll the player's ACTUAL mute state and make it the single source of truth,
   // so a solo fires no matter how the user unmuted — our button OR YouTube's own
@@ -191,7 +204,7 @@ export function YouTubePlayer({
   const hasNext = index < videos.length - 1;
 
   return (
-    <div className="group fixed inset-0 z-[90] bg-black flex flex-col" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div ref={rootRef} tabIndex={-1} className="group fixed inset-0 z-[90] bg-black flex flex-col outline-none" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       {/* kn-app-scaled grows the chrome on large displays so the controls
           aren't tiny (this overlay is outside the app's normal scaled chrome). */}
       <div className="kn-app-scaled flex items-center gap-3 px-4 py-2 text-sm text-zinc-300">

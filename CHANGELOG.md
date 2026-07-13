@@ -33,6 +33,9 @@ Anything under **Upgrade notes** requires action on the operator's part
   (Previously Enter closed the panel but left the hidden field focused, which
   swallowed the next keypress — e.g. `i` typed into the field instead of
   reopening the panel.)
+- Opening a YouTube video now focuses the KenNook player overlay instead of the
+  embedded iframe, so Escape and other keyboard shortcuts work immediately — no
+  longer dead until you click somewhere in the player first.
 
 ## [0.3.2] - 2026-07-12
 
