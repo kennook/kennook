@@ -176,11 +176,6 @@ export function VideoPlayer({
   };
   const [controlsVisible, setControlsVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
-  // True while the cursor is sitting on the controls bar. Holds the idle
-  // timer open — without this, resting on a button (no mousemove fires) lets
-  // the bar hide right under the cursor, and the next click falls through the
-  // bar's pointer-events-none state to the video, toggling play.
-  const hoveredControlsRef = useRef(false);
 
   // Small stack of pre-seek positions so users can undo an accidental jump.
   // Pushed BEFORE each deliberate seek (skip, jump-to-%, scrub, drag, etc.),
@@ -453,9 +448,10 @@ export function VideoPlayer({
     // Arm the auto-hide whenever the video is actually playing. Read the
     // element (not the `playing` state) so this also works when called from
     // onPlay in the same tick as setPlaying(true) — e.g. a slideshow
-    // auto-advancing to a new video with no mouse activity to re-arm it.
-    // Don't arm while the cursor is parked on the controls bar.
-    if (!videoRef.current?.paused && !hoveredControlsRef.current) {
+    // auto-advancing to a new video with no mouse activity to re-arm it. Hide
+    // regardless of cursor position (Netflix/YouTube-style) so the bar can't
+    // stay pinned when it mounts under a stationary cursor on a (re)load.
+    if (!videoRef.current?.paused) {
       idleTimerRef.current = window.setTimeout(() => setControlsVisible(false), 2500);
     }
   }
@@ -553,16 +549,6 @@ export function VideoPlayer({
       )}
 
       <div
-        onMouseEnter={() => {
-          hoveredControlsRef.current = true;
-          if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
-          setControlsVisible(true);
-        }}
-        onMouseLeave={() => {
-          hoveredControlsRef.current = false;
-          // Resume normal auto-hide once the cursor leaves the bar.
-          showControls();
-        }}
         className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent
                     px-4 pb-3 pt-12 transition-opacity duration-200 will-change-[opacity]
                     ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}

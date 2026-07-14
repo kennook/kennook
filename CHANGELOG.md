@@ -98,6 +98,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Full-screen viewer chrome (the "coming up" reel, zoom minimap, toolbar) and the
+  video controls bar now reliably auto-hide after a (re)load — they no longer
+  stay pinned until you interact with them and move away. Both now hide after
+  idle regardless of cursor position (Netflix/YouTube-style) instead of trying to
+  stay open while "hovered", which got stuck when they mounted under a stationary
+  cursor on load.
 - Sidebar scrolling reworked so the second-level panel can never exceed the
   sidebar: the rail and the panel are now absolute sliding panes each with their
   OWN scroll, bounded to the sidebar's height (viewport minus the live-measured

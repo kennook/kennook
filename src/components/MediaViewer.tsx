@@ -648,27 +648,20 @@ export function MediaViewer({
 
   // Chrome auto-hide plumbing. `chromePinnedRef` keeps the chrome open while a
   // focused input must stay visible (e.g. the bookmark tag field) — typing
-  // produces no pointer movement to keep it alive. `lastCursorRef` holds the
-  // real pointer position; the idle tick verifies hover GEOMETRICALLY from it
-  // (elementFromPoint) rather than trusting mouseenter/leave bookkeeping, which
-  // gets stuck open when a synthetic mouseenter fires (chrome mounting under a
-  // stationary cursor on reload) with no matching leave. Off-screen default, so
-  // a cold load with no real move reads "not over chrome" and hides as intended.
+  // produces no pointer movement to keep it alive.
   const chromePinnedRef = useRef(false);
-  const lastCursorRef = useRef({ x: -1, y: -1 });
 
-  // Arm (or re-arm) the idle-hide timer. The tick is SELF-PERPETUATING: on fire
-  // it re-checks, from the real cursor position, whether the pointer is over
-  // chrome (or a field is pinned) and, if so, re-arms instead of hiding — so a
-  // genuine hover keeps chrome up with no enter/leave state to get stuck, and a
-  // stale/synthetic hover can never pin it open.
+  // Arm (or re-arm) the idle-hide timer. After CHROME_IDLE_MS with no re-arm the
+  // chrome hides — regardless of where the cursor sits (Netflix/YouTube-style),
+  // so it can never get stuck open when it mounts under a stationary cursor on a
+  // (re)load: the browser fires a synthetic mousemove at the cursor, and if that
+  // spot is over chrome a "keep it up while hovered" rule would pin it forever.
+  // Only a focused text field (chromePinnedRef) keeps it up. Real pointer
+  // movement re-arms via pulseChrome, so an active user always sees the chrome.
   const armIdle = useCallback(() => {
     if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     const tick = () => {
-      const { x, y } = lastCursorRef.current;
-      const overChrome = x >= 0 && y >= 0
-        && !!(document.elementFromPoint(x, y) as Element | null)?.closest?.('[data-kn-chrome]');
-      if (chromePinnedRef.current || overChrome) {
+      if (chromePinnedRef.current) {
         idleTimerRef.current = window.setTimeout(tick, CHROME_IDLE_MS);
         return;
       }
@@ -726,10 +719,8 @@ export function MediaViewer({
     onMouseLeave: () => pulseChrome(),
   };
 
-  // Root mouse-move: record the real cursor position (the idle tick reads it to
-  // verify hover), then pulse the chrome.
-  const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
-    lastCursorRef.current = { x: e.clientX, y: e.clientY };
+  // Root mouse-move: reveal the chrome + re-arm the idle timer.
+  const handleViewerMouseMove = useCallback(() => {
     pulseChrome();
   }, [pulseChrome]);
 
