@@ -16,7 +16,6 @@ import { MoveToLibraryDialog } from '@/components/MoveToLibraryDialog';
 import { AddToPlaylistDialog } from '@/components/AddToPlaylistDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar';
-import { SortControl } from '@/components/SortControl';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { MobileApp } from '@/components/mobile/MobileApp';
 import { SidebarRail, type RailSection } from '@/components/sidebar/SidebarRail';
@@ -40,7 +39,6 @@ interface SelectionRef {
 }
 
 const DEFAULT_PAGE_SIZE = 100;
-const PAGE_SIZE_OPTIONS = [50, 100, 200, 500] as const;
 
 /** Immutably patch an infinite-query cache ({ pages: [{ items }] }). `mapItem`
  *  returns a replacement for a matching item, or null to leave it unchanged.
@@ -222,19 +220,15 @@ function HomeContent() {
   const hasPlaylists = (railPlaylists.data?.length ?? 0) > 0;
   const hasSavedSearches = (railSaved.data?.length ?? 0) > 0;
 
-  // Results per page — user-adjustable, persisted per-browser. Default 100.
-  // Hydrated after mount to avoid an SSR/client mismatch.
-  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
-  useEffect(() => {
-    const v = Number(localStorage.getItem('kennook.page-size'));
-    if (PAGE_SIZE_OPTIONS.includes(v as (typeof PAGE_SIZE_OPTIONS)[number])) setPageSize(v);
-  }, []);
-  const changePageSize = (n: number) => {
-    setPageSize(n);
-    try { localStorage.setItem('kennook.page-size', String(n)); } catch { /* private mode */ }
-    // Changing the batch size changes the query key, so the infinite query
-    // resets to the first page on its own — nothing else to do here.
-  };
+  // Fetch batch size for the infinite queries. No longer user-facing — infinite
+  // scroll handles paging, so "results per page" was just a fetch-size knob.
+  const pageSize = DEFAULT_PAGE_SIZE;
+
+  // Toggle the seeded-random ordering: mint a fresh seed to turn on, clear to
+  // turn off. Selecting a sort (in the sidebar) clears shuffle; turning shuffle
+  // on overrides the sort. Shuffle lives next to Play.
+  const toggleShuffle = () =>
+    url.set({ shuffle: url.shuffle != null ? null : Math.floor(Math.random() * 2_000_000_000) });
 
   const selectedKeys = useMemo(
     () => new Set(selection.map((s) => selectionKey(s.librarySlug, s.itemUuid))),
@@ -992,6 +986,9 @@ function HomeContent() {
             <FilterSidebar
               facets={facetsQuery.data ?? null}
               loading={facetsQuery.isLoading}
+              sort={url.sort}
+              relevanceMode={inSearch || inSimilar}
+              onSelectSort={(key) => url.set({ sort: key, shuffle: null })}
               kind={url.kind}
               onKindChange={(v) => url.set({ kind: v })}
               orientation={url.orientation}
@@ -1140,7 +1137,7 @@ function HomeContent() {
                 </div>
               </div>
               {personDetails.data.totalCount > 0 && (
-                <PlayButton onClick={startSlideshow} />
+                <PlayControls onPlay={startSlideshow} shuffleActive={url.shuffle != null} onToggleShuffle={toggleShuffle} />
               )}
               <button
                 onClick={() => handlePersonSelect(null)}
@@ -1166,7 +1163,9 @@ function HomeContent() {
                   {similarSource.filename}
                 </div>
               </div>
-              {items.length > 0 && <PlayButton onClick={startSlideshow} />}
+              {items.length > 0 && (
+                <PlayControls onPlay={startSlideshow} shuffleActive={url.shuffle != null} onToggleShuffle={toggleShuffle} />
+              )}
               <button
                 onClick={clearSimilar}
                 className="text-zinc-400 hover:text-zinc-100 px-2"
@@ -1200,7 +1199,9 @@ function HomeContent() {
                 Results for{' '}
                 <span className="text-zinc-300">&ldquo;{url.query}&rdquo;</span>
               </div>
-              {items.length > 0 && <PlayButton onClick={startSlideshow} />}
+              {items.length > 0 && (
+                <PlayControls onPlay={startSlideshow} shuffleActive={url.shuffle != null} onToggleShuffle={toggleShuffle} />
+              )}
             </div>
           )}
 
@@ -1216,7 +1217,9 @@ function HomeContent() {
                   · ⌘-click or Shift-click to select
                 </span>
               </div>
-              {items.length > 0 && <PlayButton onClick={startSlideshow} />}
+              {items.length > 0 && (
+                <PlayControls onPlay={startSlideshow} shuffleActive={url.shuffle != null} onToggleShuffle={toggleShuffle} />
+              )}
             </div>
           )}
 
@@ -1225,24 +1228,17 @@ function HomeContent() {
             onClearAll={clearAllFilters}
           />
 
-          {/* View controls: results-per-page (always) + sort/shuffle (browse and
-              search/similar; playlists keep their own order). Picking a sort
-              clears shuffle; the shuffle toggle mints a fresh seed on / clears
-              it off. */}
-          <div className="flex items-center justify-end gap-3 mb-3">
-            <PageSizeControl value={pageSize} onChange={changePageSize} />
-            {!inPlaylist && (
-              <SortControl
-                sort={url.sort}
-                shuffle={url.shuffle}
-                relevanceMode={inSearch || inSimilar}
-                onSelectSort={(key) => url.set({ sort: key, shuffle: null })}
-                onToggleShuffle={() =>
-                  url.set({ shuffle: url.shuffle != null ? null : Math.floor(Math.random() * 2_000_000_000) })
-                }
-              />
-            )}
-          </div>
+          {/* Default browse has no header row of its own — give it a compact
+              Play + Shuffle here. The other views (person / similar / search /
+              recent) carry Play + Shuffle in their own header; playlists keep
+              their own order (Play only, no shuffle). Sort now lives in the
+              sidebar with the facets. */}
+          {!url.person && !inSimilar && !inPlaylist && !inSearch && !inRecent && items.length > 0 && (
+            <div className="flex items-center justify-end gap-1.5 mb-3">
+              <ShuffleToggle active={url.shuffle != null} onClick={toggleShuffle} />
+              <PlayButton onClick={startSlideshow} />
+            </div>
+          )}
 
           <MediaGrid
             items={items}
@@ -1456,22 +1452,41 @@ function PencilIcon() {
   );
 }
 
-function PageSizeControl({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+// Play + Shuffle, side by side — shuffle re-orders the results randomly before
+// (and while) playing, so it belongs with the "start playing" action.
+function PlayControls({
+  onPlay, shuffleActive, onToggleShuffle,
+}: { onPlay: () => void; shuffleActive: boolean; onToggleShuffle: () => void }) {
   return (
-    <label className="flex items-center gap-1.5 text-xs text-zinc-500 shrink-0">
-      <span>Per page</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label="Results per page"
-        className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-zinc-300
-                   hover:border-zinc-700 focus:border-zinc-600 outline-none cursor-pointer"
-      >
-        {PAGE_SIZE_OPTIONS.map((n) => (
-          <option key={n} value={n}>{n}</option>
-        ))}
-      </select>
-    </label>
+    <div className="shrink-0 flex items-center gap-1.5">
+      <ShuffleToggle active={shuffleActive} onClick={onToggleShuffle} />
+      <PlayButton onClick={onPlay} />
+    </div>
+  );
+}
+
+function ShuffleToggle({ active, onClick }: { active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={active ? 'Shuffle on — click to turn off' : 'Shuffle'}
+      aria-pressed={active}
+      className={`shrink-0 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm ring-1 transition
+        ${active
+          ? 'bg-emerald-600/90 text-white ring-emerald-500'
+          : 'text-zinc-300 ring-zinc-700 hover:bg-zinc-900'}`}
+    >
+      <ShuffleIcon />
+      Shuffle
+    </button>
+  );
+}
+
+function ShuffleIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 4h2.5l7 8H14M2 12h2.5l3-3.4M11 9l3 3-3 3M11 1l3 3-3 3" />
+    </svg>
   );
 }
 

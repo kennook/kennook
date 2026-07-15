@@ -48,6 +48,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   "Back" link returns to the main sidebar content.
 
 ### Changed
+- Slimmed the results toolbar: **Sort** moved into the left sidebar with the
+  facets, **Shuffle** now sits right next to **Play**, and the **"Per page"**
+  control is gone (infinite scroll handles paging — it was just a fetch-size
+  knob). Frees up the row above the grid.
 - External sources now show a compact per-kind icon (channel / playlist / video)
   instead of the "CHANNEL/VIDEO" text label, leaving room for the full title.
 - The sidebar now widens when the sources manager is open, so source titles and

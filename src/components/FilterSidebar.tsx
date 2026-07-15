@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { likeFillColor } from '@/lib/like-colors';
+import { SortControl } from '@/components/SortControl';
+import type { SortKey } from '@/lib/url-state';
 
 export type Orientation = 'portrait' | 'landscape' | 'square';
 export type Quality = 'sd' | 'hd' | '4k';
@@ -23,6 +25,10 @@ export interface FacetCounts {
 interface Props {
   facets: FacetCounts | null;
   loading?: boolean;
+
+  sort: SortKey | null;
+  relevanceMode: boolean;
+  onSelectSort: (v: SortKey | null) => void;
 
   kind: Kind | null;
   onKindChange: (v: Kind | null) => void;
@@ -75,6 +81,7 @@ const QUALITY_LABELS: Record<Quality, string> = {
 export function FilterSidebar({
   facets,
   loading,
+  sort, relevanceMode, onSelectSort,
   kind, onKindChange,
   orientation, onOrientationChange,
   quality, onQualityChange,
@@ -144,6 +151,10 @@ export function FilterSidebar({
   return (
     // Fills the Level-2 panel; the panel owns the sticky positioning + scroll.
     <div className="w-full">
+      <FilterSection title="Sort">
+        <SortControl sort={sort} relevanceMode={relevanceMode} onSelectSort={onSelectSort} />
+      </FilterSection>
+
       <FilterSection title="Type">
         <FilterRow
           active={kind === null}
