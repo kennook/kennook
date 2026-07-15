@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc-client';
 import { usePageState } from '@/lib/url-state';
 import { SearchBar } from '@/components/SearchBar';
@@ -553,21 +553,26 @@ function HomeContent() {
   // masonry's onRender loader pulls the next page as the user nears the end.
   // URL state is baked into the query key (via the inputs below), so changing
   // a filter/search resets the query to page 0 automatically.
+  // `placeholderData: keepPreviousData` keeps the previous result set visible
+  // while a re-keyed query refetches — so toggling shuffle (which changes the
+  // query key) reshuffles in place instead of blanking the grid/reel to a
+  // loading state. Without it the viewer's "coming up" reel + position vanish
+  // for a beat on every shuffle, which reads as "it reset to the start".
   const recent = trpc.media.list.useInfiniteQuery(
     { limit: pageSize, ...filterArgs },
-    { enabled: inRecent, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
+    { enabled: inRecent, getNextPageParam: (last) => last.nextCursor, initialCursor: 0, placeholderData: keepPreviousData },
   );
   const search = trpc.media.search.useInfiniteQuery(
     { query: url.query, limit: pageSize, ...filterArgs },
-    { enabled: inSearch, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
+    { enabled: inSearch, getNextPageParam: (last) => last.nextCursor, initialCursor: 0, placeholderData: keepPreviousData },
   );
   const similar = trpc.media.similar.useInfiniteQuery(
     { uuid: url.similar ?? '', limit: pageSize, ...filterArgs },
-    { enabled: inSimilar, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
+    { enabled: inSimilar, getNextPageParam: (last) => last.nextCursor, initialCursor: 0, placeholderData: keepPreviousData },
   );
   const playlist = trpc.playlist.get.useInfiniteQuery(
     { uuid: url.playlist ?? '', limit: pageSize },
-    { enabled: inPlaylist, getNextPageParam: (last) => last.nextCursor, initialCursor: 0 },
+    { enabled: inPlaylist, getNextPageParam: (last) => last.nextCursor, initialCursor: 0, placeholderData: keepPreviousData },
   );
 
   // The active query for this view drives loading + infinite-load wiring.
