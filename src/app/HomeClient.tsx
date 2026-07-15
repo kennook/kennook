@@ -224,12 +224,6 @@ function HomeContent() {
   // scroll handles paging, so "results per page" was just a fetch-size knob.
   const pageSize = DEFAULT_PAGE_SIZE;
 
-  // Toggle the seeded-random ordering: mint a fresh seed to turn on, clear to
-  // turn off. Selecting a sort (in the sidebar) clears shuffle; turning shuffle
-  // on overrides the sort. Shuffle lives next to Play.
-  const toggleShuffle = () =>
-    url.set({ shuffle: url.shuffle != null ? null : Math.floor(Math.random() * 2_000_000_000) });
-
   const selectedKeys = useMemo(
     () => new Set(selection.map((s) => selectionKey(s.librarySlug, s.itemUuid))),
     [selection],
@@ -416,6 +410,7 @@ function HomeContent() {
     sensitive: url.sensitive ?? undefined,
     sort: url.sort ?? undefined,
     shuffleSeed: url.shuffle ?? undefined,
+    shuffleAnchor: url.shuffle != null ? (url.shuffleAnchor ?? undefined) : undefined,
   };
 
   const facetsQuery = trpc.media.facets.useQuery({
@@ -663,6 +658,24 @@ function HomeContent() {
         ? selectedUuid
         : items[0].uuid;
     url.set({ item: targetUuid, view: 'slideshow' });
+  };
+
+  // Spotify-style shuffle toggle. On: mint a seed AND pin the "current" item to
+  // the top — the one you're viewing, else the highlighted last-viewed, else the
+  // first result — so it reads as "a fresh playlist starting from here" and Play
+  // walks the new order. While on, sort is overridden (server) and disabled (the
+  // sidebar). Off: clear both, restoring the previous sort/order.
+  const toggleShuffle = () => {
+    if (url.shuffle != null) {
+      url.set({ shuffle: null, shuffleAnchor: null });
+      return;
+    }
+    const anchor =
+      (url.item && items.some((i) => i.uuid === url.item) && url.item) ||
+      (lastViewed && items.some((i) => i.uuid === lastViewed.uuid) && lastViewed.uuid) ||
+      items[0]?.uuid ||
+      null;
+    url.set({ shuffle: Math.floor(Math.random() * 2_000_000_000), shuffleAnchor: anchor });
   };
 
   const handleToggleSelection = (item: MediaItemDto, e: React.MouseEvent) => {
@@ -988,7 +1001,8 @@ function HomeContent() {
               loading={facetsQuery.isLoading}
               sort={url.sort}
               relevanceMode={inSearch || inSimilar}
-              onSelectSort={(key) => url.set({ sort: key, shuffle: null })}
+              onSelectSort={(key) => url.set({ sort: key, shuffle: null, shuffleAnchor: null })}
+              sortDisabled={url.shuffle != null}
               kind={url.kind}
               onKindChange={(v) => url.set({ kind: v })}
               orientation={url.orientation}

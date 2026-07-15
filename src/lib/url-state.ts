@@ -54,6 +54,9 @@ export interface PageState {
   /** Shuffle seed. Non-null → results in a stable seeded-random order until
    *  toggled off. Overrides `sort`. */
   shuffle: number | null;
+  /** UUID pinned to the top while shuffling (the item you were on when you hit
+   *  shuffle — Spotify's "shuffle from here"). Only meaningful with `shuffle`. */
+  shuffleAnchor: string | null;
   /** Active library slug. Lives in the URL (not just the cookie) so each
    *  tab has its own source of truth — fixes a cross-tab leak where flipping
    *  libraries in one tab silently changed the next tab's reload. */
@@ -77,7 +80,7 @@ export interface PageState {
 // Keys we manage in the URL. Anything not in this list is left alone, so other
 // libraries (analytics, etc.) can drop their own params without us clobbering.
 // `ws` is the pre-rename library key — we still read it but always write `lib`.
-const ALL_KEYS = ['q', 'similar', 'playlist', 'source', 'cat', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'sort', 'shuffle', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
+const ALL_KEYS = ['q', 'similar', 'playlist', 'source', 'cat', 'person', 'kind', 'orientation', 'quality', 'camera', 'storage', 'year', 'tags', 'mentioned', 'likes', 'seen', 'sensitive', 'sort', 'shuffle', 'sa', 'lib', 'ws', 'page', 'item', 'view', 't'] as const;
 type UrlKey = typeof ALL_KEYS[number];
 
 // Keys that DON'T reset `page` when they change — these don't alter
@@ -132,6 +135,7 @@ function parseState(params: URLSearchParams): PageState {
       const n = parseInt(raw, 10);
       return Number.isFinite(n) ? n : null;
     })(),
+    shuffleAnchor: params.get('sa'),
     // Prefer the new `lib` key; fall back to legacy `ws` for old bookmarks.
     library: params.get('lib') ?? params.get('ws'),
     page: pageRaw ? Math.max(1, parseInt(pageRaw, 10)) : 1,
@@ -184,6 +188,7 @@ function applyPatchToParams(
   if ('sensitive' in patch) writeKey(out, 'sensitive', patch.sensitive);
   if ('sort' in patch) writeKey(out, 'sort', patch.sort);
   if ('shuffle' in patch) writeKey(out, 'shuffle', patch.shuffle);
+  if ('shuffleAnchor' in patch) writeKey(out, 'sa', patch.shuffleAnchor);
   if ('library' in patch) {
     // Write the new key and clear the legacy one so old `?ws=` doesn't linger.
     writeKey(out, 'lib', patch.library);

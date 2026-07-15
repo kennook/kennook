@@ -52,6 +52,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   facets, **Shuffle** now sits right next to **Play**, and the **"Per page"**
   control is gone (infinite scroll handles paging — it was just a fetch-size
   knob). Frees up the row above the grid.
+- **Shuffle now works like Spotify.** Turning it on reshuffles the whole result
+  set into a fresh playlist but pins the item you were on (the one you're
+  viewing, else the last one you opened, else the first result) to the top — so
+  Play walks the new order from where you are. While shuffle is on it's clearly
+  active and the sidebar **Sort** control is disabled (shuffle overrides
+  ordering); turning it off restores your previous sort and order.
 - External sources now show a compact per-kind icon (channel / playlist / video)
   instead of the "CHANNEL/VIDEO" text label, leaving room for the full title.
 - The sidebar now widens when the sources manager is open, so source titles and

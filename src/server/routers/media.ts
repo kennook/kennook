@@ -129,6 +129,10 @@ const filterShape = z.object({
    *  overrides `sort` with a stable seeded random order. */
   sort: sortSchema,
   shuffleSeed: z.number().int().optional(),
+  /** When shuffling, pin this item's uuid to the very top (Spotify-style
+   *  "shuffle from the current track") so the item you were on stays first and
+   *  everything else scatters. Ignored unless `shuffleSeed` is set. */
+  shuffleAnchor: z.string().optional(),
 });
 export type MediaFilters = z.infer<typeof filterShape>;
 
@@ -147,7 +151,17 @@ function buildOrderBy(
 ): { sql: string; params: SqlParam[] } {
   if (filters.shuffleSeed != null) {
     // shuffle_key is a custom SQL function registered per connection (see
-    // src/db/client.ts) — a proper avalanche hash, stable per seed.
+    // src/db/client.ts) — a proper avalanche hash, stable per seed. An optional
+    // anchor uuid is pinned to the very top: `(m.uuid = ?)` is 1 for the anchor
+    // and 0 for everything else, so DESC floats it first; the rest scatter by
+    // shuffle_key. (Offset pagination re-runs this deterministic order, so the
+    // extra key is safe.)
+    if (filters.shuffleAnchor) {
+      return {
+        sql: 'ORDER BY (m.uuid = ?) DESC, shuffle_key(m.id, ?)',
+        params: [filters.shuffleAnchor, filters.shuffleSeed],
+      };
+    }
     return { sql: 'ORDER BY shuffle_key(m.id, ?)', params: [filters.shuffleSeed] };
   }
   let expr: string;

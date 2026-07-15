@@ -28,9 +28,11 @@ interface Props {
   relevanceMode: boolean;
   /** null = the view's default (relevance in search, newest in browse). */
   onSelectSort: (key: SortKey | null) => void;
+  /** Shuffle is active, so sorting is overridden — grey it out. */
+  disabled?: boolean;
 }
 
-export function SortControl({ sort, relevanceMode, onSelectSort }: Props) {
+export function SortControl({ sort, relevanceMode, onSelectSort, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -42,16 +44,22 @@ export function SortControl({ sort, relevanceMode, onSelectSort }: Props) {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  const buttonLabel = sort != null ? LABEL[sort] : relevanceMode ? 'Relevance' : 'Newest';
+  const buttonLabel = disabled
+    ? 'Shuffled'
+    : sort != null ? LABEL[sort] : relevanceMode ? 'Relevance' : 'Newest';
   const selectedKey: SortKey | 'relevance' =
     sort != null ? sort : relevanceMode ? 'relevance' : 'taken-desc';
 
   return (
     <div className="relative px-3" ref={ref}>
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-sm
-                   text-zinc-200 ring-1 ring-zinc-700 rounded-md hover:bg-zinc-900 transition"
+        onClick={() => !disabled && setOpen((v) => !v)}
+        disabled={disabled}
+        title={disabled ? 'Turn off shuffle to sort' : undefined}
+        className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-sm ring-1 rounded-md transition
+          ${disabled
+            ? 'text-zinc-600 ring-zinc-800 cursor-not-allowed'
+            : 'text-zinc-200 ring-zinc-700 hover:bg-zinc-900'}`}
       >
         <span className="flex items-center gap-1.5 min-w-0">
           <SortIcon />
@@ -59,7 +67,7 @@ export function SortControl({ sort, relevanceMode, onSelectSort }: Props) {
         </span>
         <ChevronIcon />
       </button>
-      {open && (
+      {open && !disabled && (
         <div className="absolute left-3 right-3 top-full mt-1.5 z-30 bg-zinc-900 ring-1 ring-zinc-800 rounded-lg shadow-xl py-1">
           {relevanceMode && (
             <SortMenuItem
