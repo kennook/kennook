@@ -103,7 +103,14 @@ Anything under **Upgrade notes** requires action on the operator's part
   stay pinned until you interact with them and move away. Both now hide after
   idle regardless of cursor position (Netflix/YouTube-style) instead of trying to
   stay open while "hovered", which got stuck when they mounted under a stationary
-  cursor on load.
+  cursor on load. The viewer chrome also no longer stays pinned open because the
+  header search bar (which auto-focuses on every load) grabbed focus — the
+  keep-open-while-typing rule now only applies to the viewer's own tag/bookmark
+  fields, not any input on the page.
+- The screensaver now restores after an update-reload: a device that reloads while
+  the screensaver is already on reads the persisted state on load and shows it,
+  instead of only ever reacting to a live on/off toggle (which never arrives when
+  the state hasn't changed since it last looked).
 - Sidebar scrolling reworked so the second-level panel can never exceed the
   sidebar: the rail and the panel are now absolute sliding panes each with their
   OWN scroll, bounded to the sidebar's height (viewport minus the live-measured

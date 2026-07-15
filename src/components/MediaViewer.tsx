@@ -729,10 +729,16 @@ export function MediaViewer({
   // and fading the field mid-type hides what the user is writing.
   useEffect(() => {
     if (!maxed) return;
-    const isTextField = (el: Element | null) =>
-      !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable);
+    // Only a text field INSIDE the viewer chrome (the tag / bookmark inputs)
+    // should pin — NOT any input on the page. The header search bar has
+    // `autoFocus`, so on every (re)load it grabs focus; a window-wide check
+    // would then pin the viewer chrome open forever.
+    const isChromeField = (el: Element | null) =>
+      !!el
+      && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable)
+      && !!el.closest?.('[data-kn-chrome]');
     const onFocusIn = () => {
-      if (isTextField(document.activeElement)) {
+      if (isChromeField(document.activeElement)) {
         chromePinnedRef.current = true;
         if (idleTimerRef.current) { window.clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
         setChromeVisible(true);
@@ -741,7 +747,7 @@ export function MediaViewer({
     const onFocusOut = () => {
       // Let focus settle (it may be moving to another field) before deciding.
       window.setTimeout(() => {
-        if (!isTextField(document.activeElement)) {
+        if (!isChromeField(document.activeElement)) {
           chromePinnedRef.current = false;
           pulseChrome();
         }

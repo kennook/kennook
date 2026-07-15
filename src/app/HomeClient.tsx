@@ -279,6 +279,25 @@ function HomeContent() {
     setScreensaverOpen(e.open && screensaverEnabled);
   });
 
+  // Restore the persisted (per-user) screensaver state directly on load. The
+  // live sync path only reacts to a CHANGE, so a device that reloads (e.g. after
+  // an in-app update) while the screensaver is already on sees no change to act
+  // on — and leader-election/poll timing can delay the first poll — so it would
+  // never show the screensaver even though other devices have it up. Fetching the
+  // current state once on mount converges this device regardless.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/sync/state', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { screensaver?: boolean } | null) => {
+        if (!cancelled && d?.screensaver && screensaverEnabled) setScreensaverOpen(true);
+      })
+      .catch(() => { /* offline — the poll converges later */ });
+    return () => { cancelled = true; };
+    // Runs once on mount; screensaverEnabled defaults to true until config loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // While quiet mode is on, any real user input wakes the page back up.
   // Listeners attach only when quietMode flips true so we're not paying for
   // global event subscriptions in the common case. `passive: true` keeps us
