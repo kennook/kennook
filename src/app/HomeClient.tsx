@@ -191,7 +191,9 @@ function HomeContent() {
   const [railCollapsed, setRailCollapsed] = useState(false);
   useEffect(() => {
     const s = localStorage.getItem('kennook.rail-section');
-    if (s === 'saved' || s === 'playlists' || s === 'library' || s === 'sources' || s === 'profile') setActiveSection(s);
+    // 'saved' / 'playlists' were top-level sections before they moved into the
+    // Library panel — migrate any stale persisted value to 'library'.
+    if (s === 'library' || s === 'sources' || s === 'profile') setActiveSection(s);
     setRailCollapsed(localStorage.getItem('kennook.rail-collapsed') === '1');
   }, []);
   const toggleRailCollapsed = () => setRailCollapsed((v) => {
@@ -953,8 +955,6 @@ function HomeContent() {
               onSelect={handleRailSelect}
               collapsed={railCollapsed}
               onToggleCollapsed={toggleRailCollapsed}
-              hasSaved={hasSavedSearches}
-              hasPlaylists={hasPlaylists}
               onOpenHelp={() => setHelpOpen(true)}
             />
           </div>
@@ -977,6 +977,17 @@ function HomeContent() {
                   <div className="px-1 mb-4">
                     <LibrarySwitcher variant="sidebar" align="left" hideWhenSingle />
                   </div>
+                  {hasSavedSearches && (
+                    <div className="mb-4"><SavedSearchesSection /></div>
+                  )}
+                  {hasPlaylists && (
+                    <div className="mb-4">
+                      <PlaylistsSection
+                        activePlaylistUuid={url.playlist}
+                        onSelectPlaylist={handlePlaylistSelect}
+                      />
+                    </div>
+                  )}
           {!inPlaylist && (
             <FilterSidebar
               facets={facetsQuery.data ?? null}
@@ -1017,13 +1028,6 @@ function HomeContent() {
                   activeCategory={url.category}
                   onSelectSource={handleSelectSource}
                   onSelectCategory={handleSelectCategory}
-                />
-              )}
-              {activeSection === 'saved' && <SavedSearchesSection />}
-              {activeSection === 'playlists' && (
-                <PlaylistsSection
-                  activePlaylistUuid={url.playlist}
-                  onSelectPlaylist={handlePlaylistSelect}
                 />
               )}
               {activeSection === 'profile' && <ProfilePanel />}

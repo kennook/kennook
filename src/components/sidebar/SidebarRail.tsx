@@ -6,27 +6,25 @@ import { KenNookLogo } from '@/components/KenNookLogo';
 import { ConnectModal } from '@/components/ConnectDeviceButton';
 import { useIsAdmin } from '@/lib/current-user';
 
-export type RailSection = 'saved' | 'playlists' | 'library' | 'sources' | 'profile';
+export type RailSection = 'library' | 'sources' | 'profile';
 
 interface Props {
   active: RailSection | null;
   onSelect: (s: RailSection) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  hasSaved: boolean;
-  hasPlaylists: boolean;
   onOpenHelp: () => void;
 }
 
 /**
  * Level-1 sidebar rail — the thin, always-present navigation column. Collapsible
  * between icon-only and icon + label (remembered by the parent). Selecting a
- * section (saved / playlists / library / sources / profile) shows its content in
- * the wide Level-2 panel; the bottom group holds one-off actions (connect a
- * device, keyboard shortcuts, admin).
+ * section (library / sources / profile) shows its content in the wide Level-2
+ * panel; Saved searches and Playlists live INSIDE the Library panel. The bottom
+ * group holds one-off actions (connect a device, keyboard shortcuts, admin).
  */
 export function SidebarRail({
-  active, onSelect, collapsed, onToggleCollapsed, hasSaved, hasPlaylists, onOpenHelp,
+  active, onSelect, collapsed, onToggleCollapsed, onOpenHelp,
 }: Props) {
   const isAdmin = useIsAdmin();
   const [connectOpen, setConnectOpen] = useState(false);
@@ -45,14 +43,6 @@ export function SidebarRail({
 
       {/* Top: navigation sections. */}
       <div className="flex flex-col gap-0.5 px-1.5">
-        {hasSaved && (
-          <RailItem icon={<SavedIcon />} label="Saved searches" collapsed={collapsed}
-            active={active === 'saved'} onClick={() => onSelect('saved')} />
-        )}
-        {hasPlaylists && (
-          <RailItem icon={<PlaylistIcon />} label="Playlists" collapsed={collapsed}
-            active={active === 'playlists'} onClick={() => onSelect('playlists')} />
-        )}
         <RailItem icon={<LibraryIcon />} label="Library" collapsed={collapsed}
           active={active === 'library'} onClick={() => onSelect('library')} />
         <RailItem icon={<SourcesIcon />} label="External sources" collapsed={collapsed}
@@ -116,16 +106,6 @@ function RailItem({
 }
 
 // ── Icons ──
-function SavedIcon() { return (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
-    <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" strokeLinecap="round" />
-  </svg>
-); }
-function PlaylistIcon() { return (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
-    <path d="M4 7h11M4 12h11M4 17h7" /><path d="M18 12v6" /><circle cx="18" cy="18" r="2" fill="currentColor" stroke="none" />
-  </svg>
-); }
 function LibraryIcon() { return (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
     <rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" />
