@@ -615,6 +615,17 @@ function HomeContent() {
   const selectedIndex = selectedUuid ? items.findIndex((i) => i.uuid === selectedUuid) : -1;
   const selected: MediaItemDto | null = selectedIndex >= 0 ? items[selectedIndex] : null;
 
+  // Toggling shuffle from inside the viewer changes the query key, so `items`
+  // blanks for a beat while the reshuffled page loads — which would drop
+  // `selected` to null and flash the viewer closed. Hold the last-resolved DTO
+  // and keep showing it (as long as the URL still points at it) so the viewer
+  // stays put across the refetch; it lands back at index 0 (the pinned item).
+  const lastSelectedRef = useRef<MediaItemDto | null>(null);
+  if (selected) lastSelectedRef.current = selected;
+  const viewerItem: MediaItemDto | null =
+    selected ??
+    (selectedUuid && lastSelectedRef.current?.uuid === selectedUuid ? lastSelectedRef.current : null);
+
   // "Next" at the end of the loaded list (with more available) fetches the next
   // page and then advances once it arrives. This ref carries that intent across
   // the fetch.
@@ -1312,7 +1323,7 @@ function HomeContent() {
       </div>
 
       <MediaViewer
-        item={selected}
+        item={viewerItem}
         maxed={viewerMaxed}
         onMaxedChange={setViewerMaxed}
         onClose={handleClose}
@@ -1325,6 +1336,8 @@ function HomeContent() {
         // Toggle slideshow (auto-advance) from within fullscreen.
         onSlideshowExit={() => url.set({ view: 'full' })}
         onSlideshowEnter={() => url.set({ view: 'slideshow' })}
+        shuffleActive={url.shuffle != null}
+        onToggleShuffle={inPlaylist ? undefined : toggleShuffle}
         currentPersonUuid={url.person}
         onReassignPerson={(it) => setReassignItems([it])}
         onRotate={handleRotate}

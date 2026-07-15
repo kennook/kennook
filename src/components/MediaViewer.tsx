@@ -61,6 +61,11 @@ interface Props {
   /** Turn slideshow (auto-advance) ON from within fullscreen — the in-viewer
    *  autoplay toggle, so you don't have to exit to enable it. */
   onSlideshowEnter?: () => void;
+  /** Shuffle state + toggle, exposed in the maxed toolbar so you can reshuffle
+   *  the "coming up" order (pinning the current item to the top) without exiting
+   *  the viewer. `shuffleActive` lights the button. */
+  shuffleActive?: boolean;
+  onToggleShuffle?: () => void;
   /** If the page is filtering by a person, pass that uuid here so the
    *  viewer can show a "Reassign person" affordance. */
   currentPersonUuid?: string | null;
@@ -119,6 +124,7 @@ interface Props {
 export function MediaViewer({
   item, onClose, onPrev, onNext, onSeeSimilar, onSetLikes, position,
   slideshow = false, onSlideshowExit, onSlideshowEnter,
+  shuffleActive = false, onToggleShuffle,
   currentPersonUuid = null, onReassignPerson,
   onRotate,
   reelItems, reelHasMore, onSelectItem,
@@ -1652,6 +1658,17 @@ export function MediaViewer({
                 <AutoplayIcon on={slideshow} />
               </ToolbarButton>
             )}
+            {onToggleShuffle && (
+              <ToolbarButton
+                onClick={onToggleShuffle}
+                title={shuffleActive
+                  ? 'Shuffle on — click to restore order'
+                  : 'Shuffle — reshuffle the coming-up order from this item'}
+                className={shuffleActive ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+              >
+                <ShuffleIcon />
+              </ToolbarButton>
+            )}
             {onAddToPlaylist && (
               <ToolbarButton
                 onClick={() => onAddToPlaylist(item)}
@@ -2146,6 +2163,12 @@ function AutoplayIcon({ on }: { on: boolean }) { return (
     <path d="M13.5 5.5A6 6 0 1 0 14 8" />
     <path d="M13.5 2.5v3h-3" />
     <path d="M6.5 5.5l4 2.5-4 2.5z" fill={on ? 'currentColor' : 'none'} />
+  </svg>
+); }
+function ShuffleIcon() { return (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 4h2.5l7 8H14M2 12h2.5l3-3.4M11 9l3 3-3 3M11 1l3 3-3 3" />
   </svg>
 ); }
 function FitCoverIcon() { return (
