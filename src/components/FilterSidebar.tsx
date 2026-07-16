@@ -31,6 +31,8 @@ interface Props {
   onSelectSort: (v: SortKey | null) => void;
   /** Shuffle is active — sorting is overridden, so the control is disabled. */
   sortDisabled: boolean;
+  /** Turn shuffle off from the sort control itself. */
+  onDisableShuffle: () => void;
 
   kind: Kind | null;
   onKindChange: (v: Kind | null) => void;
@@ -83,7 +85,7 @@ const QUALITY_LABELS: Record<Quality, string> = {
 export function FilterSidebar({
   facets,
   loading,
-  sort, relevanceMode, onSelectSort, sortDisabled,
+  sort, relevanceMode, onSelectSort, sortDisabled, onDisableShuffle,
   kind, onKindChange,
   orientation, onOrientationChange,
   quality, onQualityChange,
@@ -153,12 +155,13 @@ export function FilterSidebar({
   return (
     // Fills the Level-2 panel; the panel owns the sticky positioning + scroll.
     <div className="w-full">
-      <FilterSection title="Sort" hint={sortDisabled ? 'shuffled' : undefined}>
+      <FilterSection title="Sort">
         <SortControl
           sort={sort}
           relevanceMode={relevanceMode}
           onSelectSort={onSelectSort}
           disabled={sortDisabled}
+          onDisableShuffle={onDisableShuffle}
         />
       </FilterSection>
 

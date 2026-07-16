@@ -28,11 +28,14 @@ interface Props {
   relevanceMode: boolean;
   /** null = the view's default (relevance in search, newest in browse). */
   onSelectSort: (key: SortKey | null) => void;
-  /** Shuffle is active, so sorting is overridden — grey it out. */
+  /** Shuffle is active, so sorting is overridden. */
   disabled?: boolean;
+  /** Turn shuffle off from right here — so the user doesn't have to travel back
+   *  to the Play/Shuffle button just to re-enable sorting. */
+  onDisableShuffle?: () => void;
 }
 
-export function SortControl({ sort, relevanceMode, onSelectSort, disabled }: Props) {
+export function SortControl({ sort, relevanceMode, onSelectSort, disabled, onDisableShuffle }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -44,22 +47,38 @@ export function SortControl({ sort, relevanceMode, onSelectSort, disabled }: Pro
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  const buttonLabel = disabled
-    ? 'Shuffled'
-    : sort != null ? LABEL[sort] : relevanceMode ? 'Relevance' : 'Newest';
+  const buttonLabel = sort != null ? LABEL[sort] : relevanceMode ? 'Relevance' : 'Newest';
   const selectedKey: SortKey | 'relevance' =
     sort != null ? sort : relevanceMode ? 'relevance' : 'taken-desc';
+
+  // While shuffling, the sort dropdown is meaningless — swap it for a one-click
+  // "Shuffled · turn off" button so sorting is reachable without crossing to the
+  // Play/Shuffle toggle on the far side of the page.
+  if (disabled) {
+    return (
+      <div className="px-3">
+        <button
+          onClick={onDisableShuffle}
+          title="Turn off shuffle to sort again"
+          className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-sm rounded-md
+                     bg-emerald-600/15 text-emerald-300 ring-1 ring-emerald-500/40 hover:bg-emerald-600/25 transition"
+        >
+          <span className="flex items-center gap-1.5 min-w-0">
+            <ShuffleIcon />
+            <span className="truncate">Shuffled</span>
+          </span>
+          <span className="text-xs text-emerald-400/90 shrink-0">Turn off</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="relative px-3" ref={ref}>
       <button
-        onClick={() => !disabled && setOpen((v) => !v)}
-        disabled={disabled}
-        title={disabled ? 'Turn off shuffle to sort' : undefined}
-        className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-sm ring-1 rounded-md transition
-          ${disabled
-            ? 'text-zinc-600 ring-zinc-800 cursor-not-allowed'
-            : 'text-zinc-200 ring-zinc-700 hover:bg-zinc-900'}`}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-sm ring-1 rounded-md transition
+                   text-zinc-200 ring-zinc-700 hover:bg-zinc-900"
       >
         <span className="flex items-center gap-1.5 min-w-0">
           <SortIcon />
@@ -67,7 +86,7 @@ export function SortControl({ sort, relevanceMode, onSelectSort, disabled }: Pro
         </span>
         <ChevronIcon />
       </button>
-      {open && !disabled && (
+      {open && (
         <div className="absolute left-3 right-3 top-full mt-1.5 z-30 bg-zinc-900 ring-1 ring-zinc-800 rounded-lg shadow-xl py-1">
           {relevanceMode && (
             <SortMenuItem
@@ -107,6 +126,13 @@ function SortIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="shrink-0">
       <path d="M3 4h10M3 8h7M3 12h4" />
+    </svg>
+  );
+}
+function ShuffleIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+      <path d="M2 4h2.5l7 8H14M2 12h2.5l3-3.4M11 9l3 3-3 3M11 1l3 3-3 3" />
     </svg>
   );
 }

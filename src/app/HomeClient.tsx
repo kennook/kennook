@@ -1019,6 +1019,7 @@ function HomeContent() {
               relevanceMode={inSearch || inSimilar}
               onSelectSort={(key) => url.set({ sort: key, shuffle: null, shuffleAnchor: null })}
               sortDisabled={url.shuffle != null}
+              onDisableShuffle={() => url.set({ shuffle: null, shuffleAnchor: null })}
               kind={url.kind}
               onKindChange={(v) => url.set({ kind: v })}
               orientation={url.orientation}

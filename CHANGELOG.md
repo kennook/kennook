@@ -56,10 +56,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   set into a fresh playlist but pins the item you were on (the one you're
   viewing, else the last one you opened, else the first result) to the top — so
   Play walks the new order from where you are. While shuffle is on it's clearly
-  active and the sidebar **Sort** control is disabled (shuffle overrides
-  ordering); turning it off restores your previous sort and order. Shuffle is
-  also available **inside the full-screen viewer** (a toolbar toggle), so you can
-  reshuffle the "coming up" order — pinning the item you're on — without exiting.
+  active and the sidebar **Sort** control turns into a one-click "Shuffled ·
+  turn off" button (so you can restore sorting right there instead of crossing
+  back to the shuffle toggle); turning it off restores your previous sort and
+  order. Shuffle is also available **inside the full-screen viewer** (a toolbar
+  toggle), so you can reshuffle the "coming up" order — pinning the item you're
+  on — without exiting.
 - External sources now show a compact per-kind icon (channel / playlist / video)
   instead of the "CHANNEL/VIDEO" text label, leaving room for the full title.
 - The sidebar now widens when the sources manager is open, so source titles and
