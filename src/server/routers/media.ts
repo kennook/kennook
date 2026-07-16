@@ -149,20 +149,28 @@ function buildOrderBy(
   filters: MediaFilters,
   fallback: string,
 ): { sql: string; params: SqlParam[] } {
+  // EVERY ordering ends with `m.id` — the primary key, so a fully-unique final
+  // tiebreak. Without it, ties (shuffle_key hash collisions, equal timestamps,
+  // equal like/view counts, equal relevance scores) leave those rows' relative
+  // order UNDEFINED, so SQLite may sort them differently between the page-1 and
+  // page-2 OFFSET queries — an item then straddles the boundary and lands in
+  // BOTH pages. In the accumulated infinite list that's a duplicate uuid, which
+  // React flags as "two children with the same key". m.id makes the order
+  // strictly total, so offset pagination is stable.
+  const TIEBREAK = 'm.id';
   if (filters.shuffleSeed != null) {
     // shuffle_key is a custom SQL function registered per connection (see
     // src/db/client.ts) — a proper avalanche hash, stable per seed. An optional
     // anchor uuid is pinned to the very top: `(m.uuid = ?)` is 1 for the anchor
     // and 0 for everything else, so DESC floats it first; the rest scatter by
-    // shuffle_key. (Offset pagination re-runs this deterministic order, so the
-    // extra key is safe.)
+    // shuffle_key.
     if (filters.shuffleAnchor) {
       return {
-        sql: 'ORDER BY (m.uuid = ?) DESC, shuffle_key(m.id, ?)',
+        sql: `ORDER BY (m.uuid = ?) DESC, shuffle_key(m.id, ?), ${TIEBREAK}`,
         params: [filters.shuffleAnchor, filters.shuffleSeed],
       };
     }
-    return { sql: 'ORDER BY shuffle_key(m.id, ?)', params: [filters.shuffleSeed] };
+    return { sql: `ORDER BY shuffle_key(m.id, ?), ${TIEBREAK}`, params: [filters.shuffleSeed] };
   }
   let expr: string;
   switch (filters.sort) {
@@ -175,7 +183,7 @@ function buildOrderBy(
     case 'views':      expr = `(SELECT COALESCE(SUM(view_count), 0) FROM media_views WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
     default:           expr = fallback;
   }
-  return { sql: `ORDER BY ${expr}`, params: [] };
+  return { sql: `ORDER BY ${expr}, ${TIEBREAK}`, params: [] };
 }
 
 // Records that the current user has INTERACTED with the item (like, tag,

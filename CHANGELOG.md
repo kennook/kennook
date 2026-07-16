@@ -112,6 +112,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Fixed a "two children with the same key" error (and the occasional duplicated /
+  missing thumbnail) in the results grid: result orderings now end with a unique
+  tiebreak, so ties (shuffle collisions, equal dates/likes) can't let an item
+  straddle a page boundary and load twice. The grid also de-dups defensively.
 - Full-screen viewer chrome (the "coming up" reel, zoom minimap, toolbar) and the
   video controls bar now reliably auto-hide after a (re)load — they no longer
   stay pinned until you interact with them and move away. Both now hide after

@@ -582,16 +582,24 @@ function HomeContent() {
   const loadMore = () => { void active.fetchNextPage(); };
 
   const items: MediaItemDto[] = useMemo(() => {
-    if (inPlaylist) {
-      return playlist.data?.pages.flatMap((p) =>
-        p.items
-          .filter((it) => it.available)
-          .map((it) => (it as unknown as { available: true; item: MediaItemDto }).item),
-      ) ?? [];
-    }
-    if (inSimilar) return similar.data?.pages.flatMap((p) => p.items) ?? [];
-    if (inSearch) return search.data?.pages.flatMap((p) => p.items) ?? [];
-    return recent.data?.pages.flatMap((p) => p.items) ?? [];
+    const raw = (() => {
+      if (inPlaylist) {
+        return playlist.data?.pages.flatMap((p) =>
+          p.items
+            .filter((it) => it.available)
+            .map((it) => (it as unknown as { available: true; item: MediaItemDto }).item),
+        ) ?? [];
+      }
+      if (inSimilar) return similar.data?.pages.flatMap((p) => p.items) ?? [];
+      if (inSearch) return search.data?.pages.flatMap((p) => p.items) ?? [];
+      return recent.data?.pages.flatMap((p) => p.items) ?? [];
+    })();
+    // Defensive de-dup by uuid: the server's ORDER BY now has a fully-unique
+    // tiebreak so pages shouldn't overlap, but a duplicate uuid here would give
+    // the masonry two children with the same key (it then omits/duplicates
+    // cells). Keep the first occurrence.
+    const seen = new Set<string>();
+    return raw.filter((it) => (seen.has(it.uuid) ? false : (seen.add(it.uuid), true)));
   }, [inPlaylist, inSimilar, inSearch, playlist.data, similar.data, search.data, recent.data]);
 
   // Per-view metadata for the headers (first page carries it).
