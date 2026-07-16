@@ -13,6 +13,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- **Damaged-file warning.** When an item's preview can't be loaded (a strong sign
+  the source is missing or corrupt), its grid tile now shows a small ⚠ badge with
+  a tooltip explaining it may be damaged. And if a video fails to play in the
+  full-screen viewer, you get a clear "This video couldn't be played" message
+  instead of a black screen.
 - Redesigned sidebar as a **two-level, single-viewport** layout: a thin,
   collapsible **rail** (toggle between icon-only and icon + label, remembered)
   for top-level navigation — Library and External sources, plus Connect-a-device,

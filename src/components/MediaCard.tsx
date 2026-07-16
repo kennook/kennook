@@ -111,6 +111,11 @@ export function MediaCard({
   const [sparkleKey, setSparkleKey] = useState(0);
   const lastSparkleAtRef = useRef(0);
 
+  // The thumbnail failed to load even after falling back to the main thumbnail —
+  // on a local server that means the file/derivative is missing or unreadable,
+  // i.e. the source is probably damaged. Surfaces a small warning badge.
+  const [thumbBroken, setThumbBroken] = useState(false);
+
   const handleCardClick = (e: React.MouseEvent) => {
     if (selectionMode && onToggleSelection) onToggleSelection(e);
     else if ((e.metaKey || e.ctrlKey || e.shiftKey) && onToggleSelection) onToggleSelection(e);
@@ -167,6 +172,7 @@ export function MediaCard({
           alt={filename}
           loading="lazy"
           className={`absolute inset-0 h-full w-full object-cover transition
+                      ${thumbBroken ? 'opacity-0' : ''}
                       ${selected ? 'scale-95 brightness-75' : 'group-hover:scale-[1.02]'}`}
           // Anchor the cover-crop on the faces (object-position). This is applied
           // in the pre-transform (source) box, and any rotate() pivots around the
@@ -180,13 +186,23 @@ export function MediaCard({
           }}
           // If the frame-at-timestamp 256px JPEG isn't on disk (e.g. legacy
           // occurrences from before enrich-video-text shipped), fall back
-          // to the item's main thumbnail.
+          // to the item's main thumbnail. If THAT fails too, the source is
+          // likely damaged/missing — flag it.
           onError={(e) => {
             const img = e.currentTarget;
             if (img.src !== thumbnailUrl) img.src = thumbnailUrl;
+            else setThumbBroken(true);
           }}
         />
       </button>
+
+      {/* Damaged / unreadable source — the thumbnail couldn't be shown. Faint
+          centred glyph so the empty tile doesn't read as "still loading". */}
+      {thumbBroken && (
+        <div className="absolute inset-0 grid place-items-center pointer-events-none text-zinc-700">
+          <BrokenMediaIcon />
+        </div>
+      )}
 
       {matches && matches.length > 0 && (
         <TextMatchBadge matches={matches} />
@@ -282,6 +298,17 @@ export function MediaCard({
           chip when both apply. Each is independent so either can show
           alone. */}
       <div className="absolute top-2 right-2 flex flex-col items-end gap-1 pointer-events-none">
+        {thumbBroken && (
+          <span
+            // pointer-events-auto so the native tooltip shows (the stack is
+            // pointer-events-none so badges never block the tile's click).
+            title={`This ${kind === 'video' ? 'video' : 'image'} appears to be damaged — its preview couldn't be loaded (the file may be missing or corrupt)`}
+            className="pointer-events-auto grid place-items-center w-5 h-5 rounded-full
+                       bg-rose-950/85 text-rose-300 border border-rose-700/50 backdrop-blur"
+          >
+            <WarningIcon />
+          </span>
+        )}
         {effectiveSensitive(nsfwScore, violenceScore, sensitiveOverride) && (
           <span
             title={`Flagged — nsfw ${(nsfwScore * 100).toFixed(0)}%, violence ${(violenceScore * 100).toFixed(0)}%`}
@@ -314,6 +341,18 @@ function WarningIcon() {
          strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 1.5l7 12.5H1L8 1.5z" />
       <path d="M8 6v4M8 12v0.5" />
+    </svg>
+  );
+}
+
+// Broken/torn film frame — the centred glyph on a tile whose preview failed.
+function BrokenMediaIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9l5 3-5 3M21 9l-5 3 5 3" />
+      <path d="M9 4l3 4 3-4M9 20l3-4 3 4" />
     </svg>
   );
 }

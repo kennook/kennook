@@ -133,8 +133,11 @@ export function VideoPlayer({
   // snoozing drive is spinning up) or mid-playback buffering. Drives a spinner
   // so a black screen doesn't read as "nothing's happening".
   const [buffering, setBuffering] = useState(true);
+  // The <video> fired an error event — the source failed to load/decode, i.e.
+  // it's likely damaged or an unsupported codec. Reset on item swap.
+  const [damaged, setDamaged] = useState(false);
   // A new src is loading until it can play — reset immediately on item swap.
-  useEffect(() => { setBuffering(true); }, [src]);
+  useEffect(() => { setBuffering(true); setDamaged(false); }, [src]);
   // Only actually show the spinner if buffering lasts >200ms, so fast/cached
   // loads don't flash it.
   const [showSpinner, setShowSpinner] = useState(false);
@@ -484,7 +487,7 @@ export function VideoPlayer({
         onStalled={() => setBuffering(true)}
         onCanPlay={() => setBuffering(false)}
         onPlaying={() => setBuffering(false)}
-        onError={() => setBuffering(false)}
+        onError={() => { setBuffering(false); setDamaged(true); }}
         onLoadedMetadata={(e) => {
           const dur = e.currentTarget.duration;
           setDuration(dur);
@@ -542,9 +545,24 @@ export function VideoPlayer({
 
       {/* Loading / buffering spinner — centered over the (possibly still black)
           video so it's clear something's happening while data streams in. */}
-      {showSpinner && (
+      {showSpinner && !damaged && (
         <div className="absolute inset-0 grid place-items-center pointer-events-none">
           <div className="w-12 h-12 rounded-full border-2 border-white/25 border-t-white/90 animate-spin" />
+        </div>
+      )}
+
+      {/* Playback failed — the file is likely damaged or an unsupported codec. */}
+      {damaged && (
+        <div className="absolute inset-0 grid place-items-center pointer-events-none px-6">
+          <div className="flex flex-col items-center gap-2 text-center text-zinc-300">
+            <span className="grid place-items-center w-11 h-11 rounded-full bg-rose-950/80 text-rose-300 border border-rose-700/50">
+              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 1.5l7 12.5H1L8 1.5z" /><path d="M8 6v4M8 12v0.5" />
+              </svg>
+            </span>
+            <div className="text-sm font-medium text-zinc-200">This video couldn&apos;t be played</div>
+            <div className="text-xs text-zinc-400 max-w-xs">The file may be damaged or in an unsupported format.</div>
+          </div>
         </div>
       )}
 
