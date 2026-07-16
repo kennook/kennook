@@ -117,6 +117,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Fixed a React "cannot update a component while rendering a different one"
+  warning from the video player: the solo-audio HUD flash was fired inside a
+  `setMuted` state updater (which runs during render). It now checks the previous
+  mute state via a ref and flashes outside the updater.
 - Fixed a "two children with the same key" error (and the occasional duplicated /
   missing thumbnail) in the results grid: result orderings now end with a unique
   tiebreak, so ties (shuffle collisions, equal dates/likes) can't let an item

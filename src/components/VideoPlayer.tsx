@@ -152,6 +152,11 @@ export function VideoPlayer({
   // when they want sound. There's no shared mute state worth remembering
   // because unmuting one window mutes all the others (the solo-audio rule).
   const [muted, setMuted] = useState(true);
+  // Latest `muted` in a ref so the sync handler can check it WITHOUT a
+  // side-effecting state updater (flashing the HUD inside setMuted's updater
+  // runs during render → "can't update ActionHud while rendering VideoPlayer").
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
   const [volume, setVolume] = usePreference('videoVolume');
   const [duration, setDuration] = useState<number | null>(null);
   // Hovered bookmark → a tooltip portaled to <body> (escapes the controls
@@ -170,7 +175,9 @@ export function VideoPlayer({
   useSyncEvent('audio.unmuted', () => {
     // Flash the HUD only when we actually LOSE audio (were unmuted) — so a
     // background mute is visible, without flashing every already-muted window.
-    setMuted((m) => { if (!m) flashHud('mute'); return true; });
+    // Side effect lives OUTSIDE the state updater (updaters must stay pure).
+    if (!mutedRef.current) flashHud('mute');
+    setMuted(true);
   });
   const applyMute = (next: boolean) => {
     setMuted(next);
