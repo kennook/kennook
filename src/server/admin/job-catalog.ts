@@ -61,6 +61,10 @@ export interface JobDefinition {
    *  estimate. Multiplied by the pending count. Omit for one-shot jobs
    *  (clustering) or jobs whose item count isn't knowable (indexer). */
   secPerItem?: number;
+  /** Other step ids that must finish before this one in the run tree. Only
+   *  enforced among steps enqueued together (running a step alone ignores deps
+   *  not in the batch). Powers the hierarchical run tree's ordering + gating. */
+  dependsOn?: string[];
 }
 
 export const JOB_CATALOG: JobDefinition[] = [
@@ -297,6 +301,29 @@ for (const def of JOB_CATALOG) {
   if (DRIVE_SCOPED_COMMANDS.has(def.id) && !def.options.some((o) => o.flag === 'storage')) {
     def.options.push({ flag: 'storage', type: 'number', label: 'Storage', help: 'Restrict to one drive (storage id)' });
   }
+}
+
+// ─── Run-tree dependency graph ───────────────────────────────────────────────
+// Ordering for the hierarchical run tree: index first, then backfill, then
+// enrich (which needs backfilled vectors/previews); within enrich, transcript
+// tags need the transcript, and people-clustering needs faces. Only enforced
+// among co-enqueued steps, so a lone step still runs immediately.
+const BACKFILL_STEPS = ['backfill:vectors', 'backfill:previews', 'backfill:views'];
+const STEP_DEPENDS_ON: Record<string, string[]> = {
+  'backfill:vectors': ['indexer'],
+  'backfill:previews': ['indexer'],
+  'backfill:views': ['indexer'],
+  'enrich:text': ['indexer', ...BACKFILL_STEPS],
+  'enrich:video-text': ['indexer', ...BACKFILL_STEPS],
+  'enrich:transcript': ['indexer', ...BACKFILL_STEPS],
+  'enrich:transcript-tags': ['indexer', ...BACKFILL_STEPS, 'enrich:transcript'],
+  'enrich:scrub': ['indexer', ...BACKFILL_STEPS],
+  'enrich:faces': ['indexer', ...BACKFILL_STEPS],
+  'enrich:sensitive': ['indexer', ...BACKFILL_STEPS],
+  'enrich:people': ['indexer', ...BACKFILL_STEPS, 'enrich:faces'],
+};
+for (const def of JOB_CATALOG) {
+  if (STEP_DEPENDS_ON[def.id]) def.dependsOn = STEP_DEPENDS_ON[def.id];
 }
 
 export function getJobDefinition(id: string): JobDefinition | null {

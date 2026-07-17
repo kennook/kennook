@@ -59,6 +59,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   const steps = expandCommand(body.command);
 
   const created: AdminJobRow[] = [];
+  // Map each step to its enqueued job id so a dependent step can reference the
+  // real ids of its prerequisites (only those present in THIS batch).
+  const stepJobId = new Map<string, number>();
   for (const stepId of steps) {
     const def = getJobDefinition(stepId);
     if (!def) {
@@ -90,13 +93,20 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
 
     const librarySlug = typeof cleanArgs.library === 'string' ? cleanArgs.library : null;
-    created.push(enqueue({
+    // Dependencies present in this batch → the job ids to wait on.
+    const dependsOn = (def.dependsOn ?? [])
+      .map((d) => stepJobId.get(d))
+      .filter((x): x is number => x != null);
+    const job = enqueue({
       command: def.id,
       args: cleanArgs,
       librarySlug,
       storageId,
+      dependsOn,
       userId: guard.user.id,
-    }));
+    });
+    stepJobId.set(stepId, job.id);
+    created.push(job);
   }
 
   // Always return an array. `job` retained for any older caller reading

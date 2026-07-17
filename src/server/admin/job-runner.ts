@@ -21,7 +21,7 @@ import type { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import {
   enqueueJob as storeEnqueue,
-  nextQueuedJob,
+  nextRunnableJob,
   markRunning,
   appendOutput,
   setProgress,
@@ -170,7 +170,7 @@ function startWorkerLoop(): void {
       state.pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
       return;
     }
-    const next = nextQueuedJob();
+    const next = nextRunnableJob();
     if (!next) {
       // Idle — poll again later.
       state.pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
@@ -189,7 +189,7 @@ function scheduleTickNow(): void {
     state.pollTimer = null;
     if (state.runningJobId !== null) return;
     if (isQueuePaused()) { startWorkerLoop(); return; }
-    const next = nextQueuedJob();
+    const next = nextRunnableJob();
     if (next) {
       startJob(next);
     } else {
@@ -429,6 +429,7 @@ export function enqueue(input: {
   args: Record<string, string | number | boolean>;
   librarySlug: string | null;
   storageId?: number | null;
+  dependsOn?: number[];
   userId: number;
 }): AdminJobRow {
   ensureRunnerStarted();

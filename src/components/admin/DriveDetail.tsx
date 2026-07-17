@@ -8,7 +8,7 @@
 
 import Link from 'next/link';
 import type { StorageInfo } from '@/server/storage';
-import { RunStorageMenu } from './RunStorageMenu';
+import { RunTree } from './RunTree';
 import { JobsPanel } from './JobsPanel';
 
 function formatBytes(n: number | null): string {
@@ -120,15 +120,6 @@ export function DriveDetail({
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 mb-6">
-        {runnable && (
-          <RunStorageMenu
-            librarySlug={librarySlug!}
-            rootPath={drive.root_path}
-            storageId={drive.id}
-            onEnqueued={onEnqueued}
-            onError={onError}
-          />
-        )}
         {drive.exists !== null && drive.root_path !== '/' && (
           <Link
             href={`/admin/storage/${drive.id}`}
@@ -155,6 +146,19 @@ export function DriveDetail({
           Remove
         </button>
       </div>
+
+      {/* Run tree — the pipeline for this drive */}
+      {runnable && (
+        <div className="pt-5 border-t border-zinc-900 mb-6">
+          <RunTree
+            librarySlug={librarySlug!}
+            storageId={drive.id}
+            rootPath={drive.root_path}
+            onEnqueued={onEnqueued}
+            onError={onError}
+          />
+        </div>
+      )}
 
       {/* This drive's job log */}
       <div className="pt-5 border-t border-zinc-900">

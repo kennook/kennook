@@ -23,6 +23,9 @@ export interface AdminJobRow {
   /** The storage/drive this job belongs to, or null for system / library-wide
    *  jobs. Drives the per-drive job log in the storage admin. */
   storageId: number | null;
+  /** admin_jobs.id this job waits on — all must be 'completed' before it runs
+   *  (a failed/canceled prerequisite cancels it). Empty for independent jobs. */
+  dependsOn: number[];
   status: JobStatus;
   output: string;
   exitCode: number | null;
@@ -41,6 +44,7 @@ interface DbRow {
   args_json: string;
   library_slug: string | null;
   storage_id: number | null;
+  depends_on_json: string | null;
   status: JobStatus;
   output: string;
   exit_code: number | null;
@@ -49,6 +53,14 @@ interface DbRow {
   started_at: number | null;
   finished_at: number | null;
   progress_json: string | null;
+}
+
+function parseIds(json: string | null): number[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((n): n is number => typeof n === 'number') : [];
+  } catch { return []; }
 }
 
 function rowToJob(r: DbRow): AdminJobRow {
@@ -64,6 +76,7 @@ function rowToJob(r: DbRow): AdminJobRow {
     args,
     librarySlug: r.library_slug,
     storageId: r.storage_id ?? null,
+    dependsOn: parseIds(r.depends_on_json),
     status: r.status,
     output: r.output,
     exitCode: r.exit_code,
@@ -82,20 +95,23 @@ export function enqueueJob(input: {
   args: Record<string, string | number | boolean>;
   librarySlug: string | null;
   storageId?: number | null;
+  dependsOn?: number[];
   userId: number;
 }): AdminJobRow {
   const db = getUserSqlite();
   const now = Date.now();
+  const deps = input.dependsOn && input.dependsOn.length ? JSON.stringify(input.dependsOn) : null;
   const res = db.prepare(`
     INSERT INTO admin_jobs (
-      command, args_json, library_slug, storage_id, status,
+      command, args_json, library_slug, storage_id, depends_on_json, status,
       enqueued_by_user_id, enqueued_at
-    ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
   `).run(
     input.command,
     JSON.stringify(input.args),
     input.librarySlug,
     input.storageId ?? null,
+    deps,
     input.userId,
     now,
   );
@@ -139,6 +155,54 @@ export function nextQueuedJob(): AdminJobRow | null {
     LIMIT 1
   `).get() as DbRow | undefined;
   return row ? rowToJob(row) : null;
+}
+
+/**
+ * Dependency-aware queue pick (hierarchical run tree). Scans queued jobs in
+ * enqueue order and returns the first whose prerequisites are all 'completed'.
+ * A job blocked by a failed/canceled/missing prerequisite is itself canceled in
+ * this pass (the cascade reaches its own dependents on the same pass, since
+ * dependents are enqueued after their deps). Still one job at a time — this only
+ * changes WHICH queued job runs next, never how many run concurrently.
+ */
+export function nextRunnableJob(): AdminJobRow | null {
+  const db = getUserSqlite();
+  const queued = db.prepare(`
+    SELECT * FROM admin_jobs WHERE status = 'queued' ORDER BY enqueued_at ASC, id ASC
+  `).all() as unknown as DbRow[];
+  if (queued.length === 0) return null;
+
+  const statusOf = (id: number): JobStatus | null => {
+    const r = db.prepare(`SELECT status FROM admin_jobs WHERE id = ?`).get(id) as { status: JobStatus } | undefined;
+    return r?.status ?? null;
+  };
+
+  for (const r of queued) {
+    const deps = parseIds(r.depends_on_json);
+    if (deps.length === 0) return rowToJob(r);
+
+    let allDone = true;
+    let blocked = false;
+    for (const d of deps) {
+      const s = statusOf(d);
+      if (s === 'completed') continue;
+      if (s === 'failed' || s === 'canceled' || s === null) { blocked = true; break; }
+      allDone = false; // still queued or running
+    }
+    if (blocked) {
+      db.prepare(`
+        UPDATE admin_jobs
+        SET status = 'canceled', finished_at = ?,
+            output = output || char(10) || '[skipped — a prerequisite step did not complete]'
+        WHERE id = ? AND status = 'queued'
+      `).run(Date.now(), r.id);
+      continue; // its dependents get canceled later in this same loop
+    }
+    if (allDone) return rowToJob(r);
+    // else: a prerequisite is still queued/running — leave this job waiting and
+    // try the next (its dep will be earlier in the list and run first).
+  }
+  return null;
 }
 
 /**

@@ -32,7 +32,7 @@ export function getUserSqlite(): DatabaseSync {
   return db;
 }
 
-const LATEST_USER_SCHEMA_VERSION = 14;
+const LATEST_USER_SCHEMA_VERSION = 15;
 
 function initUserSchema(db: DatabaseSync) {
   // Base tables (idempotent — IF NOT EXISTS). For new DBs the column set is
@@ -273,6 +273,15 @@ function initUserSchema(db: DatabaseSync) {
   if (version < 14) {
     try { db.exec(`ALTER TABLE admin_jobs ADD COLUMN storage_id INTEGER`); } catch {}
     version = 14;
+  }
+
+  // v14 → v15: dependency edges between admin_jobs, for the hierarchical run
+  // tree. `depends_on_json` is a JSON array of admin_jobs.id that must be
+  // 'completed' before this job may run; a failed/canceled prerequisite cancels
+  // the dependent. Nullable — a job with no deps runs as soon as it's next.
+  if (version < 15) {
+    try { db.exec(`ALTER TABLE admin_jobs ADD COLUMN depends_on_json TEXT`); } catch {}
+    version = 15;
   }
 
   if (version !== LATEST_USER_SCHEMA_VERSION) {

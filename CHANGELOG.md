@@ -16,10 +16,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 - **Storage admin redesigned as a Disk-Utility-style, per-drive view.** Drives are
   listed down the left (Internal / External / Cloud); selecting one shows its own
   panel — a capacity bar (this library's footprint vs other data vs free), indexed
-  stats, the Run menu, Browse/Relocate/Remove, and a job log scoped to just that
+  stats, Browse/Relocate/Remove, a **run tree**, and a job log scoped to just that
   drive. Enrichment/backfill can now be **run per drive** — each step scopes to
-  one storage, and the Run menu's pending counts + ETAs reflect just that drive.
-  (A hierarchical run tree is coming next.)
+  one storage, and its pending counts + ETAs reflect just that drive. The old flat
+  "Run ▾" list is replaced by a **hierarchical run tree** (Index → Backfill →
+  Enrich) with live per-node status; steps run one at a time and a step shows
+  "waiting" until its prerequisites finish (if a prerequisite fails, dependent
+  steps are skipped).
 - **Your tags and bookmarks now count in search.** Searching a word that matches
   one of your tags or a bookmark label now surfaces that item — previously tags
   weren't indexed at all and bookmark-only matches never appeared (search only
