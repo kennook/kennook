@@ -32,7 +32,7 @@ export function getUserSqlite(): DatabaseSync {
   return db;
 }
 
-const LATEST_USER_SCHEMA_VERSION = 13;
+const LATEST_USER_SCHEMA_VERSION = 14;
 
 function initUserSchema(db: DatabaseSync) {
   // Base tables (idempotent — IF NOT EXISTS). For new DBs the column set is
@@ -265,6 +265,14 @@ function initUserSchema(db: DatabaseSync) {
          WHERE user_id = 1 AND key = 'screensaver.lock.hash'`,
     ).run(hashSecret('1234'));
     version = 13;
+  }
+
+  // v13 → v14: scope admin_jobs to a specific storage/drive (nullable — system
+  // jobs and library-wide steps leave it null). Powers the per-drive job log in
+  // the Disk-Utility-style storage admin.
+  if (version < 14) {
+    try { db.exec(`ALTER TABLE admin_jobs ADD COLUMN storage_id INTEGER`); } catch {}
+    version = 14;
   }
 
   if (version !== LATEST_USER_SCHEMA_VERSION) {

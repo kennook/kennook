@@ -13,6 +13,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 interface Props {
   librarySlug: string;
   rootPath: string;
+  /** Drive this run belongs to — tags the enqueued jobs so they show in this
+   *  drive's per-drive log. */
+  storageId?: number;
   onEnqueued: (label: string, jobIds: number[]) => void;
   onError: (message: string) => void;
 }
@@ -48,7 +51,7 @@ function formatEta(sec: number | null): string | null {
   return `~${hr.toFixed(hr < 10 ? 1 : 0)} hr`;
 }
 
-export function RunStorageMenu({ librarySlug, rootPath, onEnqueued, onError }: Props) {
+export function RunStorageMenu({ librarySlug, rootPath, storageId, onEnqueued, onError }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [estimates, setEstimates] = useState<ActionEstimate[] | null>(null);
@@ -88,7 +91,7 @@ export function RunStorageMenu({ librarySlug, rootPath, onEnqueued, onError }: P
       const res = await fetch('/api/admin/jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ command: a.command, args }),
+        body: JSON.stringify({ command: a.command, args, storageId }),
       });
       if (!res.ok) throw new Error(await res.text().catch(() => `Enqueue failed (${res.status})`));
       const data = await res.json() as { jobs: Array<{ id: number }> };

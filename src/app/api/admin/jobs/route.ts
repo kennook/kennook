@@ -27,7 +27,11 @@ export async function GET(req: NextRequest): Promise<Response> {
   // jobs page (the common case), and the queue never advances past it.
   // Idempotent: real work happens once per process boot.
   ensureRunnerStarted();
-  const jobs = listJobs(100);
+  // `?storage=<id>` scopes the list to one drive's jobs (the per-drive log);
+  // omitted → the whole instance-wide list.
+  const storageRaw = req.nextUrl.searchParams.get('storage');
+  const storageId = storageRaw != null && storageRaw !== '' ? Number(storageRaw) : null;
+  const jobs = listJobs(100, Number.isFinite(storageId) ? storageId : null);
   return Response.json({ jobs, paused: isPaused() });
 }
 
@@ -35,13 +39,19 @@ export async function POST(req: NextRequest): Promise<Response> {
   const guard = requireAdmin(req);
   if (guard.response) return guard.response;
 
-  let body: { command?: string; args?: Record<string, unknown> };
+  let body: { command?: string; args?: Record<string, unknown>; storageId?: number };
   try { body = await req.json(); }
   catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
   if (typeof body.command !== 'string' || !body.command) {
     return Response.json({ error: 'Missing command' }, { status: 400 });
   }
+
+  // Which drive this run belongs to — tags every enqueued step so the storage
+  // admin can show a per-drive job log. null for library-wide / system jobs.
+  const storageId = typeof body.storageId === 'number' && Number.isFinite(body.storageId)
+    ? body.storageId
+    : null;
 
   // Expand aggregates (enrich:all, backfill:all, setup) into discrete steps
   // so each runs as its own queued job. Non-aggregates expand to themselves.
@@ -84,6 +94,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       command: def.id,
       args: cleanArgs,
       librarySlug,
+      storageId,
       userId: guard.user.id,
     }));
   }

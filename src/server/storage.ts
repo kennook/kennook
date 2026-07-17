@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Sqlite } from '@/db/client';
 import type { StorageConfig } from '@/db/schema';
+import { diskUsageFor } from './disk-usage';
 
 // Resolving an absolute path from a media row means joining the storage
 // location's root_path with the row's relative path. Three flavours below:
@@ -121,6 +122,14 @@ export interface StorageInfo {
   file_count: number;
   /** Epoch-ms timestamp of the last successful indexer run for this storage, or null. */
   last_indexed_at: number | null;
+  /** Total bytes on the filesystem the root lives on. Null when offline/cloud
+   *  or `statfs` is unavailable. */
+  capacity_bytes: number | null;
+  /** Free bytes on that filesystem. Null in the same cases. */
+  free_bytes: number | null;
+  /** Sum of `size_bytes` for this storage's indexed items — the library's own
+   *  footprint on the drive (distinct from filesystem "used"). */
+  library_bytes: number;
 }
 
 export function listStorageInfo(sqlite: Sqlite): StorageInfo[] {
@@ -129,13 +138,17 @@ export function listStorageInfo(sqlite: Sqlite): StorageInfo[] {
     .all() as { id: number; name: string; type: string; config: string; is_default: number; last_indexed_at: number | null }[];
 
   const counts = sqlite
-    .prepare(`SELECT storage_location_id AS id, COUNT(*) AS n FROM media_items WHERE deleted_at IS NULL GROUP BY storage_location_id`)
-    .all() as { id: number; n: number }[];
-  const countMap = new Map(counts.map((c) => [c.id, c.n]));
+    .prepare(`SELECT storage_location_id AS id, COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes
+              FROM media_items WHERE deleted_at IS NULL GROUP BY storage_location_id`)
+    .all() as { id: number; n: number; bytes: number }[];
+  const countMap = new Map(counts.map((c) => [c.id, c]));
 
   return rows.map((r) => {
     const root_path = parseRootPath(r.config);
     const exists = r.type === 'local' ? fs.existsSync(root_path) : null;
+    // Only stat the filesystem for a mounted local drive (skip cloud/offline).
+    const usage = exists ? diskUsageFor(root_path) : null;
+    const agg = countMap.get(r.id);
     return {
       id: r.id,
       name: r.name,
@@ -143,8 +156,11 @@ export function listStorageInfo(sqlite: Sqlite): StorageInfo[] {
       root_path,
       is_default: r.is_default === 1,
       exists,
-      file_count: countMap.get(r.id) ?? 0,
+      file_count: agg?.n ?? 0,
       last_indexed_at: r.last_indexed_at,
+      capacity_bytes: usage?.capacityBytes ?? null,
+      free_bytes: usage?.freeBytes ?? null,
+      library_bytes: agg?.bytes ?? 0,
     };
   });
 }

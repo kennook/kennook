@@ -13,6 +13,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- **Storage admin redesigned as a Disk-Utility-style, per-drive view.** Drives are
+  listed down the left (Internal / External / Cloud); selecting one shows its own
+  panel — a capacity bar (this library's footprint vs other data vs free), indexed
+  stats, the Run menu, Browse/Relocate/Remove, and a job log scoped to just that
+  drive. (First phase; per-drive enrichment pipelines and a hierarchical run tree
+  are coming next.)
 - **Your tags and bookmarks now count in search.** Searching a word that matches
   one of your tags or a bookmark label now surfaces that item — previously tags
   weren't indexed at all and bookmark-only matches never appeared (search only

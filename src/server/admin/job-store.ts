@@ -20,6 +20,9 @@ export interface AdminJobRow {
   command: string;
   args: Record<string, string | number | boolean>;
   librarySlug: string | null;
+  /** The storage/drive this job belongs to, or null for system / library-wide
+   *  jobs. Drives the per-drive job log in the storage admin. */
+  storageId: number | null;
   status: JobStatus;
   output: string;
   exitCode: number | null;
@@ -37,6 +40,7 @@ interface DbRow {
   command: string;
   args_json: string;
   library_slug: string | null;
+  storage_id: number | null;
   status: JobStatus;
   output: string;
   exit_code: number | null;
@@ -59,6 +63,7 @@ function rowToJob(r: DbRow): AdminJobRow {
     command: r.command,
     args,
     librarySlug: r.library_slug,
+    storageId: r.storage_id ?? null,
     status: r.status,
     output: r.output,
     exitCode: r.exit_code,
@@ -76,19 +81,21 @@ export function enqueueJob(input: {
   command: string;
   args: Record<string, string | number | boolean>;
   librarySlug: string | null;
+  storageId?: number | null;
   userId: number;
 }): AdminJobRow {
   const db = getUserSqlite();
   const now = Date.now();
   const res = db.prepare(`
     INSERT INTO admin_jobs (
-      command, args_json, library_slug, status,
+      command, args_json, library_slug, storage_id, status,
       enqueued_by_user_id, enqueued_at
-    ) VALUES (?, ?, ?, 'queued', ?, ?)
+    ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
   `).run(
     input.command,
     JSON.stringify(input.args),
     input.librarySlug,
+    input.storageId ?? null,
     input.userId,
     now,
   );
@@ -102,13 +109,22 @@ export function getJob(id: number): AdminJobRow | null {
   return row ? rowToJob(row) : null;
 }
 
-export function listJobs(limit = 50): AdminJobRow[] {
+export function listJobs(limit = 50, storageId?: number | null): AdminJobRow[] {
   const db = getUserSqlite();
-  const rows = db.prepare(`
-    SELECT * FROM admin_jobs
-    ORDER BY enqueued_at DESC
-    LIMIT ?
-  `).all(limit) as unknown as DbRow[];
+  // When a storageId is given, show only that drive's jobs (the per-drive log);
+  // otherwise the whole instance-wide list.
+  const rows = storageId != null
+    ? db.prepare(`
+        SELECT * FROM admin_jobs
+        WHERE storage_id = ?
+        ORDER BY enqueued_at DESC
+        LIMIT ?
+      `).all(storageId, limit) as unknown as DbRow[]
+    : db.prepare(`
+        SELECT * FROM admin_jobs
+        ORDER BY enqueued_at DESC
+        LIMIT ?
+      `).all(limit) as unknown as DbRow[];
   return rows.map(rowToJob);
 }
 

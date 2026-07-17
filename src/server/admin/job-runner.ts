@@ -428,6 +428,7 @@ export function enqueue(input: {
   command: string;
   args: Record<string, string | number | boolean>;
   librarySlug: string | null;
+  storageId?: number | null;
   userId: number;
 }): AdminJobRow {
   ensureRunnerStarted();

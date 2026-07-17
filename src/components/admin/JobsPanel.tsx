@@ -16,7 +16,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AdminJobRow } from '@/server/admin/job-store';
 import { JobAccordionRow } from './JobAccordionRow';
 
-export function JobsPanel({ onActiveChange }: { onActiveChange?: (active: boolean) => void } = {}) {
+export function JobsPanel({
+  onActiveChange,
+  storageId,
+}: {
+  onActiveChange?: (active: boolean) => void;
+  /** When set, show only this drive's jobs (the per-drive log). */
+  storageId?: number | null;
+} = {}) {
   const [jobs, setJobs] = useState<AdminJobRow[]>([]);
   const [paused, setPaused] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -28,7 +35,8 @@ export function JobsPanel({ onActiveChange }: { onActiveChange?: (active: boolea
 
   const refreshJobs = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/jobs', { cache: 'no-store' });
+      const url = storageId != null ? `/api/admin/jobs?storage=${storageId}` : '/api/admin/jobs';
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`/api/admin/jobs ${res.status}`);
       const data = await res.json() as { jobs: AdminJobRow[]; paused?: boolean };
       setJobs(data.jobs);
@@ -36,7 +44,7 @@ export function JobsPanel({ onActiveChange }: { onActiveChange?: (active: boolea
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [storageId]);
 
   const togglePause = useCallback(async () => {
     setBusy(true);
