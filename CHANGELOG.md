@@ -13,6 +13,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 ## [Unreleased]
 
 ### Added
+- **Your tags and bookmarks now count in search.** Searching a word that matches
+  one of your tags or a bookmark label now surfaces that item — previously tags
+  weren't indexed at all and bookmark-only matches never appeared (search only
+  looked at items the semantic/keyword pass already found). Manual (user-added)
+  tags and bookmarks are ranked **well above** automated AI tags, so a deliberate
+  label wins over an incidental one.
 - **Damaged-file warning.** When an item's preview can't be loaded (a strong sign
   the source is missing or corrupt), its grid tile now shows a small ⚠ badge with
   a tooltip explaining it may be damaged. And if a video fails to play in the

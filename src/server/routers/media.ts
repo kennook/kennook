@@ -826,6 +826,20 @@ export const mediaRouter = router({
       // Relevance is the natural default; an explicit sort/shuffle overrides it.
       const order = buildOrderBy(input, 'final_score DESC');
 
+      // Sanitized query tokens — drive the tag/bookmark candidate match below AND
+      // the post-query occurrence highlighting further down.
+      const tokens = input.query
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 2);
+      // Match an item by a TAG name or BOOKMARK label containing any token —
+      // these aren't in the FTS index, so without this a user's own tags /
+      // bookmarks would never surface a result. `0` = never-match (empty query).
+      const tagClause = tokens.length ? `(${tokens.map(() => 'LOWER(t.name) LIKE ?').join(' OR ')})` : '0';
+      const bmClause = tokens.length ? `(${tokens.map(() => 'LOWER(mb.label) LIKE ?').join(' OR ')})` : '0';
+      const likeParams = tokens.map((t) => `%${t}%`);
+
       const effectiveOffset = input.cursor ?? input.offset;
       // k must exceed offset+limit so pagination doesn't outrun the vector
       // candidate set. Default 500 is comfortable for typical browsing.
@@ -844,21 +858,53 @@ export const mediaRouter = router({
           SELECT rowid AS id, bm25(media_fts) AS score
           FROM media_fts
           WHERE media_fts MATCH ?
+        ),
+        tag_results AS (
+          -- Items whose TAG name matches the query. Manual ('user') tags get a
+          -- big boost; automated ('auto'/'transcript') tags a small one, so a
+          -- deliberate tag ranks well above an incidental AI label.
+          SELECT mt.media_item_id AS id,
+                 MAX(CASE WHEN mt.source = 'user' THEN 1.5 ELSE 0.4 END) AS tag_boost
+          FROM media_tags mt
+          JOIN tags t ON t.id = mt.tag_id
+          WHERE ${tagClause}
+          GROUP BY mt.media_item_id
+        ),
+        bm_results AS (
+          -- Items with a user-authored bookmark label matching the query
+          -- (respecting visibility). Bookmarks are deliberate → rank like manual
+          -- tags.
+          SELECT DISTINCT mb.media_item_id AS id
+          FROM media_bookmarks mb
+          WHERE (mb.visibility = 'shared' OR mb.created_by = ?)
+            AND ${bmClause}
+        ),
+        -- Candidate set = semantic neighbours PLUS anything matched by a manual
+        -- tag or bookmark (which the vector search would otherwise miss).
+        candidates AS (
+          SELECT id FROM vec_results
+          UNION SELECT id FROM tag_results
+          UNION SELECT id FROM bm_results
         )
         SELECT
           m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
           m.captured_at, m.captured_place, m.camera_make, m.camera_model,
           m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
           ${LIKE_COUNT_EXPR},
-          v.vec_similarity AS vec_similarity,
+          COALESCE(v.vec_similarity, 0) AS vec_similarity,
           f.score          AS fts_score,
           (
-            v.vec_similarity * 0.7 +
-            (1.0 / (1.0 + COALESCE(f.score, 99))) * 0.3
+            COALESCE(v.vec_similarity, 0) * 0.7
+            + (1.0 / (1.0 + COALESCE(f.score, 99))) * 0.3
+            + COALESCE(tr.tag_boost, 0)
+            + CASE WHEN bm.id IS NOT NULL THEN 1.5 ELSE 0 END
           ) AS final_score
-        FROM vec_results v
-        JOIN media_items m ON m.id = v.id
-        LEFT JOIN fts_results f ON f.id = v.id
+        FROM candidates c
+        JOIN media_items m ON m.id = c.id
+        LEFT JOIN vec_results v ON v.id = c.id
+        LEFT JOIN fts_results f ON f.id = c.id
+        LEFT JOIN tag_results tr ON tr.id = c.id
+        LEFT JOIN bm_results  bm ON bm.id = c.id
         WHERE ${where}
         ${order.sql}
         LIMIT ? OFFSET ?
@@ -866,6 +912,9 @@ export const mediaRouter = router({
 
       const rows = stmt.all(
         queryBuf, k, ftsQuery,
+        ...likeParams,        // tag_results: tag-name LIKEs
+        ctx.userId,           // bm_results: created_by visibility
+        ...likeParams,        // bm_results: bookmark-label LIKEs
         ctx.userId,           // for LIKE_COUNT_EXPR in SELECT
         ...params,            // filter params (incl. minLikes if set)
         ...order.params,      // shuffle seed, if shuffling
@@ -877,11 +926,7 @@ export const mediaRouter = router({
 
       // Per-item text occurrence matches — drives "match at 0:45" UX. One
       // batch query for all visible items keeps this off the N+1 hot path.
-      const tokens = input.query
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter((t) => t.length >= 2);
+      // (`tokens` computed above, shared with the tag/bookmark candidate match.)
       const matchesByItem = new Map<number, Array<{
         source: 'ocr' | 'transcript' | 'bookmark';
         tStartMs: number | null;
