@@ -19,10 +19,14 @@ export default function AdminStoragePage() {
         or relocate a storage when you move files to a new drive — your library
         survives the move because everything is keyed by content hash.
       </p>
-      <div className="mb-6 ring-1 ring-zinc-800 rounded-lg p-4 bg-zinc-950/40">
-        <UploadAssetsCard />
-      </div>
       <StorageClient />
+      {/* Upload is a convenience, not the main event — keep it out of the way
+          at the bottom of the page. */}
+      <div className="mt-10 pt-6 border-t border-zinc-900">
+        <div className="ring-1 ring-zinc-800 rounded-lg p-4 bg-zinc-950/40">
+          <UploadAssetsCard />
+        </div>
+      </div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import Link from 'next/link';
 import type { StorageInfo } from '@/server/storage';
 import { RunTree } from './RunTree';
 import { JobsPanel } from './JobsPanel';
+import { DriveGlyph, groupFor } from './DriveSidebar';
 
 function formatBytes(n: number | null): string {
   if (n == null) return '—';
@@ -73,15 +74,21 @@ export function DriveDetail({
 
   return (
     <div className="min-w-0">
-      {/* Header: name, type, status */}
+      {/* Header: drive icon, name, type, status */}
       <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-zinc-100 truncate">{drive.name}</h2>
-            <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${statusClass}`}>{statusLabel}</span>
-            {drive.is_default && <span className="text-[11px] text-zinc-600">[default]</span>}
+        <div className="flex items-start gap-3 min-w-0">
+          <span className={`shrink-0 mt-0.5 grid place-items-center w-11 h-11 rounded-lg ring-1 ring-zinc-800 bg-zinc-900
+            ${drive.exists === null ? 'text-zinc-400' : drive.exists ? 'text-emerald-300' : 'text-red-300'}`}>
+            <DriveGlyph group={groupFor(drive)} size={24} />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-zinc-100 truncate">{drive.name}</h2>
+              <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${statusClass}`}>{statusLabel}</span>
+              {drive.is_default && <span className="text-[11px] text-zinc-600">[default]</span>}
+            </div>
+            <div className="font-mono text-xs text-zinc-500 mt-1 break-all">{drive.root_path}</div>
           </div>
-          <div className="font-mono text-xs text-zinc-500 mt-1 break-all">{drive.root_path}</div>
         </div>
         {hasCapacity && (
           <div className="text-right shrink-0">

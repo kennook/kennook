@@ -8,12 +8,50 @@
 
 import type { StorageInfo } from '@/server/storage';
 
-type Group = 'Internal' | 'External' | 'Cloud';
+export type Group = 'Internal' | 'External' | 'Cloud';
 
-function groupFor(d: StorageInfo): Group {
+export function groupFor(d: StorageInfo): Group {
   if (d.type !== 'local') return 'Cloud';
   // macOS mounts external volumes under /Volumes; the boot disk is elsewhere.
   return d.root_path.startsWith('/Volumes/') ? 'External' : 'Internal';
+}
+
+// ── Icons ──
+export function DriveGlyph({ group, size = 15 }: { group: Group; size?: number }) {
+  if (group === 'Cloud') return <CloudIcon size={size} />;
+  if (group === 'External') return <ExternalDriveIcon size={size} />;
+  return <InternalDiskIcon size={size} />;
+}
+
+function InternalDiskIcon({ size }: { size: number }) {
+  // Stacked internal disk.
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <ellipse cx="12" cy="6" rx="7" ry="3" />
+      <path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6" />
+      <path d="M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" />
+    </svg>
+  );
+}
+function ExternalDriveIcon({ size }: { size: number }) {
+  // External hard drive (horizontal enclosure + activity dot).
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="8" width="18" height="8" rx="2" />
+      <path d="M7 12h6" />
+      <circle cx="17" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function CloudIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M17.5 18a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.34 10 3.5 3.5 0 0 0 7 18h10.5z" />
+    </svg>
+  );
+}
+function GroupIcon({ group }: { group: Group }) {
+  return <span className="text-zinc-600"><DriveGlyph group={group} size={12} /></span>;
 }
 
 export function DriveSidebar({
@@ -33,7 +71,10 @@ export function DriveSidebar({
         if (items.length === 0) return null;
         return (
           <div key={g}>
-            <div className="text-[10px] uppercase tracking-wider text-zinc-600 px-2 mb-1">{g}</div>
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-zinc-600 px-2 mb-1">
+              <GroupIcon group={g} />
+              {g}
+            </div>
             <div className="space-y-0.5">
               {items.map((d) => (
                 <DriveRow key={d.id} drive={d} active={d.id === selectedId} onClick={() => onSelect(d.id)} />
@@ -47,10 +88,12 @@ export function DriveSidebar({
 }
 
 function DriveRow({ drive, active, onClick }: { drive: StorageInfo; active: boolean; onClick: () => void }) {
-  const dotClass =
-    drive.exists === null ? 'bg-zinc-500'
-      : drive.exists ? 'bg-emerald-400'
-        : 'bg-red-400';
+  // The drive glyph is tinted by status (online/offline/cloud) so it doubles as
+  // the status indicator — no separate dot needed.
+  const iconClass =
+    drive.exists === null ? 'text-zinc-400'
+      : drive.exists ? 'text-emerald-400'
+        : 'text-red-400';
   const cap = drive.capacity_bytes;
   const free = drive.free_bytes;
   const usedPct = cap != null && cap > 0 && free != null
@@ -65,17 +108,17 @@ function DriveRow({ drive, active, onClick }: { drive: StorageInfo; active: bool
         ${active ? 'bg-zinc-800 ring-zinc-700' : 'ring-transparent hover:bg-zinc-900'}`}
     >
       <div className="flex items-center gap-2">
-        <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
+        <span className={`shrink-0 ${iconClass}`}><DriveGlyph group={groupFor(drive)} /></span>
         <span className={`text-sm truncate ${active ? 'text-zinc-100' : 'text-zinc-300'}`}>{drive.name}</span>
       </div>
       {usedPct != null ? (
-        <div className="mt-1.5 ml-4">
+        <div className="mt-1.5 ml-[1.6rem]">
           <div className="h-1 rounded-full bg-zinc-800 overflow-hidden">
             <div className="h-full bg-zinc-500" style={{ width: `${usedPct}%` }} />
           </div>
         </div>
       ) : (
-        <div className="mt-0.5 ml-4 text-[10px] text-zinc-600 tabular-nums">
+        <div className="mt-0.5 ml-[1.6rem] text-[10px] text-zinc-600 tabular-nums">
           {drive.file_count.toLocaleString()} items
         </div>
       )}
