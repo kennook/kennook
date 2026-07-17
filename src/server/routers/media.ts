@@ -880,31 +880,41 @@ export const mediaRouter = router({
             AND ${bmClause}
         ),
         -- Candidate set = semantic neighbours PLUS anything matched by a manual
-        -- tag or bookmark (which the vector search would otherwise miss).
+        -- tag or bookmark (which the vector search would otherwise miss). Each
+        -- source contributes its score component in one column and NULL for the
+        -- others; we carry them THROUGH the union (rather than joining back) so
+        -- vec_results — a sqlite-vec KNN that can't be referenced twice — is read
+        -- exactly once. Aggregate per id so an item matched by several sources
+        -- keeps all its boosts.
         candidates AS (
-          SELECT id FROM vec_results
-          UNION SELECT id FROM tag_results
-          UNION SELECT id FROM bm_results
+          SELECT id, vec_similarity AS vec_sim, NULL AS tag_boost, 0 AS has_bm FROM vec_results
+          UNION ALL SELECT id, NULL, tag_boost, 0 FROM tag_results
+          UNION ALL SELECT id, NULL, NULL, 1 FROM bm_results
+        ),
+        merged AS (
+          SELECT id,
+                 MAX(vec_sim)   AS vec_similarity,
+                 MAX(tag_boost) AS tag_boost,
+                 MAX(has_bm)    AS has_bm
+          FROM candidates
+          GROUP BY id
         )
         SELECT
           m.id, m.uuid, m.filename, m.kind, m.width, m.height, m.duration_ms,
           m.captured_at, m.captured_place, m.camera_make, m.camera_model,
           m.size_bytes, m.path, m.rotation, m.nsfw_score, m.violence_score, m.sensitive_override,
           ${LIKE_COUNT_EXPR},
-          COALESCE(v.vec_similarity, 0) AS vec_similarity,
+          COALESCE(c.vec_similarity, 0) AS vec_similarity,
           f.score          AS fts_score,
           (
-            COALESCE(v.vec_similarity, 0) * 0.7
+            COALESCE(c.vec_similarity, 0) * 0.7
             + (1.0 / (1.0 + COALESCE(f.score, 99))) * 0.3
-            + COALESCE(tr.tag_boost, 0)
-            + CASE WHEN bm.id IS NOT NULL THEN 1.5 ELSE 0 END
+            + COALESCE(c.tag_boost, 0)
+            + CASE WHEN c.has_bm = 1 THEN 1.5 ELSE 0 END
           ) AS final_score
-        FROM candidates c
+        FROM merged c
         JOIN media_items m ON m.id = c.id
-        LEFT JOIN vec_results v ON v.id = c.id
         LEFT JOIN fts_results f ON f.id = c.id
-        LEFT JOIN tag_results tr ON tr.id = c.id
-        LEFT JOIN bm_results  bm ON bm.id = c.id
         WHERE ${where}
         ${order.sql}
         LIMIT ? OFFSET ?
