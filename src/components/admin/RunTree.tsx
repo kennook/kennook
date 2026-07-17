@@ -51,6 +51,40 @@ function formatEta(sec: number | null): string | null {
   return `~${hr.toFixed(hr < 10 ? 1 : 0)} hr`;
 }
 
+const TERMINAL = new Set(['completed', 'failed', 'canceled']);
+const LAST_RUN_TONE: Record<string, string> = {
+  completed: 'text-zinc-500', failed: 'text-red-400/80', canceled: 'text-zinc-500',
+};
+const STATUS_WORD: Record<string, string> = {
+  completed: 'completed', failed: 'failed', canceled: 'canceled',
+};
+
+/** "yesterday @ 11:03 AM" / "2 days ago @ 5:12 PM" / "Jul 3 @ 9:40 AM". */
+function whenLabel(ts: number): string {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const daysAgo = Math.round((startToday - startThat) / 86_400_000);
+  let day: string;
+  if (daysAgo <= 0) day = 'today';
+  else if (daysAgo === 1) day = 'yesterday';
+  else if (daysAgo < 7) day = `${daysAgo} days ago`;
+  else day = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `${day} @ ${time}`;
+}
+
+function LastRunLine({ job }: { job: AdminJobRow | null }) {
+  if (!job) return null;
+  const ts = job.finishedAt ?? job.startedAt ?? job.enqueuedAt;
+  return (
+    <div className={`text-[10px] ${LAST_RUN_TONE[job.status] ?? 'text-zinc-500'}`} title={new Date(ts).toLocaleString()}>
+      {STATUS_WORD[job.status] ?? job.status} {whenLabel(ts)}
+    </div>
+  );
+}
+
 type Chip = { label: string; cls: string; pulse?: boolean };
 
 export function RunTree({
@@ -99,6 +133,11 @@ export function RunTree({
   // Latest job per command for THIS drive (jobs come newest-first).
   const latestFor = (command: string): AdminJobRow | null => jobs.find((j) => j.command === command) ?? null;
   const statusById = (id: number) => jobs.find((j) => j.id === id)?.status ?? null;
+  // Most recent FINISHED run — for the "completed yesterday @ 11am" line.
+  const lastRunFor = (command: string): AdminJobRow | null =>
+    jobs.find((j) => j.command === command && TERMINAL.has(j.status)) ?? null;
+  const lastRunForCommands = (cmds: string[]): AdminJobRow | null =>
+    jobs.find((j) => cmds.includes(j.command) && TERMINAL.has(j.status)) ?? null;
 
   const chipFor = (command: string): Chip | null => {
     const job = latestFor(command);
@@ -165,17 +204,23 @@ export function RunTree({
             <div key={g.label} className="rounded-lg ring-1 ring-zinc-800 bg-zinc-950/40">
               {/* Group header */}
               <div className="flex items-center gap-2 px-3 py-2">
-                <span className="text-sm text-zinc-200 font-medium">{g.label}</span>
-                {isGroup && <span className="text-[10px] text-zinc-600">({g.steps.length})</span>}
-                {/* Single-step nodes (Index) surface their own status here. */}
-                {!isGroup && (() => {
-                  const chip = chipFor(g.steps[0]);
-                  return chip ? (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ring-1 ${chip.cls} ${chip.pulse ? 'animate-pulse' : ''}`}>
-                      {chip.label}
-                    </span>
-                  ) : null;
-                })()}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-zinc-200 font-medium">{g.label}</span>
+                    {isGroup && <span className="text-[10px] text-zinc-600">({g.steps.length})</span>}
+                    {/* Single-step nodes (Index) surface their live status here. */}
+                    {!isGroup && (() => {
+                      const chip = chipFor(g.steps[0]);
+                      return chip ? (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ring-1 ${chip.cls} ${chip.pulse ? 'animate-pulse' : ''}`}>
+                          {chip.label}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  {/* Last finished run — for a group, the most recent among its steps. */}
+                  <LastRunLine job={isGroup ? lastRunForCommands(g.steps) : lastRunFor(g.steps[0])} />
+                </div>
                 <div className="flex-1" />
                 {!isGroup && (() => {
                   const eta = formatEta(estimates[g.steps[0]]?.etaSeconds ?? null);
@@ -198,13 +243,18 @@ export function RunTree({
                     const pending = est?.pendingCount ?? null;
                     return (
                       <div key={s} className="flex items-center gap-2 pl-3 relative">
-                        <span className="absolute left-0 top-1/2 w-2 border-t border-zinc-800" aria-hidden />
-                        <span className="text-sm text-zinc-300">{SHORT[s] ?? s}</span>
-                        {chip && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ring-1 ${chip.cls} ${chip.pulse ? 'animate-pulse' : ''}`}>
-                            {chip.label}
-                          </span>
-                        )}
+                        <span className="absolute left-0 top-[0.9rem] w-2 border-t border-zinc-800" aria-hidden />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-zinc-300">{SHORT[s] ?? s}</span>
+                            {chip && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ring-1 ${chip.cls} ${chip.pulse ? 'animate-pulse' : ''}`}>
+                                {chip.label}
+                              </span>
+                            )}
+                          </div>
+                          <LastRunLine job={lastRunFor(s)} />
+                        </div>
                         <div className="flex-1" />
                         <span className="text-[11px] text-zinc-500 tabular-nums">
                           {pending != null && pending > 0 ? `${pending.toLocaleString()} pending` : (chip?.label === 'done' ? '' : 'nothing pending')}

@@ -22,7 +22,8 @@ Anything under **Upgrade notes** requires action on the operator's part
   "Run ▾" list is replaced by a **hierarchical run tree** (Index → Backfill →
   Enrich) with live per-node status; steps run one at a time and a step shows
   "waiting" until its prerequisites finish (if a prerequisite fails, dependent
-  steps are skipped).
+  steps are skipped). Each node also shows its **last run** — e.g. "completed
+  yesterday @ 11:03 AM" or "failed 2 days ago @ 5:12 PM".
 - **Your tags and bookmarks now count in search.** Searching a word that matches
   one of your tags or a bookmark label now surfaces that item — previously tags
   weren't indexed at all and bookmark-only matches never appeared (search only
