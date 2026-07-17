@@ -23,19 +23,24 @@ import { extractTranscriptTags } from '@/ai/llm';
 import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 interface Args {
   librarySlug: string;
   reset: boolean;
   limit: number | null;
+  storage: number | null;
 }
 
 function parseArgs(argv: string[]): Args {
   let librarySlug = DEFAULT_LIBRARY_SLUG;
   let reset = false;
   let limit: number | null = null;
+  let storage: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    const st = matchStorageArg(argv, i);
+    if (st) { storage = st.storage; i += st.consumed - 1; continue; }
     if (a === '--library' || a === '-w') {
       const v = argv[++i]; if (v) librarySlug = v;
     } else if (a.startsWith('--library=')) {
@@ -48,7 +53,7 @@ function parseArgs(argv: string[]): Args {
       limit = parseInt(a.split('=')[1], 10);
     }
   }
-  return { librarySlug, reset, limit };
+  return { librarySlug, reset, limit, storage };
 }
 
 interface PendingRow {
@@ -67,7 +72,7 @@ async function main() {
   if (args.reset) {
     sqlite.exec(
       `UPDATE media_items SET transcript_tags_status = 'pending'
-       WHERE transcript IS NOT NULL AND transcript != ''`,
+       WHERE transcript IS NOT NULL AND transcript != ''${storageClause(args.storage)}`,
     );
     console.log('Reset transcript_tags_status for all transcribed items.');
   }
@@ -78,7 +83,7 @@ async function main() {
     FROM media_items
     WHERE transcript IS NOT NULL AND transcript != ''
       AND transcript_tags_status = 'pending'
-      AND deleted_at IS NULL
+      AND deleted_at IS NULL${storageClause(args.storage)}
     ORDER BY id
     ${limitClause}
   `).all() as unknown as PendingRow[];

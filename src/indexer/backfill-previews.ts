@@ -17,6 +17,7 @@ import {
   libraryRoot,
 } from '@/server/libraries';
 import { parseRootPath, resolveMediaPath } from '@/server/storage';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 interface Row {
   id: number;
@@ -41,8 +42,17 @@ function parseLibrary(argv: string[]): string {
   return DEFAULT_LIBRARY_SLUG;
 }
 
+function parseStorage(argv: string[]): number | null {
+  for (let i = 0; i < argv.length; i++) {
+    const st = matchStorageArg(argv, i);
+    if (st) return st.storage;
+  }
+  return null;
+}
+
 async function main() {
   const library = resolveLibrary(parseLibrary(process.argv.slice(2)));
+  const storage = parseStorage(process.argv.slice(2));
   const sqlite = getRawSqlite(library.slug);
 
   console.log(`Backfilling previews in library "${library.name}" (${library.slug})`);
@@ -55,7 +65,7 @@ async function main() {
        JOIN storage_locations sl ON sl.id = m.storage_location_id
        WHERE m.kind = 'photo'
          AND m.deleted_at IS NULL
-         AND (m.preview_path IS NULL OR m.preview_path = '')`,
+         AND (m.preview_path IS NULL OR m.preview_path = '')${storageClause(storage, 'm.storage_location_id')}`,
     )
     .all() as unknown as Row[];
 

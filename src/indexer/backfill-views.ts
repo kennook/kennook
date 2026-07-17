@@ -19,6 +19,7 @@
 import { getRawSqlite } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
 import { listLibraries, resolveLibrary } from '@/server/libraries';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 const USER_ID = 1;
 // Chunk size for the IN-clause used in step 3. SQLite's default
@@ -38,6 +39,14 @@ function parseLibrary(argv: string[]): string | null {
   return null;
 }
 
+function parseStorage(argv: string[]): number | null {
+  for (let i = 0; i < argv.length; i++) {
+    const st = matchStorageArg(argv, i);
+    if (st) return st.storage;
+  }
+  return null;
+}
+
 interface LibraryResult {
   slug: string;
   before: number;
@@ -53,17 +62,25 @@ function countViews(sqlite: ReturnType<typeof getRawSqlite>): number {
     .get(USER_ID) as { n: number }).n;
 }
 
-function backfillLibrary(slug: string): LibraryResult {
+function backfillLibrary(slug: string, storage: number | null): LibraryResult {
   const sqlite = getRawSqlite(slug);
   const userDb = getUserSqlite();
   const before = countViews(sqlite);
+
+  // When scoped to one drive, only mark items whose media_item lives on that
+  // storage. media_likes/media_tags carry no storage column, so we gate them
+  // through an EXISTS against media_items.
+  const storageExists = (idCol: string) =>
+    storage != null
+      ? ` AND EXISTS (SELECT 1 FROM media_items m WHERE m.id = ${idCol}${storageClause(storage, 'm.storage_location_id')})`
+      : '';
 
   // 1) Liked items.
   const likeInsert = sqlite.prepare(`
     INSERT OR IGNORE INTO media_views (user_id, media_item_id, viewed_at)
     SELECT user_id, media_item_id, unixepoch() * 1000
     FROM media_likes
-    WHERE user_id = ?
+    WHERE user_id = ?${storageExists('media_likes.media_item_id')}
   `).run(USER_ID);
 
   // 2) Items with a user-added tag.
@@ -71,7 +88,7 @@ function backfillLibrary(slug: string): LibraryResult {
     INSERT OR IGNORE INTO media_views (user_id, media_item_id, viewed_at)
     SELECT ?, media_item_id, unixepoch() * 1000
     FROM media_tags
-    WHERE source = 'user'
+    WHERE source = 'user'${storageExists('media_tags.media_item_id')}
   `).run(USER_ID);
 
   // 3) Items in any playlist that owns them for this library.
@@ -92,7 +109,7 @@ function backfillLibrary(slug: string): LibraryResult {
       INSERT OR IGNORE INTO media_views (user_id, media_item_id, viewed_at)
       SELECT ?, id, unixepoch() * 1000
       FROM media_items
-      WHERE uuid IN (${placeholders}) AND deleted_at IS NULL
+      WHERE uuid IN (${placeholders}) AND deleted_at IS NULL${storageClause(storage)}
     `).run(USER_ID, ...chunk.map((r) => r.item_uuid));
     byPlaylist += Number(res.changes);
   }
@@ -111,13 +128,14 @@ function backfillLibrary(slug: string): LibraryResult {
 
 async function main() {
   const onlyOne = parseLibrary(process.argv.slice(2));
+  const storage = parseStorage(process.argv.slice(2));
   const targets = onlyOne ? [resolveLibrary(onlyOne)] : listLibraries();
 
   console.log(`Backfilling media_views for user_id=${USER_ID} across ${targets.length} library(s)…\n`);
 
   let totalAdded = 0;
   for (const ws of targets) {
-    const r = backfillLibrary(ws.slug);
+    const r = backfillLibrary(ws.slug, storage);
     totalAdded += r.added;
     // Per-source counts may sum to more than `added` because the same item
     // can hit multiple sources (e.g. liked AND in a playlist); INSERT OR

@@ -10,6 +10,7 @@ import { getRawSqlite } from '@/db/client';
 import { embedImage, floatArrayToBuffer } from '@/ai/embeddings';
 import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
 import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 interface Row {
   id: number;
@@ -30,8 +31,17 @@ function parseLibrary(argv: string[]): string {
   return DEFAULT_LIBRARY_SLUG;
 }
 
+function parseStorage(argv: string[]): number | null {
+  for (let i = 0; i < argv.length; i++) {
+    const st = matchStorageArg(argv, i);
+    if (st) return st.storage;
+  }
+  return null;
+}
+
 async function main() {
   const library = resolveLibrary(parseLibrary(process.argv.slice(2)));
+  const storage = parseStorage(process.argv.slice(2));
   const sqlite = getRawSqlite(library.slug);
 
   console.log(`Backfilling embeddings in library "${library.name}" (${library.slug})`);
@@ -43,7 +53,7 @@ async function main() {
        LEFT JOIN media_embeddings v ON v.rowid = m.id
        WHERE m.deleted_at IS NULL
          AND m.thumbnail_path IS NOT NULL
-         AND v.rowid IS NULL`,
+         AND v.rowid IS NULL${storageClause(storage, 'm.storage_location_id')}`,
     )
     .all() as unknown as Row[];
 

@@ -4,10 +4,13 @@
 
 import type { Sqlite } from '@/db/client';
 import { getJobDefinition, expandCommand } from './job-catalog';
+import { storageClause } from '@/indexer/storage-arg';
 
 /** Pending item count per command for a library. Indexer is omitted —
- *  its workload depends on files on disk, not DB state. */
-export function pendingCounts(sqlite: Sqlite): Record<string, number> {
+ *  its workload depends on files on disk, not DB state. When `storageId` is
+ *  set, counts are scoped to that one drive (matches the per-drive runs). */
+export function pendingCounts(sqlite: Sqlite, storageId?: number | null): Record<string, number> {
+  const sc = storageClause(storageId); // ' AND storage_location_id = <id>' or ''
   const one = (sql: string): number => {
     const r = sqlite.prepare(sql).get() as { n: number } | undefined;
     return r?.n ?? 0;
@@ -15,24 +18,24 @@ export function pendingCounts(sqlite: Sqlite): Record<string, number> {
   return {
     'enrich:text': one(`SELECT COUNT(*) AS n FROM media_items
       WHERE enrichment_status='pending' AND deleted_at IS NULL
-        AND (thumbnail_path IS NOT NULL OR preview_path IS NOT NULL)`),
+        AND (thumbnail_path IS NOT NULL OR preview_path IS NOT NULL)${sc}`),
     'enrich:video-text': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE kind='video' AND video_text_status='pending' AND deleted_at IS NULL`),
+      WHERE kind='video' AND video_text_status='pending' AND deleted_at IS NULL${sc}`),
     'enrich:transcript': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE kind='video' AND transcript_status='pending' AND deleted_at IS NULL`),
+      WHERE kind='video' AND transcript_status='pending' AND deleted_at IS NULL${sc}`),
     'enrich:transcript-tags': one(`SELECT COUNT(*) AS n FROM media_items
       WHERE transcript IS NOT NULL AND transcript != ''
-        AND transcript_tags_status='pending' AND deleted_at IS NULL`),
+        AND transcript_tags_status='pending' AND deleted_at IS NULL${sc}`),
     'enrich:scrub': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE kind='video' AND scrub_status='pending' AND deleted_at IS NULL`),
+      WHERE kind='video' AND scrub_status='pending' AND deleted_at IS NULL${sc}`),
     'enrich:faces': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE kind='photo' AND face_status='pending' AND deleted_at IS NULL`),
+      WHERE kind='photo' AND face_status='pending' AND deleted_at IS NULL${sc}`),
     'enrich:sensitive': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE kind='photo' AND sensitive_status='pending' AND deleted_at IS NULL`),
+      WHERE kind='photo' AND sensitive_status='pending' AND deleted_at IS NULL${sc}`),
     'backfill:vectors': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE embedding_status='pending' AND deleted_at IS NULL`),
+      WHERE embedding_status='pending' AND deleted_at IS NULL${sc}`),
     'backfill:previews': one(`SELECT COUNT(*) AS n FROM media_items
-      WHERE kind='photo' AND (preview_path IS NULL OR preview_path='') AND deleted_at IS NULL`),
+      WHERE kind='photo' AND (preview_path IS NULL OR preview_path='') AND deleted_at IS NULL${sc}`),
     'backfill:views': 0, // fast bookkeeping pass; not worth a count
     'enrich:people': 0,  // one-shot clustering over all faces
   };
@@ -51,8 +54,8 @@ export interface ActionEstimate {
 
 /** Build estimates for the runnable actions (aggregates + individual steps)
  *  for a given library's DB. */
-export function buildEstimates(sqlite: Sqlite): ActionEstimate[] {
-  const counts = pendingCounts(sqlite);
+export function buildEstimates(sqlite: Sqlite, storageId?: number | null): ActionEstimate[] {
+  const counts = pendingCounts(sqlite, storageId);
 
   const single = (command: string): ActionEstimate | null => {
     const def = getJobDefinition(command);

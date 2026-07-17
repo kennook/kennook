@@ -22,6 +22,7 @@ import { generateSpriteSheet, probeVideo, ensureFfmpegAvailable } from './ffmpeg
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 import { pace, getThrottle, throttleTag, reportThrottleChange } from '@/ai/throttle';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 // A scrub track only needs ~1 tile every few seconds; cap the grid so long
 // videos don't blow up the sprite. 150 × 160px tiles is a small JPEG.
@@ -29,21 +30,24 @@ const MAX_TILES = 150;
 const TILE_W = 160;
 const COLS = 10;
 
-interface Args { librarySlug: string; reset: boolean; limit: number | null; }
+interface Args { librarySlug: string; reset: boolean; limit: number | null; storage: number | null; }
 
 function parseArgs(argv: string[]): Args {
   let librarySlug = DEFAULT_LIBRARY_SLUG;
   let reset = false;
   let limit: number | null = null;
+  let storage: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    const st = matchStorageArg(argv, i);
+    if (st) { storage = st.storage; i += st.consumed - 1; continue; }
     if (a === '--library' || a === '-w') { const v = argv[++i]; if (v) librarySlug = v; }
     else if (a.startsWith('--library=')) librarySlug = a.split('=')[1];
     else if (a === '--reset') reset = true;
     else if (a === '--limit') { const v = argv[++i]; if (v) limit = parseInt(v, 10); }
     else if (a.startsWith('--limit=')) limit = parseInt(a.split('=')[1], 10);
   }
-  return { librarySlug, reset, limit };
+  return { librarySlug, reset, limit, storage };
 }
 
 interface PendingRow {
@@ -80,7 +84,7 @@ async function main() {
   }
 
   if (args.reset) {
-    sqlite.exec(`UPDATE media_items SET scrub_status = 'pending' WHERE kind = 'video'`);
+    sqlite.exec(`UPDATE media_items SET scrub_status = 'pending' WHERE kind = 'video'${storageClause(args.storage)}`);
     console.log('Reset scrub_status for all videos.');
   }
 
@@ -92,7 +96,7 @@ async function main() {
     JOIN storage_locations sl ON sl.id = m.storage_location_id
     WHERE m.kind = 'video'
       AND m.scrub_status = 'pending'
-      AND m.deleted_at IS NULL
+      AND m.deleted_at IS NULL${storageClause(args.storage, 'm.storage_location_id')}
     ORDER BY m.id
     ${limitClause}
   `).all() as unknown as PendingRow[];

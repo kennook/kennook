@@ -69,12 +69,15 @@ export function RunStorageMenu({ librarySlug, rootPath, storageId, onEnqueued, o
   // complete, so a fresh read keeps the numbers honest.
   const loadEstimates = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/estimate?lib=${encodeURIComponent(librarySlug)}`, { cache: 'no-store' });
+      const q = storageId != null
+        ? `?lib=${encodeURIComponent(librarySlug)}&storage=${storageId}`
+        : `?lib=${encodeURIComponent(librarySlug)}`;
+      const res = await fetch(`/api/admin/estimate${q}`, { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json() as { estimates: ActionEstimate[] };
       setEstimates(data.estimates);
     } catch { /* estimates are best-effort; menu still works without them */ }
-  }, [librarySlug]);
+  }, [librarySlug, storageId]);
 
   const toggle = () => {
     const next = !open;
@@ -88,6 +91,9 @@ export function RunStorageMenu({ librarySlug, rootPath, storageId, onEnqueued, o
     try {
       const args: Record<string, string> = { library: librarySlug };
       if (NEEDS_PATH.has(a.command)) args.path = rootPath;
+      // Scope drive-scopable steps to this drive. Steps that don't declare a
+      // `storage` option (indexer, enrich:people) just ignore it server-side.
+      if (storageId != null) args.storage = String(storageId);
       const res = await fetch('/api/admin/jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

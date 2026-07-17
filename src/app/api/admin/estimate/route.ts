@@ -21,10 +21,15 @@ export async function GET(req: NextRequest): Promise<Response> {
   const lib = req.nextUrl.searchParams.get('lib')
     ?? req.nextUrl.searchParams.get('ws')
     ?? parseLibraryCookie(req.headers.get('cookie'));
+  // `?storage=<id>` scopes pending counts + ETAs to one drive (per-drive runs).
+  const storageRaw = req.nextUrl.searchParams.get('storage');
+  const storageId = storageRaw != null && storageRaw !== '' && Number.isFinite(Number(storageRaw))
+    ? Number(storageRaw)
+    : null;
 
   try {
     const sqlite = getRawSqlite(lib);
-    return Response.json({ estimates: buildEstimates(sqlite) });
+    return Response.json({ estimates: buildEstimates(sqlite, storageId) });
   } catch (e) {
     return Response.json(
       { error: e instanceof Error ? e.message : String(e) },

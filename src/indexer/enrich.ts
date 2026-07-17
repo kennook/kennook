@@ -24,6 +24,7 @@ import {
 } from '@/server/libraries';
 import { replaceOccurrences } from '@/server/text-occurrences';
 import { installGracefulStop, shouldStop } from './graceful-stop';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 interface PendingRow {
   id: number;
@@ -37,15 +38,19 @@ interface CliArgs {
   librarySlug: string;
   limit: number | null;
   force: boolean;
+  storage: number | null;
 }
 
 function parseArgs(argv: string[]): CliArgs {
   let librarySlug = DEFAULT_LIBRARY_SLUG;
   let limit: number | null = null;
   let force = false;
+  let storage: number | null = null;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    const st = matchStorageArg(argv, i);
+    if (st) { storage = st.storage; i += st.consumed - 1; continue; }
     // pnpm 9+ sometimes leaves a bare `--` separator in argv when scripts
     // chain through `pnpm <script> -- args`. Treat it as a no-op so a
     // version bump in the package manager can't crash us.
@@ -68,12 +73,12 @@ function parseArgs(argv: string[]): CliArgs {
       throw new Error(`Unknown argument: ${a}`);
     }
   }
-  return { librarySlug, limit, force };
+  return { librarySlug, limit, force, storage };
 }
 
 async function main() {
   installGracefulStop();
-  const { librarySlug, limit, force } = parseArgs(process.argv.slice(2));
+  const { librarySlug, limit, force, storage } = parseArgs(process.argv.slice(2));
   const library = resolveLibrary(librarySlug);
   const sqlite = getRawSqlite(library.slug);
 
@@ -82,10 +87,11 @@ async function main() {
 
   // Pick up items needing enrichment. We use preview_path when available
   // (better OCR on text-heavy images), falling back to the thumbnail.
-  const where = force
+  const where = (force
     ? 'deleted_at IS NULL AND (thumbnail_path IS NOT NULL OR preview_path IS NOT NULL)'
     : `deleted_at IS NULL AND enrichment_status != 'done'
-       AND (thumbnail_path IS NOT NULL OR preview_path IS NOT NULL)`;
+       AND (thumbnail_path IS NOT NULL OR preview_path IS NOT NULL)`)
+    + storageClause(storage);
 
   const limitClause = limit ? `LIMIT ${limit}` : '';
   const pending = sqlite.prepare(`

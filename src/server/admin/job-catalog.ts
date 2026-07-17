@@ -283,6 +283,22 @@ export const JOB_CATALOG: JobDefinition[] = [
   },
 ];
 
+// Steps that can be scoped to a single drive via `--storage <id>` (the script
+// ANDs storage_location_id into its pending-item query). The indexer is scoped
+// by `path` instead; enrich:people clusters across ALL faces so it can't be
+// drive-scoped. The per-drive Run menu passes `storage`; this injects the flag
+// so the route validates it and the runner emits `--storage`.
+export const DRIVE_SCOPED_COMMANDS = new Set([
+  'backfill:vectors', 'backfill:previews', 'backfill:views',
+  'enrich:text', 'enrich:video-text', 'enrich:transcript', 'enrich:transcript-tags',
+  'enrich:scrub', 'enrich:faces', 'enrich:sensitive',
+]);
+for (const def of JOB_CATALOG) {
+  if (DRIVE_SCOPED_COMMANDS.has(def.id) && !def.options.some((o) => o.flag === 'storage')) {
+    def.options.push({ flag: 'storage', type: 'number', label: 'Storage', help: 'Restrict to one drive (storage id)' });
+  }
+}
+
 export function getJobDefinition(id: string): JobDefinition | null {
   return JOB_CATALOG.find((j) => j.id === id) ?? null;
 }

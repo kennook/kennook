@@ -21,12 +21,14 @@ import { detectFaces, faceEmbeddingToBuffer, faceFocusPoint, FRONTAL_MAX_ASYMMET
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 import { pace, throttleTag, reportThrottleChange } from '@/ai/throttle';
+import { matchStorageArg, storageClause } from './storage-arg';
 
 interface Args {
   librarySlug: string;
   reset: boolean;
   limit: number | null;
   minFace: number;
+  storage: number | null;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -34,8 +36,11 @@ function parseArgs(argv: string[]): Args {
   let reset = false;
   let limit: number | null = null;
   let minFace = 40; // px; drop tiny detections (unreliable embeddings, often false positives)
+  let storage: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    const st = matchStorageArg(argv, i);
+    if (st) { storage = st.storage; i += st.consumed - 1; continue; }
     if (a === '--library' || a === '-w') {
       const v = argv[++i]; if (v) librarySlug = v;
     } else if (a.startsWith('--library=')) {
@@ -52,7 +57,7 @@ function parseArgs(argv: string[]): Args {
       minFace = Number(a.split('=')[1]);
     }
   }
-  return { librarySlug, reset, limit, minFace };
+  return { librarySlug, reset, limit, minFace, storage };
 }
 
 interface PendingRow {
@@ -72,9 +77,17 @@ async function main() {
   const sqlite = getRawSqlite(library.slug);
 
   if (args.reset) {
-    sqlite.exec(`UPDATE media_items SET face_status = 'pending' WHERE kind = 'photo'`);
-    sqlite.exec(`DELETE FROM media_faces`);
-    sqlite.exec(`DELETE FROM media_face_embeddings`);
+    sqlite.exec(`UPDATE media_items SET face_status = 'pending' WHERE kind = 'photo'${storageClause(args.storage)}`);
+    if (args.storage != null) {
+      // Per-drive reset: only clear faces (and their embeddings) belonging to
+      // items on this storage, so other drives' face data survives.
+      const scope = `SELECT id FROM media_faces WHERE media_item_id IN (SELECT id FROM media_items WHERE 1=1${storageClause(args.storage)})`;
+      sqlite.exec(`DELETE FROM media_face_embeddings WHERE rowid IN (${scope})`);
+      sqlite.exec(`DELETE FROM media_faces WHERE media_item_id IN (SELECT id FROM media_items WHERE 1=1${storageClause(args.storage)})`);
+    } else {
+      sqlite.exec(`DELETE FROM media_faces`);
+      sqlite.exec(`DELETE FROM media_face_embeddings`);
+    }
     console.log('Reset face data for all photos.');
   }
 
@@ -86,7 +99,7 @@ async function main() {
     JOIN storage_locations sl ON sl.id = m.storage_location_id
     WHERE m.kind = 'photo'
       AND m.face_status = 'pending'
-      AND m.deleted_at IS NULL
+      AND m.deleted_at IS NULL${storageClause(args.storage, 'm.storage_location_id')}
     ORDER BY m.id
     ${limitClause}
   `).all() as unknown as PendingRow[];
