@@ -33,6 +33,10 @@ interface Props {
   sortDisabled: boolean;
   /** Turn shuffle off from the sort control itself. */
   onDisableShuffle: () => void;
+  /** Clear every filter in ONE url update. Must be a single-shot reset — firing
+   *  the individual onXChange handlers back-to-back clobbers itself (each reads
+   *  the same stale URL snapshot, so only the last write survives). */
+  onResetFilters: () => void;
 
   kind: Kind | null;
   onKindChange: (v: Kind | null) => void;
@@ -85,7 +89,7 @@ const QUALITY_LABELS: Record<Quality, string> = {
 export function FilterSidebar({
   facets,
   loading,
-  sort, relevanceMode, onSelectSort, sortDisabled, onDisableShuffle,
+  sort, relevanceMode, onSelectSort, sortDisabled, onDisableShuffle, onResetFilters,
   kind, onKindChange,
   orientation, onOrientationChange,
   quality, onQualityChange,
@@ -110,20 +114,6 @@ export function FilterSidebar({
     minLikes !== null ||
     watched !== null ||
     sensitive !== null;
-
-  const resetAll = () => {
-    onKindChange(null);
-    onOrientationChange(null);
-    onQualityChange(null);
-    onCameraChange(null);
-    onStorageChange(null);
-    onYearChange(null);
-    onTagsChange([]);
-    onMentionedChange([]);
-    onMinLikesChange(null);
-    onWatchedChange(null);
-    onSensitiveChange(null);
-  };
 
   const toggleTag = (t: string) => {
     if (tags.includes(t)) onTagsChange(tags.filter((x) => x !== t));
@@ -335,7 +325,7 @@ export function FilterSidebar({
 
       {hasAnyActive && (
         <button
-          onClick={resetAll}
+          onClick={onResetFilters}
           className="text-xs text-zinc-500 hover:text-zinc-300 px-3 mt-3 transition"
         >
           Reset all filters

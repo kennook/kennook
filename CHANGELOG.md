@@ -117,6 +117,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- The sidebar's **"Reset all filters"** now actually clears everything. It was
+  firing each filter's clear separately, and those back-to-back URL writes
+  clobbered each other (only the last survived), so it usually did nothing. It
+  now clears all filters in a single update.
 - Fixed a React "cannot update a component while rendering a different one"
   warning from the video player: the solo-audio HUD flash was fired inside a
   `setMuted` state updater (which runs during render). It now checks the previous
