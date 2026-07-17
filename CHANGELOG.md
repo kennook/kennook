@@ -134,6 +134,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Opening a photo/video in full screen now enables keyboard shortcuts immediately
+  — no more clicking the video first. The header search bar auto-focuses, and on
+  macOS clicking a grid tile doesn't move focus off it, so shortcuts were being
+  swallowed by the still-focused search field until you clicked the video. The
+  viewer now blurs that field on open.
 - The sidebar's **"Reset all filters"** now actually clears everything. It was
   firing each filter's clear separately, and those back-to-back URL writes
   clobbered each other (only the last survived), so it usually did nothing. It

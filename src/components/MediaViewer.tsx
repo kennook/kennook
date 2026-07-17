@@ -277,6 +277,21 @@ export function MediaViewer({
   // Close the add form when the item changes.
   useEffect(() => { setAddBookmarkAtMs(null); }, [item?.uuid]);
 
+  // On open, drop focus from any PAGE text field — notably the header search
+  // bar, which auto-focuses and (on macOS, where clicking a button doesn't move
+  // focus) keeps focus after you click a grid tile. While it holds focus every
+  // keydown targets the input, so viewer shortcuts stay suppressed until you
+  // click the video. Blur it so shortcuts work the moment the viewer opens. The
+  // viewer's OWN tag/bookmark inputs live under [data-kn-chrome] and are left
+  // alone, so this never yanks focus mid-type.
+  useEffect(() => {
+    if (!item) return;
+    const el = document.activeElement as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && !el.closest('[data-kn-chrome]')) {
+      el.blur();
+    }
+  }, [item?.uuid]);
+
   // Add-tag via the `t` shortcut — mirrors the bookmark flow: the shortcut opens
   // the info panel and focuses the tag input (via `tagFocusSignal`), and the
   // panel auto-closes once the user finishes. `tagAddingRef` marks that the
