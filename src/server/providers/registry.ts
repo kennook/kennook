@@ -8,13 +8,20 @@
 import type { ExternalProvider } from '@/server/external-sources';
 import type { Provider } from './types';
 import { youtubeProvider } from './youtube';
+import { archiveProvider } from './archive';
+import { rssProvider } from './rss';
+import { streamProvider } from './stream';
 
 // Order matters: a URL is claimed by the FIRST provider whose match() is true.
-// Specific providers (youtube, vimeo, twitch, archive, rss) should precede the
-// catch-all `stream` (which claims bare media/stream URLs).
+// Specific providers precede the catch-all `stream` (which claims bare media
+// URLs by extension). RSS must precede stream (a feed can end in .xml, but
+// stream only matches media extensions, so they don't overlap in practice).
 const PROVIDERS: Provider[] = [
   youtubeProvider,
-  // stream / rss / archive / vimeo / twitch appended in later phases.
+  archiveProvider,
+  rssProvider,
+  // vimeo / twitch appended in Phase 3 (before stream).
+  streamProvider,
 ];
 
 const BY_ID = new Map<string, Provider>(PROVIDERS.map((p) => [p.id, p]));

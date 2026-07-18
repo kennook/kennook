@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { YouTubePlayer } from './YouTubePlayer';
+import { NativeMediaPlayer } from './players/NativeMediaPlayer';
 
 type Props = { suspended?: boolean } & (
   | { slug: string; category?: undefined }
@@ -177,14 +178,23 @@ export function ExternalSourceView(props: Props) {
       )}
 
       {player && (() => {
-        // Pick the player by the (starting) item's playerKind. A single-source
-        // view is uniform; a category can mix providers, so key off the item.
-        const kind = (isCategory ? videos[player.startIndex]?.playerKind : source.data?.playerKind)
-          ?? videos[player.startIndex]?.playerKind ?? 'youtube';
+        // Pick the player by the CURRENT item's playerKind — always item-driven so
+        // a mixed feed (e.g. a YouTube-RSS with youtube items) plays correctly.
+        const kind = videos[player.startIndex]?.playerKind ?? 'youtube';
         const onProgress = (index: number, autoplay: boolean) => setResume({ index, autoplay });
         const onClose = () => setPlayer(null);
-        // youtube is the only player until Phase 2 adds NativeMediaPlayer etc.
         switch (kind) {
+          case 'native':
+            return (
+              <NativeMediaPlayer
+                videos={videos.map((v) => ({ mediaUrl: v.mediaUrl ?? '', title: v.title, thumbnailUrl: v.thumbnailUrl, isLive: v.isLive }))}
+                startIndex={player.startIndex}
+                autoplay={player.autoplay}
+                suspended={suspended}
+                onProgress={onProgress}
+                onClose={onClose}
+              />
+            );
           case 'youtube':
           default:
             return (
