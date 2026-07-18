@@ -49,6 +49,7 @@
     "@trpc/next": "^11.0.0-rc.660",
     "@trpc/react-query": "^11.0.0-rc.660",
     "@trpc/server": "^11.0.0-rc.660",
+    "@vimeo/player": "^2.30.4",
     "@vladmandic/face-api": "^1.7.15",
     "bonjour-service": "^1.4.1",
     "compromise": "^14.15.0",

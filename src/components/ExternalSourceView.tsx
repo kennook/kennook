@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { YouTubePlayer } from './YouTubePlayer';
 import { NativeMediaPlayer } from './players/NativeMediaPlayer';
+import { VimeoPlayer } from './players/VimeoPlayer';
+import { TwitchPlayer } from './players/TwitchPlayer';
 
 type Props = { suspended?: boolean } & (
   | { slug: string; category?: undefined }
@@ -188,6 +190,28 @@ export function ExternalSourceView(props: Props) {
             return (
               <NativeMediaPlayer
                 videos={videos.map((v) => ({ mediaUrl: v.mediaUrl ?? '', title: v.title, thumbnailUrl: v.thumbnailUrl, isLive: v.isLive }))}
+                startIndex={player.startIndex}
+                autoplay={player.autoplay}
+                suspended={suspended}
+                onProgress={onProgress}
+                onClose={onClose}
+              />
+            );
+          case 'vimeo':
+            return (
+              <VimeoPlayer
+                videos={videos.map((v) => ({ videoId: v.videoId, title: v.title, thumbnailUrl: v.thumbnailUrl, isLive: v.isLive }))}
+                startIndex={player.startIndex}
+                autoplay={player.autoplay}
+                suspended={suspended}
+                onProgress={onProgress}
+                onClose={onClose}
+              />
+            );
+          case 'twitch':
+            return (
+              <TwitchPlayer
+                videos={videos.map((v) => ({ videoId: v.videoId, title: v.title, thumbnailUrl: v.thumbnailUrl, isLive: v.isLive }))}
                 startIndex={player.startIndex}
                 autoplay={player.autoplay}
                 suspended={suspended}

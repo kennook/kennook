@@ -8,6 +8,8 @@
 import type { ExternalProvider } from '@/server/external-sources';
 import type { Provider } from './types';
 import { youtubeProvider } from './youtube';
+import { vimeoProvider } from './vimeo';
+import { twitchProvider } from './twitch';
 import { archiveProvider } from './archive';
 import { rssProvider } from './rss';
 import { streamProvider } from './stream';
@@ -18,10 +20,11 @@ import { streamProvider } from './stream';
 // stream only matches media extensions, so they don't overlap in practice).
 const PROVIDERS: Provider[] = [
   youtubeProvider,
+  vimeoProvider,
+  twitchProvider,
   archiveProvider,
   rssProvider,
-  // vimeo / twitch appended in Phase 3 (before stream).
-  streamProvider,
+  streamProvider, // catch-all: bare media URLs by extension
 ];
 
 const BY_ID = new Map<string, Provider>(PROVIDERS.map((p) => [p.id, p]));

@@ -18,9 +18,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   a live `.m3u8`, a radio `.mp3`, or an `.mp4` — great for live channels on the
   screensaver), **RSS / podcast feeds** (audio + video, including YouTube-channel
   RSS with no API key), and **Internet Archive** items (public-domain movies, music,
-  TV). These play in a built-in native player (HLS via hls.js, audio with artwork)
-  that's a first-class KenNook citizen — queue auto-advance, solo-audio handoff
-  across devices, and screensaver suspend all work. (Vimeo + Twitch next.)
+  TV), plus **Vimeo** (single videos need no token; channels use one app token)
+  and **Twitch** (channels + VODs — playback needs no token; an optional app token
+  just gives nicer names). Native media plays in a built-in player (HLS via hls.js,
+  audio with artwork); Vimeo/Twitch play via their official embeds. All of them are
+  first-class KenNook citizens — queue auto-advance, solo-audio handoff across
+  devices, and screensaver suspend work everywhere. No per-account logins.
 - **Storage admin redesigned as a Disk-Utility-style, per-drive view.** Drives are
   listed down the left (Internal / External / Cloud); selecting one shows its own
   panel — a capacity bar (this library's footprint vs other data vs free), indexed
