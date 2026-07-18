@@ -501,32 +501,45 @@ function YouTubeMark() {
 export function AddSourceDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (slug: string) => void }) {
   const utils = trpc.useUtils();
   const [url, setUrl] = useState('');
+  const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const providers = trpc.externalSource.providers.useQuery();
   const create = trpc.externalSource.create.useMutation({
     onSuccess: (src) => { void utils.externalSource.list.invalidate(); onAdded(src.slug); },
     onError: (e) => setError(e.message),
   });
+
+  const list = providers.data ?? [];
+  const placeholder = list[0]?.urlHint ?? 'https://…';
 
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-6"
          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <form
-        onSubmit={(e) => { e.preventDefault(); setError(null); if (url.trim()) create.mutate({ url: url.trim() }); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          setError(null);
+          if (url.trim()) create.mutate({ url: url.trim(), name: name.trim() || undefined });
+        }}
         className="w-full max-w-md bg-zinc-900 ring-1 ring-zinc-800 rounded-xl p-5 flex flex-col gap-3 shadow-2xl"
       >
-        <h2 className="text-base font-medium text-zinc-100">Add a YouTube source</h2>
+        <h2 className="text-base font-medium text-zinc-100">Add an external source</h2>
         <p className="text-xs text-zinc-500">
-          Paste a channel, playlist, or video link — e.g.{' '}
-          <span className="text-zinc-400">youtube.com/@channel</span>,{' '}
-          <span className="text-zinc-400">…/playlist?list=…</span>, or a{' '}
-          <span className="text-zinc-400">youtu.be/…</span> video.
+          Paste a link — a channel, playlist, video, feed, or stream URL. Supported:{' '}
+          <span className="text-zinc-400">{list.map((p) => p.label).join(', ') || '…'}</span>.
         </p>
         <input
           autoFocus
           value={url}
           onChange={(e) => { setUrl(e.target.value); setError(null); }}
-          placeholder="https://www.youtube.com/@…"
+          placeholder={placeholder}
+          className="bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-500"
+        />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name (optional — required for raw stream URLs)"
           className="bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-500"
         />
         {error && <div className="text-xs text-red-400">{error}</div>}

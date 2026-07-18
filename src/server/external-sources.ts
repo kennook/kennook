@@ -15,22 +15,31 @@ import path from 'node:path';
 const DATA_ROOT = process.env.KENNOOK_DATA_ROOT ?? './data';
 const REGISTRY_PATH = path.join(DATA_ROOT, 'external-sources.json');
 
-export type ExternalProvider = 'youtube';
+export type ExternalProvider = 'youtube' | 'stream' | 'rss' | 'archive' | 'vimeo' | 'twitch';
 export type ExternalSourceKind = 'channel' | 'playlist' | 'video';
+/** Which client player renders a source's items. Defined here (the base model)
+ *  so `providers/types.ts` can import it without a circular dependency. */
+export type PlayerKind = 'youtube' | 'native' | 'vimeo' | 'twitch' | 'iframe';
 
 export interface ExternalSource {
   slug: string;
   name: string;
   provider: ExternalProvider;
   kind: ExternalSourceKind;
-  /** Canonical provider ref (YouTube channelId or playlistId). */
+  /** Canonical provider ref (e.g. YouTube channelId/playlistId/videoId, a stream
+   *  URL, an archive.org id). */
   ref: string;
-  /** The concrete playlist to page through (a channel's "uploads" playlist),
-   *  resolved once at creation so fetches don't re-resolve. */
+  /** The concrete playlist/feed to page through (a channel's "uploads" playlist,
+   *  an RSS feed URL, …), resolved once at creation so fetches don't re-resolve.
+   *  '' for single-item sources (a lone video / live stream). */
   playlistId: string;
   /** Optional user-defined group (e.g. "news", "music") for single-video / live
    *  sources, so they can be viewed together as a grid. */
   category?: string;
+  /** How this source's items play (defaults to 'youtube' for legacy entries). */
+  playerKind?: PlayerKind;
+  /** Provider-specific extras (feed URL, stream URL, embed host, …). */
+  meta?: Record<string, unknown>;
   createdAt: number;
 }
 

@@ -13,7 +13,8 @@ import {
   renameExternalCategory,
   deleteExternalCategory,
 } from '@/server/external-sources';
-import { parseYouTubeUrl, resolveYouTubeSource, fetchPlaylistPage, fetchVideoAsItem } from '@/server/youtube';
+import { detectProvider, getProvider, listProviders } from '@/server/providers/registry';
+import type { ProviderVideo } from '@/server/providers/types';
 import { publishToUser, bumpDataRev } from '@/server/sync-broker';
 
 /** Notify this user's other windows/devices that a sidebar list changed —
@@ -35,30 +36,42 @@ export const externalSourceRouter = router({
     .input(z.object({ slug: z.string() }))
     .query(({ input }) => getExternalSource(input.slug)),
 
-  /** Create a source from a pasted YouTube channel/playlist URL. Resolves the
-   *  canonical ids + title via the Data API before storing. */
+  /** Providers available for the add dialog (id + label + example URL). */
+  providers: publicProcedure.query(() => listProviders()),
+
+  /** Create a source from a pasted URL. The provider is auto-detected (or forced
+   *  via `provider`); it resolves the canonical ids + title before storing. */
   create: publicProcedure
-    .input(z.object({ url: z.string().min(1) }))
+    .input(z.object({
+      url: z.string().min(1),
+      /** Optional override when auto-detect is ambiguous (e.g. a bare media URL). */
+      provider: z.string().optional(),
+      /** Display name — required for sources with no fetchable title (raw streams). */
+      name: z.string().trim().max(120).optional(),
+    }))
     .mutation(async ({ input, ctx }) => {
-      const parsed = parseYouTubeUrl(input.url);
-      if (!parsed) {
+      const provider = input.provider ? getProvider(input.provider) : detectProvider(input.url);
+      if (!provider) {
+        const hints = listProviders().map((p) => p.label).join(', ');
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Not a recognized YouTube URL. Paste a channel, playlist, or video link.',
+          message: `Couldn't recognize that URL. Supported: ${hints}.`,
         });
       }
       let resolved;
       try {
-        resolved = await resolveYouTubeSource(parsed);
+        resolved = await provider.resolve(input.url, { name: input.name });
       } catch (e) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: e instanceof Error ? e.message : 'Failed to resolve source.' });
       }
       const src = addExternalSource({
         name: resolved.name,
-        provider: 'youtube',
+        provider: provider.id,
         kind: resolved.kind,
         ref: resolved.ref,
         playlistId: resolved.playlistId,
+        playerKind: resolved.playerKind,
+        ...(resolved.meta ? { meta: resolved.meta } : {}),
       });
       notifySidebar(ctx.userId, ctx.sessionId);
       return src;
@@ -144,10 +157,10 @@ export const externalSourceRouter = router({
         (s) => s.kind === 'video' && (s.category ?? '').toLowerCase() === cat,
       );
       const settled = await Promise.allSettled(
-        sources.map(async (s) => ({ slug: s.slug, video: await fetchVideoAsItem(s.ref) })),
+        sources.map(async (s) => ({ slug: s.slug, video: await getProvider(s.provider).fetchVideo(s) })),
       );
       const items = settled
-        .filter((r): r is PromiseFulfilledResult<{ slug: string; video: Awaited<ReturnType<typeof fetchVideoAsItem>> }> => r.status === 'fulfilled')
+        .filter((r): r is PromiseFulfilledResult<{ slug: string; video: ProviderVideo }> => r.status === 'fulfilled')
         .map((r) => r.value);
       return { items };
     }),
@@ -159,12 +172,13 @@ export const externalSourceRouter = router({
     .query(async ({ input }) => {
       const src = getExternalSource(input.slug);
       if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
+      const provider = getProvider(src.provider);
       try {
-        // A single-video/live source is just its one video; channels/playlists page.
+        // A single-video/live source is just its one item; channels/playlists/feeds page.
         if (src.kind === 'video') {
-          return { items: [await fetchVideoAsItem(src.ref)], nextCursor: undefined as string | undefined };
+          return { items: [await provider.fetchVideo(src)], nextCursor: undefined as string | undefined };
         }
-        return await fetchPlaylistPage(src.playlistId, input.cursor);
+        return await provider.fetchPage(src, input.cursor);
       } catch (e) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: e instanceof Error ? e.message : 'Failed to load videos.' });
       }

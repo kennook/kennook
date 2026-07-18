@@ -176,16 +176,29 @@ export function ExternalSourceView(props: Props) {
         </div>
       )}
 
-      {player && (
-        <YouTubePlayer
-          videos={videos.map((v) => ({ videoId: v.videoId, title: v.title }))}
-          startIndex={player.startIndex}
-          autoplay={player.autoplay}
-          suspended={suspended}
-          onProgress={(index, autoplay) => setResume({ index, autoplay })}
-          onClose={() => setPlayer(null)}
-        />
-      )}
+      {player && (() => {
+        // Pick the player by the (starting) item's playerKind. A single-source
+        // view is uniform; a category can mix providers, so key off the item.
+        const kind = (isCategory ? videos[player.startIndex]?.playerKind : source.data?.playerKind)
+          ?? videos[player.startIndex]?.playerKind ?? 'youtube';
+        const onProgress = (index: number, autoplay: boolean) => setResume({ index, autoplay });
+        const onClose = () => setPlayer(null);
+        // youtube is the only player until Phase 2 adds NativeMediaPlayer etc.
+        switch (kind) {
+          case 'youtube':
+          default:
+            return (
+              <YouTubePlayer
+                videos={videos.map((v) => ({ videoId: v.videoId, title: v.title }))}
+                startIndex={player.startIndex}
+                autoplay={player.autoplay}
+                suspended={suspended}
+                onProgress={onProgress}
+                onClose={onClose}
+              />
+            );
+        }
+      })()}
     </div>
   );
 }
