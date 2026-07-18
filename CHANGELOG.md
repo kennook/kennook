@@ -43,10 +43,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   (with your Saved searches and Playlists), the sources tree, or the profile
   menu); "Menu" slides back. Replaces the single cramped column (and fixes the
   facets-vs-tools overlap).
-- External sources are now a **drag-and-drop tree**: file single-video / live
-  sources into categories by dragging (onto a category to group, onto another
-  source to reorder), create / rename / delete categories, with Playlists and
-  Channels in their own fixed groups.
+- External sources are now a **drag-and-drop tree** split into three groups —
+  **Live Channels**, **Channels**, and **Playlists**. Only Live Channels supports
+  categories + reordering (drag a source onto a category to group it, or onto
+  another to reorder; create / rename / delete categories); Channels and Playlists
+  carry their own video lists, so they stay as fixed, non-reorderable groups.
 - A **Profile** panel (account summary + log out; Light/Dark mode and Settings
   are placeholders for later).
 - External-source categories: group single-video / live sources into categories

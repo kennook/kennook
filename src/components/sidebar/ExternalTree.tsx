@@ -17,12 +17,15 @@ interface Props {
 }
 
 /**
- * Level-2 "External sources" panel — a drag/drop tree. Single-video/live sources
- * are grouped under user categories (drag one onto a category to file it, or onto
- * another source to reorder); playlists and channels get their own fixed groups
- * (they carry their own video lists, so they aren't categorized). Categories are
- * derived from the sources' `category`; a freshly-created empty one is held
- * locally until you drag a source into it.
+ * Level-2 "External sources" panel — three top-level groups:
+ *   • Live Channels — single-video / live sources, the ONLY group that supports
+ *     user categories + drag/reorder (drag one onto a category to file it, or
+ *     onto another source to reorder).
+ *   • Channels     — fixed, not categorized.
+ *   • Playlists    — fixed, not categorized.
+ * Channels and playlists carry their own video lists, so they aren't grouped.
+ * Categories are derived from the live sources' `category`; a freshly-created
+ * empty one is held locally until you drag a source into it.
  */
 export function ExternalTree({ activeSourceSlug, activeCategory, onSelectSource, onSelectCategory }: Props) {
   const utils = trpc.useUtils();
@@ -124,67 +127,80 @@ export function ExternalTree({ activeSourceSlug, activeCategory, onSelectSource,
       </div>
 
       <div className="mt-1">
-        {/* User categories */}
-        {categories.map((cat) => {
-          const members = videos.filter((v) => v.category === cat);
-          const key = `cat:${cat}`;
-          return (
-            <div key={key}>
-              <GroupHeader
-                label={cat}
-                count={members.length}
-                collapsed={isColl(key)}
-                active={activeCategory === cat}
-                dragOver={overKey === key}
-                onToggle={() => toggle(key)}
-                onOpen={() => onSelectCategory(cat)}
-                onDragOver={dragSlug ? () => setOverKey(key) : undefined}
-                onDrop={dragSlug ? () => dropInCategory(cat) : undefined}
-                menu={
-                  <GroupMenu
-                    onRename={() => { const t = window.prompt('Rename category', cat)?.trim(); if (t && t !== cat) { setPendingCats((p) => p.map((c) => c === cat ? t : c)); renameCat.mutate({ from: cat, to: t }); if (activeCategory === cat) onSelectCategory(t); } }}
-                    onDelete={() => { setPendingCats((p) => p.filter((c) => c !== cat)); deleteCat.mutate({ name: cat }); if (activeCategory === cat) onSelectCategory(null); }}
-                  />
-                }
-              />
-              {!isColl(key) && members.map((s) => (
-                <SourceRow key={s.slug} src={s} depth active={s.slug === activeSourceSlug}
-                  dragging={dragSlug === s.slug} dragOver={overKey === `src:${s.slug}`}
-                  onDragStart={() => setDragSlug(s.slug)} onDragEnd={() => { setDragSlug(null); setOverKey(null); }}
-                  onDragOver={dragSlug ? () => setOverKey(`src:${s.slug}`) : undefined} onDrop={dragSlug ? () => dropBefore(s) : undefined}
-                  onOpen={() => onSelectSource(s.slug)} onRename={(n) => rename.mutate({ slug: s.slug, name: n })}
-                  onRemove={() => remove.mutate({ slug: s.slug })} />
-              ))}
-            </div>
-          );
-        })}
-
-        {/* Uncategorized live sources */}
-        {uncategorized.length > 0 && (
+        {/* Live Channels — the ONLY group with categories + drag/reorder. */}
+        {(videos.length > 0 || categories.length > 0) && (
           <div>
-            <GroupHeader label="Uncategorized" count={uncategorized.length} collapsed={isColl('unc')} muted
-              dragOver={overKey === 'unc'} onToggle={() => toggle('unc')}
-              onDragOver={dragSlug ? () => setOverKey('unc') : undefined} onDrop={dragSlug ? () => dropInCategory(null) : undefined} />
-            {!isColl('unc') && uncategorized.map((s) => (
-              <SourceRow key={s.slug} src={s} depth active={s.slug === activeSourceSlug}
-                dragging={dragSlug === s.slug} dragOver={overKey === `src:${s.slug}`}
-                onDragStart={() => setDragSlug(s.slug)} onDragEnd={() => { setDragSlug(null); setOverKey(null); }}
-                onDragOver={dragSlug ? () => setOverKey(`src:${s.slug}`) : undefined} onDrop={dragSlug ? () => dropBefore(s) : undefined}
-                onOpen={() => onSelectSource(s.slug)} onRename={(n) => rename.mutate({ slug: s.slug, name: n })}
-                onRemove={() => remove.mutate({ slug: s.slug })} />
-            ))}
+            <GroupHeader label="Live Channels" count={videos.length} collapsed={isColl('live')} muted
+              onToggle={() => toggle('live')} />
+            {!isColl('live') && (
+              <div className="pl-2">
+                {/* User categories */}
+                {categories.map((cat) => {
+                  const members = videos.filter((v) => v.category === cat);
+                  const key = `cat:${cat}`;
+                  return (
+                    <div key={key}>
+                      <GroupHeader
+                        label={cat}
+                        count={members.length}
+                        collapsed={isColl(key)}
+                        active={activeCategory === cat}
+                        dragOver={overKey === key}
+                        onToggle={() => toggle(key)}
+                        onOpen={() => onSelectCategory(cat)}
+                        onDragOver={dragSlug ? () => setOverKey(key) : undefined}
+                        onDrop={dragSlug ? () => dropInCategory(cat) : undefined}
+                        menu={
+                          <GroupMenu
+                            onRename={() => { const t = window.prompt('Rename category', cat)?.trim(); if (t && t !== cat) { setPendingCats((p) => p.map((c) => c === cat ? t : c)); renameCat.mutate({ from: cat, to: t }); if (activeCategory === cat) onSelectCategory(t); } }}
+                            onDelete={() => { setPendingCats((p) => p.filter((c) => c !== cat)); deleteCat.mutate({ name: cat }); if (activeCategory === cat) onSelectCategory(null); }}
+                          />
+                        }
+                      />
+                      {!isColl(key) && members.map((s) => (
+                        <SourceRow key={s.slug} src={s} depth active={s.slug === activeSourceSlug}
+                          dragging={dragSlug === s.slug} dragOver={overKey === `src:${s.slug}`}
+                          onDragStart={() => setDragSlug(s.slug)} onDragEnd={() => { setDragSlug(null); setOverKey(null); }}
+                          onDragOver={dragSlug ? () => setOverKey(`src:${s.slug}`) : undefined} onDrop={dragSlug ? () => dropBefore(s) : undefined}
+                          onOpen={() => onSelectSource(s.slug)} onRename={(n) => rename.mutate({ slug: s.slug, name: n })}
+                          onRemove={() => remove.mutate({ slug: s.slug })} />
+                      ))}
+                    </div>
+                  );
+                })}
+
+                {/* Uncategorized live sources */}
+                {uncategorized.length > 0 && (
+                  <div>
+                    <GroupHeader label="Uncategorized" count={uncategorized.length} collapsed={isColl('unc')} muted
+                      dragOver={overKey === 'unc'} onToggle={() => toggle('unc')}
+                      onDragOver={dragSlug ? () => setOverKey('unc') : undefined} onDrop={dragSlug ? () => dropInCategory(null) : undefined} />
+                    {!isColl('unc') && uncategorized.map((s) => (
+                      <SourceRow key={s.slug} src={s} depth active={s.slug === activeSourceSlug}
+                        dragging={dragSlug === s.slug} dragOver={overKey === `src:${s.slug}`}
+                        onDragStart={() => setDragSlug(s.slug)} onDragEnd={() => { setDragSlug(null); setOverKey(null); }}
+                        onDragOver={dragSlug ? () => setOverKey(`src:${s.slug}`) : undefined} onDrop={dragSlug ? () => dropBefore(s) : undefined}
+                        onOpen={() => onSelectSource(s.slug)} onRename={(n) => rename.mutate({ slug: s.slug, name: n })}
+                        onRemove={() => remove.mutate({ slug: s.slug })} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Fixed groups: playlists + channels (not categorized). */}
-        {playlists.length > 0 && (
-          <FixedGroup label="Playlists" k="pl" collapsed={isColl('pl')} onToggle={() => toggle('pl')}
-            sources={playlists} activeSourceSlug={activeSourceSlug} onSelectSource={onSelectSource}
-            onRename={rename} onRemove={remove} />
-        )}
+        {/* Channels — fixed, not categorized. */}
         {channels.length > 0 && (
           <FixedGroup label="Channels" k="ch" collapsed={isColl('ch')} onToggle={() => toggle('ch')}
             sources={channels} activeSourceSlug={activeSourceSlug} onSelectSource={onSelectSource}
+            onRename={rename} onRemove={remove} />
+        )}
+
+        {/* Playlists — fixed, not categorized. */}
+        {playlists.length > 0 && (
+          <FixedGroup label="Playlists" k="pl" collapsed={isColl('pl')} onToggle={() => toggle('pl')}
+            sources={playlists} activeSourceSlug={activeSourceSlug} onSelectSource={onSelectSource}
             onRename={rename} onRemove={remove} />
         )}
 
