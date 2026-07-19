@@ -615,6 +615,9 @@ function HomeContent() {
   // Dataset identity — when it changes, the grid remounts (fresh masonry
   // positions) and we scroll back to the top.
   const resetKey = JSON.stringify([
+    // Library is part of the identity: switching libraries is a whole new result
+    // set, so the resume point (lastViewed) must reset even when no filters differ.
+    url.library,
     inPlaylist ? `pl:${url.playlist}` : inSimilar ? `sim:${url.similar}` : inSearch ? `q:${url.query}` : 'recent',
     filterArgs, pageSize,
   ]);

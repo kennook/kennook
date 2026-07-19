@@ -146,6 +146,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Switching libraries now clears the **Resume** pill. Previously, if you'd been
+  watching results and switched libraries (with no filters set), the resume pill
+  lingered and reopened the *old* library's clip. The resume point now resets on a
+  library switch, since it belongs to that library's result set.
 - Enrichment jobs now log the **processor-load level up front**, when the job
   starts, instead of only after the first item finishes. On heavy passes
   (`enrich:text` downloads a ~250 MB model and runs multi-second inference on item
