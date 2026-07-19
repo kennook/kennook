@@ -110,6 +110,9 @@ async function main() {
   );
   if (pending.length === 0) return;
 
+  // Announce the processor-load level up front — BEFORE the (slow) first item.
+  reportThrottleChange();
+
   // Prepared statements reused inside the loop — meaningfully faster than
   // recreating them per row for large batches.
   const insertFace = sqlite.prepare(`

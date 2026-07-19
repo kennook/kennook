@@ -94,6 +94,9 @@ async function main() {
   );
   if (pending.length === 0) return;
 
+  // Announce the processor-load level up front — BEFORE the (slow) first item.
+  reportThrottleChange();
+
   const markStatus = sqlite.prepare(
     `UPDATE media_items SET transcript_tags_status = ?, updated_at = ? WHERE id = ?`,
   );

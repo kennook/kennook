@@ -135,6 +135,9 @@ async function main() {
   );
   if (pending.length === 0) return;
 
+  // Announce the processor-load level up front — BEFORE the (slow) first item.
+  reportThrottleChange();
+
   const markDone = sqlite.prepare(
     `UPDATE media_items SET video_text_status = 'done', updated_at = ? WHERE id = ?`,
   );

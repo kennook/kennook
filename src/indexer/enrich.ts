@@ -108,6 +108,11 @@ async function main() {
   }
 
   console.log(`${pending.length} item(s) pending.`);
+  // Announce the processor-load level up front — BEFORE the (slow) first item.
+  // The first Florence-2 item can take minutes on a cold run (a ~250MB model
+  // download + inference), so the per-item reportThrottleChange below would
+  // otherwise not surface the level until long after the job starts.
+  reportThrottleChange();
 
   // ocr_text isn't set here — `replaceOccurrences` below handles both the
   // per-frame occurrence row AND the rollup column FTS5 reads from.

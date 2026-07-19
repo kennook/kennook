@@ -19,6 +19,7 @@ import { DEFAULT_LIBRARY_SLUG, resolveLibrary } from '@/server/libraries';
 import { getRawSqlite } from '@/db/client';
 import { parseRootPath, resolveMediaPath } from '@/server/storage';
 import { scoreSensitiveContent } from '@/ai/sensitive';
+import { reportThrottleChange } from '@/ai/throttle';
 import { emitProgress } from './progress';
 import { installGracefulStop, shouldStop } from './graceful-stop';
 import { matchStorageArg, storageClause } from './storage-arg';
@@ -105,6 +106,9 @@ async function main() {
     `${pending.length} photo(s) to process.`,
   );
   if (pending.length === 0) return;
+
+  // Announce the processor-load level up front — BEFORE the (slow) first item.
+  reportThrottleChange();
 
   const update = sqlite.prepare(`
     UPDATE media_items

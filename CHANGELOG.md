@@ -146,6 +146,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Enrichment jobs now log the **processor-load level up front**, when the job
+  starts, instead of only after the first item finishes. On heavy passes
+  (`enrich:text` downloads a ~250 MB model and runs multi-second inference on item
+  one) the level otherwise didn't appear in the log until minutes in — reading as
+  "not logging." Also added the missing throttle log to the sensitive-scoring pass.
 - Opening a photo/video in full screen now enables keyboard shortcuts immediately
   — no more clicking the video first. The header search bar auto-focuses, and on
   macOS clicking a grid tile doesn't move focus off it, so shortcuts were being
