@@ -277,19 +277,20 @@ export function MediaViewer({
   // Close the add form when the item changes.
   useEffect(() => { setAddBookmarkAtMs(null); }, [item?.uuid]);
 
-  // On open, drop focus from any PAGE text field — notably the header search
-  // bar, which auto-focuses and (on macOS, where clicking a button doesn't move
-  // focus) keeps focus after you click a grid tile. While it holds focus every
-  // keydown targets the input, so viewer shortcuts stay suppressed until you
-  // click the video. Blur it so shortcuts work the moment the viewer opens. The
-  // viewer's OWN tag/bookmark inputs live under [data-kn-chrome] and are left
-  // alone, so this never yanks focus mid-type.
+  // On open, move focus INTO the viewer so keyboard shortcuts work immediately.
+  // The header search bar auto-focuses on load and (on macOS, where clicking a
+  // button doesn't move focus) keeps focus after you click a grid tile — while
+  // any text field holds focus, every keydown targets it and viewer shortcuts
+  // stay suppressed until you click the video. Focusing the viewer root blurs
+  // whatever had focus (search bar, a contentEditable, anything), robustly. We
+  // skip it only while one of the viewer's OWN inputs (tag / bookmark, under
+  // [data-kn-chrome]) is focused, so this never yanks focus mid-type.
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!item) return;
-    const el = document.activeElement as HTMLElement | null;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && !el.closest('[data-kn-chrome]')) {
-      el.blur();
-    }
+    const active = document.activeElement as HTMLElement | null;
+    if (active?.closest('[data-kn-chrome]')) return;
+    rootRef.current?.focus({ preventScroll: true });
   }, [item?.uuid]);
 
   // Add-tag via the `t` shortcut — mirrors the bookmark flow: the shortcut opens
@@ -1126,9 +1127,11 @@ export function MediaViewer({
 
   return (
     <div
-      className={maxed
+      ref={rootRef}
+      tabIndex={-1}
+      className={`outline-none ${maxed
         ? `fixed inset-0 z-50 bg-black ${chromeVisible ? '' : 'cursor-none'}`
-        : 'fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4'}
+        : 'fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4'}`}
       // Only close on direct backdrop clicks — child floating chrome
       // (top-right toolbar, nav arrows, position indicator) sit outside
       // the middle wrapper, so without this guard their clicks bubble
