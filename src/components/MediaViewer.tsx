@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
+import { inHideCorner } from '@/lib/hot-corner';
 import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
@@ -741,8 +742,11 @@ export function MediaViewer({
     onMouseLeave: () => pulseChrome(),
   };
 
-  // Root mouse-move: reveal the chrome + re-arm the idle timer.
-  const handleViewerMouseMove = useCallback(() => {
+  // Root mouse-move: reveal the chrome + re-arm the idle timer — EXCEPT when the
+  // cursor sits in the top-left dead corner, so a mouse jiggler parked there
+  // can't keep the controls pinned open (they still fade after the idle window).
+  const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
+    if (inHideCorner(e.clientX, e.clientY)) return;
     pulseChrome();
   }, [pulseChrome]);
 
