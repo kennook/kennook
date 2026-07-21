@@ -665,6 +665,14 @@ function HomeContent() {
   // ── Handlers ──────────────────────────────────────────────────────────
 
   const handleOpen = (item: MediaItemDto, match?: { tStartMs: number | null }) => {
+    // Blur a focused text field (notably the auto-focused search bar) SYNCHRONOUSLY
+    // on the click gesture, so viewer shortcuts work the instant it opens. This is
+    // the reliable moment to move focus — the viewer's own focus-on-mount effect
+    // runs after the async url.set re-render, and programmatic focus changes are
+    // honored far more consistently during a user gesture. Especially matters from
+    // search results, where you've just typed and the input is actively focused.
+    const active = document.activeElement as HTMLElement | null;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) active.blur();
     // Open straight to fullscreen (view:'full') — there's no intermediate
     // preview modal anymore. A search-hit with a timestamp also seeks; a normal
     // open clears any stale `t` so it doesn't inherit a previous deep-link seek.
