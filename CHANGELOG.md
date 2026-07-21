@@ -12,11 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
-### Added
-- **Mouse-jiggler-friendly "dead corner."** In the full-screen viewer, pointer
-  movement in the **top-left corner** no longer keeps the controls/chrome awake —
-  so if you park a mouse jiggler's cursor there, the controls still fade out on
-  schedule. (Applies to both the photo/video chrome and the video controls bar.)
+- **Configurable hot corners (macOS-style).** Map each of the four screen corners
+  to an action in **Profile → Settings → Hot corners**: fling the cursor into a
+  corner to **start the screensaver**, or set a corner to **Hide controls** (the
+  mouse-jiggler-friendly "let the controls fade" behavior). The mapping is synced
+  to your account across devices. By default the top-left corner keeps the
+  hide-controls behavior, so nothing changes unless you customize it. More corner
+  actions (shuffle, slideshow, sidebar) can be added over time.
 - **External sources are no longer YouTube-only.** A new provider framework lets
   you add public sources with no per-account login: **direct / HLS streams** (paste
   a live `.m3u8`, a radio `.mp3`, or an `.mp4` — great for live channels on the

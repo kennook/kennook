@@ -11,6 +11,7 @@ import { usersRouter } from './users';
 import { mediaViewRouter } from './mediaView';
 import { configRouter } from './config';
 import { externalSourceRouter } from './externalSource';
+import { hotCornersRouter } from './hotCorners';
 
 export const appRouter = router({
   media: mediaRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   users: usersRouter,
   mediaView: mediaViewRouter,
   config: configRouter,
+  hotCorners: hotCornersRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShortcut } from '@/lib/shortcuts';
-import { inHideCorner } from '@/lib/hot-corner';
+import { useHideCornerPredicate } from '@/lib/hot-corner-client';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
@@ -128,6 +128,7 @@ export function VideoPlayer({
   const bufferedRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
   const currentTimeRef = useRef<HTMLSpanElement>(null);
+  const inHideCorner = useHideCornerPredicate();
 
   const [playing, setPlaying] = useState(false);
   // True while the video has no playable data yet — initial load (slow when a
@@ -470,7 +471,7 @@ export function VideoPlayer({
   return (
     <div
       className={`relative group ${className}`}
-      // Ignore movement in the top-left dead corner so a parked mouse jiggler
+      // Ignore movement in a "hide controls" hot corner so a parked mouse jiggler
       // can't keep the controls bar pinned open (matches the viewer chrome).
       onMouseMove={(e) => { if (!inHideCorner(e.clientX, e.clientY)) showControls(); }}
       onMouseLeave={() => playing && setControlsVisible(false)}

@@ -31,6 +31,7 @@ import { SavedSearchesSection } from '@/components/SavedSearchesSection';
 import { PeopleSection } from '@/components/PeopleSection';
 import { SelectionBar } from '@/components/SelectionBar';
 import { useShortcut } from '@/lib/shortcuts';
+import { useHotCornerEngine } from '@/lib/hot-corner-client';
 import { useSync, useSyncEvent } from '@/lib/sync';
 
 interface SelectionRef {
@@ -259,6 +260,13 @@ function HomeContent() {
   };
 
   useShortcut('global.screensaver', triggerScreensaver);
+
+  // Hot corners: flinging the cursor into a corner mapped to a trigger action
+  // fires it. `hideControls` corners are handled by the viewer's predicate, not
+  // here. Screensaver is the only trigger action for now.
+  useHotCornerEngine((action) => {
+    if (action === 'screensaver') triggerScreensaver();
+  });
 
   // Screensaver toggles arrive here from every source: same-process devices via
   // SSE, same-browser tabs via BroadcastChannel, and cross-process (caddy fronts

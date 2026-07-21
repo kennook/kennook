@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
-import { inHideCorner } from '@/lib/hot-corner';
+import { useHideCornerPredicate } from '@/lib/hot-corner-client';
 import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
@@ -743,12 +743,14 @@ export function MediaViewer({
   };
 
   // Root mouse-move: reveal the chrome + re-arm the idle timer — EXCEPT when the
-  // cursor sits in the top-left dead corner, so a mouse jiggler parked there
-  // can't keep the controls pinned open (they still fade after the idle window).
+  // cursor sits in a corner mapped to "hide controls" (configurable hot corner),
+  // so a mouse jiggler parked there can't keep the controls pinned open (they
+  // still fade after the idle window).
+  const inHideCorner = useHideCornerPredicate();
   const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
     if (inHideCorner(e.clientX, e.clientY)) return;
     pulseChrome();
-  }, [pulseChrome]);
+  }, [pulseChrome, inHideCorner]);
 
   // Keep the chrome pinned open while a text field in it is focused (bookmark
   // tags, video tags) — typing produces no pointer movement to keep it alive,
