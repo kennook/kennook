@@ -152,6 +152,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Fixed a rare crash ("Cannot read properties of undefined (reading 'item')") in
+  the results grid when the dataset changed (shuffle / filter / library switch) —
+  the virtualized grid could momentarily index past the new item list. It now
+  guards against the transient instead of throwing.
 - The full-screen "coming up" reel now hides more aggressively on narrow and
   **portrait** screens — down to 2–3 thumbnails (from up to 5) — so the strip no
   longer covers the side arrows or the bottom-left controls. Wide landscape

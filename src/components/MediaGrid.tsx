@@ -192,7 +192,11 @@ function MasonryBody({
         items={cells}
         overscanBy={2}
         itemHeightEstimate={columnWidth}
-        itemKey={(d) => d.item.uuid}
+        // Defensive: masonic can call itemKey with an out-of-range index during
+        // a dataset transition (a shuffle/filter/library change shrinks `cells`
+        // before the positioner resets), so `d` may be momentarily undefined.
+        // Fall back to the index rather than crashing on `d.item`.
+        itemKey={(d, index) => d?.item?.uuid ?? index}
         render={GridCell}
         onRender={maybeLoadMore}
       />
@@ -202,6 +206,9 @@ function MasonryBody({
 
 function GridCell({ data }: { index: number; data: Cell; width: number }) {
   const ref = useContext(HandlersCtx)!;
+  // Same transient as itemKey: masonic may render a cell whose data is briefly
+  // undefined during a dataset swap. Render nothing rather than crash.
+  if (!data?.item) return null;
   const { item, selected, highlighted } = data;
   return (
     <MediaCard
