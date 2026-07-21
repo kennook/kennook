@@ -13,15 +13,31 @@ const REEL_GAP = 6;         // gap-1.5 between tiles
 // nav arrows (w-11 at left-4/right-4 ≈ 60px + breathing room).
 const SIDE_RESERVE = 84;
 
-/** How many UPCOMING tiles fit without the centered strip reaching the side
- *  controls. On a narrow screen this drops toward 0 so the nav arrows stay
- *  clickable; on a wide screen it caps at UPCOMING_MAX. Counts the always-shown
- *  "now" tile against the budget. */
+/** How many UPCOMING tiles to show so the centered strip doesn't crowd the side
+ *  nav arrows or the bottom-left toolbar. Each tile is wide (144px), so a full
+ *  strip dominates a narrow / portrait screen — we cap AGGRESSIVELY there (2–3)
+ *  on top of the raw geometric fit. Counts the always-shown "now" tile against
+ *  the budget; wide landscape screens still get the full UPCOMING_MAX. */
 function computeMaxUpcoming(): number {
   if (typeof window === 'undefined') return UPCOMING_MAX;
-  const avail = window.innerWidth - SIDE_RESERVE * 2;
-  const tiles = Math.floor((avail + REEL_GAP) / (TILE_W + REEL_GAP));
-  return Math.max(0, Math.min(UPCOMING_MAX, tiles - 1));
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+
+  // Raw fit between the reserved side gutters (upper bound for extreme aspects).
+  const avail = w - SIDE_RESERVE * 2;
+  const fit = Math.max(0, Math.floor((avail + REEL_GAP) / (TILE_W + REEL_GAP)) - 1);
+  let cap = Math.min(UPCOMING_MAX, fit);
+
+  // Hard width tiers — keep the strip short well before it can reach the
+  // bottom-left controls on a narrow window.
+  if (w < 820) cap = Math.min(cap, 2);
+  else if (w < 1100) cap = Math.min(cap, 3);
+
+  // Portrait screens have little horizontal room for a wide strip and the
+  // controls sit closer to center — hold it to 2 (narrow) or 3 (wider portrait).
+  if (h > w) cap = Math.min(cap, w < 950 ? 2 : 3);
+
+  return cap;
 }
 
 function useMaxUpcoming(): number {
@@ -61,8 +77,9 @@ const UPCOMING_MAX = 5;
  * page is about to run out a dashed "Next page" placeholder gets
  * appended so the user knows more is coming.
  *
- * On a narrow screen the number of upcoming tiles is reduced so the centered
- * strip doesn't cover the side nav arrows (see useMaxUpcoming).
+ * On a narrow / portrait screen the number of upcoming tiles is reduced hard
+ * (to 2–3) so the centered strip doesn't cover the side nav arrows or the
+ * bottom-left toolbar (see computeMaxUpcoming).
  *
  * Click any upcoming tile to jump straight to it.
  */

@@ -152,6 +152,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- The full-screen "coming up" reel now hides more aggressively on narrow and
+  **portrait** screens — down to 2–3 thumbnails (from up to 5) — so the strip no
+  longer covers the side arrows or the bottom-left controls. Wide landscape
+  screens are unchanged.
 - Switching libraries now clears the **Resume** pill. Previously, if you'd been
   watching results and switched libraries (with no filters set), the resume pill
   lingered and reopened the *old* library's clip. The resume point now resets on a
