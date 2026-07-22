@@ -12,6 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Parallel jobs across drives.** The admin job runner can now index multiple
+  drives at the same time instead of strictly one job at a time. I/O-bound work
+  (indexing, previews, scrub sprites) runs several in parallel (up to 3, one per
+  drive) while the CPU/AI-heavy enrichment passes stay serialized — so you get
+  faster multi-drive indexing without overloading the processor, and the
+  processor-load throttle keeps working exactly as before. Pause/resume and cancel
+  operate across all running jobs.
 - **Configurable hot corners (macOS-style).** Map each of the four screen corners
   to an action in **Profile → Settings → Hot corners**: fling the cursor into a
   corner to **start the screensaver**, or set a corner to **Hide controls** (the

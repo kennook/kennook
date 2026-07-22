@@ -206,6 +206,52 @@ export function nextRunnableJob(): AdminJobRow | null {
 }
 
 /**
+ * Like `nextRunnableJob`, but returns ALL currently-runnable queued jobs (deps
+ * satisfied) in enqueue order, rather than just the first — so the concurrency
+ * pool can start several at once, applying its own capacity/policy. Dep-blocked
+ * jobs (a prerequisite failed/canceled) are canceled here, same as the single
+ * pick. Jobs still waiting on a queued/running prerequisite are omitted.
+ */
+export function claimableJobs(): AdminJobRow[] {
+  const db = getUserSqlite();
+  const queued = db.prepare(`
+    SELECT * FROM admin_jobs WHERE status = 'queued' ORDER BY enqueued_at ASC, id ASC
+  `).all() as unknown as DbRow[];
+  if (queued.length === 0) return [];
+
+  const statusOf = (id: number): JobStatus | null => {
+    const r = db.prepare(`SELECT status FROM admin_jobs WHERE id = ?`).get(id) as { status: JobStatus } | undefined;
+    return r?.status ?? null;
+  };
+
+  const out: AdminJobRow[] = [];
+  for (const r of queued) {
+    const deps = parseIds(r.depends_on_json);
+    if (deps.length === 0) { out.push(rowToJob(r)); continue; }
+
+    let allDone = true;
+    let blocked = false;
+    for (const d of deps) {
+      const s = statusOf(d);
+      if (s === 'completed') continue;
+      if (s === 'failed' || s === 'canceled' || s === null) { blocked = true; break; }
+      allDone = false;
+    }
+    if (blocked) {
+      db.prepare(`
+        UPDATE admin_jobs
+        SET status = 'canceled', finished_at = ?,
+            output = output || char(10) || '[skipped — a prerequisite step did not complete]'
+        WHERE id = ? AND status = 'queued'
+      `).run(Date.now(), r.id);
+      continue;
+    }
+    if (allDone) out.push(rowToJob(r));
+  }
+  return out;
+}
+
+/**
  * Atomically claim a queued job. Returns true only if THIS call flipped the
  * row queued→running. With two server processes both draining the queue
  * (dev :3000 + prod :3001), the loser of the race gets false and must NOT

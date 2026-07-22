@@ -65,12 +65,19 @@ export interface JobDefinition {
    *  enforced among steps enqueued together (running a step alone ignores deps
    *  not in the batch). Powers the hierarchical run tree's ordering + gating. */
   dependsOn?: string[];
+  /** Which concurrency pool this job draws from (see job-runner's admission
+   *  policy). `io` = disk/ffmpeg-bound (indexer, previews, scrub) — several may
+   *  run in parallel across drives. `compute` = CPU/ML-bound ONNX inference —
+   *  serialized (one at a time) so it never oversubscribes the cores. Defaults
+   *  to `compute` (the safe choice). */
+  concurrencyGroup?: 'io' | 'compute';
 }
 
 export const JOB_CATALOG: JobDefinition[] = [
   {
     id: 'indexer',
     speed: 'medium',
+    concurrencyGroup: 'io',
     script: 'src/indexer/index.ts',
     label: 'Indexer',
     description: 'Scan a folder for media files, create database rows, generate thumbnails. Provide either a path to index or enable "retry" to re-process previously-failed files for the chosen library.',
@@ -103,6 +110,7 @@ export const JOB_CATALOG: JobDefinition[] = [
   {
     id: 'backfill:previews',
     speed: 'medium', secPerItem: 0.3,
+    concurrencyGroup: 'io',
     script: 'src/indexer/backfill-previews.ts',
     label: 'Backfill — Previews',
     description: 'Generate 2048px JPEG previews for photos missing them. Required for fullscreen viewing.',
@@ -114,6 +122,7 @@ export const JOB_CATALOG: JobDefinition[] = [
   {
     id: 'backfill:views',
     speed: 'fast', secPerItem: 0.02,
+    concurrencyGroup: 'io',
     script: 'src/indexer/backfill-views.ts',
     label: 'Backfill — Views',
     description: 'Mark items as viewed for the default user based on past interactions (likes, user tags, playlist adds).',
@@ -184,6 +193,7 @@ export const JOB_CATALOG: JobDefinition[] = [
   {
     id: 'enrich:scrub',
     speed: 'fast', secPerItem: 2,
+    concurrencyGroup: 'io',
     script: 'src/indexer/enrich-scrub.ts',
     label: 'Enrich — Scrub Previews (sprite sheets)',
     description: 'ffmpeg renders one sprite sheet of evenly-spaced frames per video (single pass), so hovering the progress bar shows a thumbnail preview. Stores a small JPEG per video + the grid manifest. Zero runtime cost.',
@@ -328,6 +338,12 @@ for (const def of JOB_CATALOG) {
 
 export function getJobDefinition(id: string): JobDefinition | null {
   return JOB_CATALOG.find((j) => j.id === id) ?? null;
+}
+
+/** Concurrency pool a command draws from — defaults to `compute` (serialized)
+ *  for anything unknown or unlabeled, the safe choice. */
+export function groupOf(command: string): 'io' | 'compute' {
+  return getJobDefinition(command)?.concurrencyGroup ?? 'compute';
 }
 
 // ─── Aggregate expansion ─────────────────────────────────────────────────────

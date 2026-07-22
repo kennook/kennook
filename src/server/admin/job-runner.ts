@@ -1,12 +1,16 @@
 /**
- * Admin job runner — single-process worker that drains the queue
- * one job at a time.
+ * Admin job runner — single-process worker that drains the queue.
  *
- * Concurrency: one job globally. Per the operator's call (don't want
- * to crash the machine via concurrent Florence-2 + face-api + CLIP),
- * jobs run sequentially. The DB queue is the source of truth, so
- * multiple admins can enqueue without coordination and see the same
- * pending list.
+ * Concurrency: a small pool with a per-category + per-drive admission policy
+ * (see `canStart`):
+ *   • `compute` jobs (CPU/ML ONNX inference) run ONE at a time — parallelizing
+ *     them oversubscribes the cores and is usually slower; keeping them serial
+ *     also means the throttle model is untouched.
+ *   • `io` jobs (indexer / previews / scrub — disk + ffmpeg) run several at once
+ *     (up to MAX_IO), so you can index multiple drives in parallel.
+ *   • At most one job per drive (storageId) at a time, to avoid disk thrash.
+ * The DB queue is the source of truth, so multiple admins can enqueue without
+ * coordination and see the same pending list.
  *
  * Subscriber model: an in-process EventEmitter fans output chunks
  * out to whichever SSE connections are tailing a given job id.
@@ -21,7 +25,7 @@ import type { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import {
   enqueueJob as storeEnqueue,
-  nextRunnableJob,
+  claimableJobs,
   markRunning,
   appendOutput,
   setProgress,
@@ -34,7 +38,7 @@ import {
   reapOrphanedRunningJobs,
   type AdminJobRow,
 } from './job-store';
-import { getJobDefinition } from './job-catalog';
+import { getJobDefinition, groupOf } from './job-catalog';
 import {
   parseProgressLine,
   type ProgressPayload,
@@ -66,8 +70,10 @@ interface RunnerGlobals {
   cancelSignalFor: Set<number>;
   /** Jobs being gracefully stopped by a pause — requeued (not finished) on exit. */
   pauseSignalFor: Set<number>;
-  runningJobId: number | null;
-  runningChild: RunnerChild | null;
+  /** All currently-running jobs → their child processes (the concurrency pool). */
+  running: Map<number, RunnerChild>;
+  /** storageId of each running job (or null), so we can enforce one-per-drive. */
+  runningStorage: Map<number, number | null>;
   workerStarted: boolean;
   pollTimer: NodeJS.Timeout | null;
 }
@@ -80,11 +86,37 @@ const state: RunnerGlobals = G.__kennookAdminRunner ?? (G.__kennookAdminRunner =
   recentBuffers: new Map(),
   cancelSignalFor: new Set(),
   pauseSignalFor: new Set(),
-  runningJobId: null,
-  runningChild: null,
+  running: new Map(),
+  runningStorage: new Map(),
   workerStarted: false,
   pollTimer: null,
 });
+
+// Max concurrent io-group jobs (indexers etc.). sharp/ffmpeg are themselves
+// multithreaded, so keep this modest; env-overridable for bigger/smaller rigs.
+const MAX_IO = (() => {
+  const n = parseInt(process.env.KENNOOK_MAX_IO_JOBS ?? '', 10);
+  return Number.isFinite(n) && n >= 1 ? n : 3;
+})();
+
+/**
+ * Admission policy — may `job` start given what's already running?
+ *   • compute → only if no compute job is running (global cap 1).
+ *   • io      → only if fewer than MAX_IO io jobs are running.
+ *   • any job with a storageId → only if no running job is on that drive.
+ */
+function canStart(job: AdminJobRow): boolean {
+  if (job.storageId != null) {
+    for (const s of state.runningStorage.values()) if (s === job.storageId) return false;
+  }
+  const group = groupOf(job.command);
+  let io = 0, compute = 0;
+  for (const id of state.running.keys()) {
+    if (groupOf(getJob(id)?.command ?? '') === 'io') io++; else compute++;
+  }
+  if (group === 'compute') return compute === 0;
+  return io < MAX_IO;
+}
 
 // Per-job event channel. Events:
 //   'output'   (chunk: string)
@@ -155,47 +187,35 @@ function buildSpawnArgs(job: AdminJobRow): { cmd: string; argv: string[] } {
   return { cmd: 'pnpm', argv: ['exec', 'tsx', def.script, ...allArgs] };
 }
 
+/**
+ * Start as many queued jobs as the admission policy allows right now. Runnable
+ * candidates (deps satisfied) are considered in enqueue order; each that passes
+ * `canStart` is claimed atomically and spawned. `canStart` re-reads the live
+ * `running` maps, which `startJob` updates synchronously, so capacity is honored
+ * as we fill within one pass.
+ */
+function fillSlots(): void {
+  if (isQueuePaused()) return; // don't advance the queue while paused
+  for (const job of claimableJobs()) {
+    if (!canStart(job)) continue;
+    if (markRunning(job.id)) startJob(job); // startJob adds to `running` synchronously
+  }
+}
+
 function startWorkerLoop(): void {
   if (state.pollTimer) return;
   const tick = () => {
     state.pollTimer = null;
-    if (state.runningJobId !== null) {
-      // Worker is busy — re-check after current job finishes (handled
-      // by the child's 'close' event scheduling the next tick).
-      return;
-    }
-    // Honor the global pause flag — don't advance the queue while paused.
-    // Keep polling so resume is picked up promptly.
-    if (isQueuePaused()) {
-      state.pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
-      return;
-    }
-    const next = nextRunnableJob();
-    if (!next) {
-      // Idle — poll again later.
-      state.pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
-      return;
-    }
-    startJob(next);
-    // After startJob, runningJobId is set; the close handler schedules
-    // the next tick.
+    fillSlots();
+    state.pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
   };
   state.pollTimer = setTimeout(tick, 50);
 }
 
+/** Kick the pool promptly (after an enqueue / a job finishing) without waiting
+ *  for the next poll — then ensure the background poll is running. */
 function scheduleTickNow(): void {
-  if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
-  state.pollTimer = setTimeout(() => {
-    state.pollTimer = null;
-    if (state.runningJobId !== null) return;
-    if (isQueuePaused()) { startWorkerLoop(); return; }
-    const next = nextRunnableJob();
-    if (next) {
-      startJob(next);
-    } else {
-      startWorkerLoop();
-    }
-  }, 25);
+  setTimeout(() => { fillSlots(); startWorkerLoop(); }, 25);
 }
 
 function startJob(job: AdminJobRow): void {
@@ -207,7 +227,8 @@ function startJob(job: AdminJobRow): void {
     scheduleTickNow();
     return;
   }
-  state.runningJobId = job.id;
+  // Reserve the drive slot immediately so a same-tick fill can't double-book it.
+  state.runningStorage.set(job.id, job.storageId ?? null);
 
   let cmd: string; let argv: string[];
   try {
@@ -219,7 +240,7 @@ function startJob(job: AdminJobRow): void {
     const e = eventsFor(job.id);
     e.emit('output', `[runner error] ${msg}\n`);
     e.emit('finished', { status: 'failed', exitCode: -1 });
-    state.runningJobId = null;
+    state.runningStorage.delete(job.id);
     scheduleTickNow();
     return;
   }
@@ -253,12 +274,11 @@ function startJob(job: AdminJobRow): void {
     ev.emit('output', msg);
     markFinished({ id: job.id, status: 'failed', exitCode: -1 });
     ev.emit('finished', { status: 'failed', exitCode: -1 });
-    state.runningJobId = null;
-    state.runningChild = null;
+    state.runningStorage.delete(job.id);
     scheduleTickNow();
     return;
   }
-  state.runningChild = child;
+  state.running.set(job.id, child);
 
   // Line buffering for progress detection. The protocol is per-line
   // (one JSON object per `@@kennook-progress:` line); chunks from
@@ -345,8 +365,8 @@ function startJob(job: AdminJobRow): void {
   });
 
   child.on('close', (code, signal) => {
-    state.runningJobId = null;
-    state.runningChild = null;
+    state.running.delete(job.id);
+    state.runningStorage.delete(job.id);
     // Recent-items buffer is alive-job state — drop it once the job
     // is done. Late-joining tabs after this point get an empty strip,
     // which is correct (the job is no longer scanning anything).
@@ -444,23 +464,22 @@ export function enqueue(input: {
 export function pauseQueue(): { ok: true; running: number | null } {
   ensureRunnerStarted();
   setQueuePaused(true);
-  // Gracefully stop the in-flight job so I/O frees up. The script's SIGTERM
+  // Gracefully stop EVERY in-flight job so I/O frees up. Each script's SIGTERM
   // handler finishes the current item then exits; the close handler sees
   // pauseSignalFor and requeues rather than marking finished.
-  const runningId = state.runningJobId;
-  if (runningId !== null && state.runningChild) {
-    state.pauseSignalFor.add(runningId);
-    state.runningChild.kill('SIGTERM');
-    const child = state.runningChild;
+  const running = [...state.running.entries()];
+  for (const [id, child] of running) {
+    state.pauseSignalFor.add(id);
+    child.kill('SIGTERM');
     // Escalate if the script ignores the cooperative stop. Still safe —
     // a hard-killed item just reruns on resume.
     setTimeout(() => {
-      if (state.runningJobId === runningId && !child.killed) {
+      if (state.running.get(id) === child && !child.killed) {
         try { child.kill('SIGKILL'); } catch { /* already dead */ }
       }
     }, 8000);
   }
-  return { ok: true, running: runningId };
+  return { ok: true, running: running.length > 0 ? running[0][0] : null };
 }
 
 /** Resume the queue — clears the flag and kicks the worker. */
@@ -485,15 +504,15 @@ export function cancel(jobId: number): { ok: boolean; reason?: string } {
     return ok ? { ok: true } : { ok: false, reason: 'race — job already started' };
   }
   if (job.status === 'running') {
-    if (state.runningJobId !== jobId || !state.runningChild) {
+    const child = state.running.get(jobId);
+    if (!child) {
       return { ok: false, reason: 'no live process for this job' };
     }
     state.cancelSignalFor.add(jobId);
-    state.runningChild.kill('SIGTERM');
+    child.kill('SIGTERM');
     // Escalate after a short grace period if it ignores SIGTERM.
-    const child = state.runningChild;
     setTimeout(() => {
-      if (state.runningJobId === jobId && !child.killed) {
+      if (state.running.get(jobId) === child && !child.killed) {
         try { child.kill('SIGKILL'); } catch { /* already dead */ }
       }
     }, 3000);
@@ -522,7 +541,7 @@ export function subscribe(
   };
 }
 
-/** Currently-running job id (for UI badges / "currently executing"). */
-export function currentlyRunningJobId(): number | null {
-  return state.runningJobId;
+/** Currently-running job ids (for UI badges / "currently executing"). */
+export function currentlyRunningJobIds(): number[] {
+  return [...state.running.keys()];
 }
