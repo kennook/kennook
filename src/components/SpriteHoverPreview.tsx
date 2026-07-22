@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 
-// Frame cadence for the hover traversal. A modest fixed step so the preview
-// "plays" through the sprite at a readable speed regardless of length.
-const FRAME_MS = 90;
+// Frame cadence for the hover traversal — a relaxed step so the preview reads as
+// a slow skim through the clip rather than a fast flicker.
+const FRAME_MS = 220;
 
 /**
  * Fills a video tile with a fast traversal of its scrub sprite sheet — a silent,
