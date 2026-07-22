@@ -157,9 +157,22 @@ function MasonryBody({
   onLoadMore?: () => void;
   handlersRef: React.MutableRefObject<Handlers>;
 }) {
-  // Recreate the positioner (clearing cached positions) when the width or the
-  // dataset changes; masonic re-lays-out at the correct column count/width.
-  const positioner = usePositioner({ width, columnWidth, columnGutter: 8 }, [resetKey ?? '']);
+  // Recreate the positioner (clearing cached positions) when width / dataset
+  // change. ALSO recreate whenever the item count SHRINKS within the same view —
+  // masonic caches positions assuming `items` only grows, and throws "No data
+  // was found at index N" if the array gets shorter (an item excluded/deleted, or
+  // a transient duplicate de-duped). We bump a nonce SYNCHRONOUSLY during render
+  // (not in an effect — the crash happens in this same render), so the fresh
+  // positioner is used immediately. Growth (infinite scroll) doesn't bump it, so
+  // scroll position + cached layout are preserved on the common path.
+  const prevLenRef = useRef(cells.length);
+  const shrinkNonceRef = useRef(0);
+  if (cells.length < prevLenRef.current) shrinkNonceRef.current += 1;
+  prevLenRef.current = cells.length;
+  const positioner = usePositioner(
+    { width, columnWidth, columnGutter: 8 },
+    [resetKey ?? '', shrinkNonceRef.current],
+  );
   const resizeObserver = useResizeObserver(positioner);
 
   // Scroll the highlighted tile into view when `scrollSignal` bumps (the grid is
