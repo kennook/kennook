@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Hover-to-preview videos in the grid.** Rest the cursor on a video thumbnail
+  and it plays a quick silent traversal of the clip (built from the existing
+  scrub-preview sprite sheet) — a fast way to see what a video is before opening
+  it. Kicks in after a short dwell so scrolling past tiles doesn't trigger it, and
+  falls back to the static thumbnail for videos that haven't been scrubbed yet.
 - **Parallel jobs across drives.** The admin job runner can now index multiple
   drives at the same time instead of strictly one job at a time. I/O-bound work
   (indexing, previews, scrub sprites) runs several in parallel (up to 3, one per

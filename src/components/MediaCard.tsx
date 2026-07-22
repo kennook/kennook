@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { SparkleBurst } from './SparkleBurst';
+import { SpriteHoverPreview } from './SpriteHoverPreview';
 import type { TextMatch } from './MediaGrid';
+
+// Hover this long over a video tile before its sprite preview kicks in — so
+// scrolling/skimming past tiles doesn't fire fetches or flicker previews.
+const PREVIEW_DWELL_MS = 350;
 
 // Suppress repeat sparkle bursts within this window — leading-edge so the
 // first click in a rate-up gesture fires the visual, the rest don't stack.
@@ -116,7 +121,25 @@ export function MediaCard({
   // i.e. the source is probably damaged. Surfaces a small warning badge.
   const [thumbBroken, setThumbBroken] = useState(false);
 
+  // Dwell-to-preview: after PREVIEW_DWELL_MS hovering a VIDEO tile, mount the
+  // sprite preview (which lazily fetches the sheet). Only one tile is hovered at
+  // a time, so this is naturally a single active preview. Cleared on leave and
+  // on unmount (masonic recycles tiles while scrolling).
+  const canPreview = kind === 'video';
+  const [previewing, setPreviewing] = useState(false);
+  const dwellRef = useRef<number | null>(null);
+  const clearDwell = () => { if (dwellRef.current) { clearTimeout(dwellRef.current); dwellRef.current = null; } };
+  const onHoverEnter = () => {
+    if (!canPreview || previewing) return;
+    clearDwell();
+    dwellRef.current = window.setTimeout(() => setPreviewing(true), PREVIEW_DWELL_MS);
+  };
+  const onHoverLeave = () => { clearDwell(); setPreviewing(false); };
+  useEffect(() => () => clearDwell(), []);
+
   const handleCardClick = (e: React.MouseEvent) => {
+    setPreviewing(false); // opening the viewer — drop the tile preview
+    clearDwell();
     if (selectionMode && onToggleSelection) onToggleSelection(e);
     else if ((e.metaKey || e.ctrlKey || e.shiftKey) && onToggleSelection) onToggleSelection(e);
     else onOpen(firstTsMatch);
@@ -158,6 +181,8 @@ export function MediaCard({
   return (
     <div
       style={{ aspectRatio: String(aspectRatio) }}
+      onMouseEnter={onHoverEnter}
+      onMouseLeave={onHoverLeave}
       className={`group relative overflow-hidden rounded-lg bg-zinc-900 transition
                   ${selected ? 'ring-2 ring-emerald-400'
                     : highlighted ? 'ring-2 ring-sky-400'
@@ -195,6 +220,13 @@ export function MediaCard({
           }}
         />
       </button>
+
+      {/* Dwell preview — overlays the thumbnail (pointer-events-none, so clicks
+          still hit the button beneath). Renders nothing until its sprite is
+          fetched + decoded, and is a no-op for videos without a sprite. */}
+      {previewing && !thumbBroken && (
+        <SpriteHoverPreview uuid={uuid} librarySlug={librarySlug} />
+      )}
 
       {/* Damaged / unreadable source — the thumbnail couldn't be shown. Faint
           centred glyph so the empty tile doesn't read as "still loading". */}
