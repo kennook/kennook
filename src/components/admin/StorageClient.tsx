@@ -19,14 +19,36 @@ export function StorageClient() {
   // While a job is running/queued its indexing/enrichment keeps changing the
   // per-storage "files indexed" counts — poll the list so they update live.
   const [jobActive, setJobActive] = useState(false);
+  // Which drives have a running/queued job right now — drives the sidebar
+  // activity indicator. Polled across ALL drives (not just the selected one).
+  const [activeStorageIds, setActiveStorageIds] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    let stop = false;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/admin/jobs', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as { jobs: Array<{ status: string; storageId: number | null }> };
+        const ids = new Set<number>();
+        for (const j of data.jobs) {
+          if ((j.status === 'running' || j.status === 'queued') && j.storageId != null) ids.add(j.storageId);
+        }
+        if (!stop) setActiveStorageIds(ids);
+      } catch { /* best-effort */ }
+    };
+    void poll();
+    const t = setInterval(poll, 2500);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
+  const anyActive = jobActive || activeStorageIds.size > 0;
   const list = trpc.storage.list.useQuery(undefined, {
-    refetchInterval: jobActive ? 3000 : false,
+    refetchInterval: anyActive ? 3000 : false,
   });
   const wasActive = useRef(false);
   useEffect(() => {
-    if (wasActive.current && !jobActive) void utils.storage.list.invalidate();
-    wasActive.current = jobActive;
-  }, [jobActive, utils]);
+    if (wasActive.current && !anyActive) void utils.storage.list.invalidate();
+    wasActive.current = anyActive;
+  }, [anyActive, utils]);
   const current = trpc.library.current.useQuery();
 
   const remove = trpc.storage.remove.useMutation({
@@ -100,7 +122,7 @@ export function StorageClient() {
         </div>
       ) : (
         <div className="flex gap-6 items-start">
-          <DriveSidebar drives={drives} selectedId={selectedId} onSelect={setSelectedId} />
+          <DriveSidebar drives={drives} selectedId={selectedId} onSelect={setSelectedId} activeStorageIds={activeStorageIds} />
           <div className="flex-1 min-w-0 ring-1 ring-zinc-800 rounded-lg bg-zinc-950/40 p-5">
             {selected && (
               <DriveDetail

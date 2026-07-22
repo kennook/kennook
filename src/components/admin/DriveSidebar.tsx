@@ -33,6 +33,16 @@ function InternalDiskIcon({ size }: { size: number }) {
     </svg>
   );
 }
+function Spinner() {
+  // Small emerald activity spinner shown while a job runs on the drive.
+  return (
+    <span
+      className="shrink-0 ml-auto w-3 h-3 rounded-full border-[1.5px] border-emerald-400/30 border-t-emerald-400 animate-spin"
+      title="A job is running on this drive"
+      aria-label="Working"
+    />
+  );
+}
 function ExternalDriveIcon({ size }: { size: number }) {
   // External hard drive (horizontal enclosure + activity dot).
   return (
@@ -58,10 +68,13 @@ export function DriveSidebar({
   drives,
   selectedId,
   onSelect,
+  activeStorageIds,
 }: {
   drives: StorageInfo[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  /** Drives with a running/queued job — shown with an activity spinner. */
+  activeStorageIds?: Set<number>;
 }) {
   const groups: Group[] = ['Internal', 'External', 'Cloud'];
   return (
@@ -77,7 +90,13 @@ export function DriveSidebar({
             </div>
             <div className="space-y-0.5">
               {items.map((d) => (
-                <DriveRow key={d.id} drive={d} active={d.id === selectedId} onClick={() => onSelect(d.id)} />
+                <DriveRow
+                  key={d.id}
+                  drive={d}
+                  active={d.id === selectedId}
+                  busy={activeStorageIds?.has(d.id) ?? false}
+                  onClick={() => onSelect(d.id)}
+                />
               ))}
             </div>
           </div>
@@ -87,7 +106,7 @@ export function DriveSidebar({
   );
 }
 
-function DriveRow({ drive, active, onClick }: { drive: StorageInfo; active: boolean; onClick: () => void }) {
+function DriveRow({ drive, active, busy, onClick }: { drive: StorageInfo; active: boolean; busy: boolean; onClick: () => void }) {
   // The drive glyph is tinted by status (online/offline/cloud) so it doubles as
   // the status indicator — no separate dot needed.
   const iconClass =
@@ -108,8 +127,12 @@ function DriveRow({ drive, active, onClick }: { drive: StorageInfo; active: bool
         ${active ? 'bg-zinc-800 ring-zinc-700' : 'ring-transparent hover:bg-zinc-900'}`}
     >
       <div className="flex items-center gap-2">
-        <span className={`shrink-0 ${iconClass}`}><DriveGlyph group={groupFor(drive)} /></span>
+        {/* While a job runs on this drive, pulse the glyph so it reads as "busy". */}
+        <span className={`shrink-0 ${iconClass} ${busy ? 'animate-pulse' : ''}`}>
+          <DriveGlyph group={groupFor(drive)} />
+        </span>
         <span className={`text-sm truncate ${active ? 'text-zinc-100' : 'text-zinc-300'}`}>{drive.name}</span>
+        {busy && <Spinner />}
       </div>
       {usedPct != null ? (
         <div className="mt-1.5 ml-[1.6rem]">

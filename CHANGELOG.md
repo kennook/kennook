@@ -12,6 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Per-drive activity indicator.** In the storage admin's drive list, a drive with
+  a running or queued job now pulses its icon and shows a small spinner — so you can
+  see which drives are working at a glance (handy now that multiple drives can index
+  in parallel).
 - **Hover-to-preview videos in the grid.** Rest the cursor on a video thumbnail
   and it plays a quick silent traversal of the clip (built from the existing
   scrub-preview sprite sheet) — a fast way to see what a video is before opening
