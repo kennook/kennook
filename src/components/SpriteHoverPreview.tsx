@@ -3,9 +3,24 @@
 import { useEffect, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 
-// Frame cadence for the hover traversal — a relaxed step so the preview reads as
-// a slow skim through the clip rather than a fast flicker.
-const FRAME_MS = 220;
+// The preview skims the whole clip in a time PROPORTIONAL to its length, so a
+// short clip gets a brief look and a long one a longer (but bounded) skim —
+// instead of a flat per-frame speed that flickers short clips and drags long
+// ones. Per-frame dwell is then derived from the frame count and clamped, so the
+// motion stays smooth whether the sheet has 8 frames or 150.
+const PREVIEW_FRACTION = 0.12;   // skim ≈ 12% of real time…
+const MIN_LOOP_MS = 3500;        // …but at least this long,
+const MAX_LOOP_MS = 14000;       // …and at most this long.
+const MIN_FRAME_MS = 140;        // never a flicker,
+const MAX_FRAME_MS = 500;        // never a painful slideshow.
+
+/** Per-frame dwell for a sprite, from its manifest (intervalMs × count ≈ the
+ *  video's length). */
+function frameMsFor(intervalMs: number, count: number): number {
+  const videoMs = Math.max(1, intervalMs * count);
+  const loopMs = Math.min(MAX_LOOP_MS, Math.max(MIN_LOOP_MS, videoMs * PREVIEW_FRACTION));
+  return Math.min(MAX_FRAME_MS, Math.max(MIN_FRAME_MS, loopMs / Math.max(1, count)));
+}
 
 /**
  * Fills a video tile with a fast traversal of its scrub sprite sheet — a silent,
@@ -37,11 +52,12 @@ export function SpriteHoverPreview({ uuid, librarySlug }: { uuid: string; librar
     return () => { img.onload = null; };
   }, [sprite?.url]);
 
-  // Cycle frames while mounted (i.e. while hovering).
+  // Cycle frames while mounted (i.e. while hovering), at a length-aware cadence.
   useEffect(() => {
     if (!sprite || !loaded || sprite.count <= 1) return;
     setIdx(0);
-    const t = setInterval(() => setIdx((i) => (i + 1) % sprite.count), FRAME_MS);
+    const frameMs = frameMsFor(sprite.intervalMs, sprite.count);
+    const t = setInterval(() => setIdx((i) => (i + 1) % sprite.count), frameMs);
     return () => clearInterval(t);
   }, [sprite, loaded]);
 
