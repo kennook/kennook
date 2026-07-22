@@ -164,6 +164,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- **Jobs weren't actually running** (regression from the parallel-jobs change):
+  the pool claimed each job twice, so the row flipped to "running" but no process
+  ever spawned — it just sat there with no output and couldn't be canceled ("no
+  live process for this job"). Fixed the double-claim so jobs run again, and Cancel
+  now clears a stuck/orphaned "running" row instead of erroring.
 - The "This video couldn't be played" message now has a **Retry** button. The
   browser fires the error on transient hiccups too (a drive spinning up, a brief
   stall), so a reload often succeeds — no need to close and reopen the video.

@@ -197,8 +197,11 @@ function buildSpawnArgs(job: AdminJobRow): { cmd: string; argv: string[] } {
 function fillSlots(): void {
   if (isQueuePaused()) return; // don't advance the queue while paused
   for (const job of claimableJobs()) {
-    if (!canStart(job)) continue;
-    if (markRunning(job.id)) startJob(job); // startJob adds to `running` synchronously
+    // startJob does the single atomic claim (markRunning) + spawn, and updates
+    // the `running` maps synchronously — so canStart sees the growing pool as we
+    // fill within one pass. DON'T markRunning here too: a double claim leaves the
+    // row 'running' while startJob's own claim fails, so no child ever spawns.
+    if (canStart(job)) startJob(job);
   }
 }
 
@@ -495,6 +498,20 @@ export function isPaused(): boolean {
   return isQueuePaused();
 }
 
+/** Finalize a 'running' row that has no live child in this process (orphaned /
+ *  stuck), so the queue can move on and the UI stops showing it as active. */
+function forceFinishStuck(jobId: number, status: 'canceled' | 'failed'): void {
+  const note = `\n[runner] no live process for this job — finalized as ${status}.\n`;
+  appendOutput(jobId, note);
+  markFinished({ id: jobId, status, exitCode: -1 });
+  state.running.delete(jobId);
+  state.runningStorage.delete(jobId);
+  const ev = eventsFor(jobId);
+  ev.emit('output', note);
+  ev.emit('finished', { status, exitCode: -1 });
+  scheduleTickNow();
+}
+
 export function cancel(jobId: number): { ok: boolean; reason?: string } {
   ensureRunnerStarted();
   const job = getJob(jobId);
@@ -506,7 +523,14 @@ export function cancel(jobId: number): { ok: boolean; reason?: string } {
   if (job.status === 'running') {
     const child = state.running.get(jobId);
     if (!child) {
-      return { ok: false, reason: 'no live process for this job' };
+      // No live child in this process. Either the row is orphaned (the server
+      // restarted mid-run, or an old double-claim left it 'running' with no
+      // process) or the child lives in the other Node process (dev+prod both
+      // draining the shared queue). Either way, don't leave the operator stuck:
+      // finalize the row as canceled. In the rare cross-process case the child
+      // keeps running harmlessly (its work is saved as it goes) until it exits.
+      forceFinishStuck(jobId, 'canceled');
+      return { ok: true };
     }
     state.cancelSignalFor.add(jobId);
     child.kill('SIGTERM');
