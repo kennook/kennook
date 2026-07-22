@@ -159,6 +159,9 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- The "This video couldn't be played" message now has a **Retry** button. The
+  browser fires the error on transient hiccups too (a drive spinning up, a brief
+  stall), so a reload often succeeds — no need to close and reopen the video.
 - Fixed a rare crash ("Cannot read properties of undefined (reading 'item')") in
   the results grid when the dataset changed (shuffle / filter / library switch) —
   the virtualized grid could momentarily index past the new item list. It now

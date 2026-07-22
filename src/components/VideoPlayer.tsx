@@ -140,6 +140,15 @@ export function VideoPlayer({
   const [damaged, setDamaged] = useState(false);
   // A new src is loading until it can play — reset immediately on item swap.
   useEffect(() => { setBuffering(true); setDamaged(false); }, [src]);
+  // Retry after an error — re-fetch the same source. The `error` event fires on
+  // transient issues too (a drive spinning up, a momentary stall), so a reload
+  // often succeeds; if it genuinely can't decode, onError just flips back.
+  const retry = () => {
+    setDamaged(false);
+    setBuffering(true);
+    const el = videoRef.current;
+    if (el) { try { el.load(); void el.play().catch(() => {}); } catch { /* ignore */ } }
+  };
   // Only actually show the spinner if buffering lasts >200ms, so fast/cached
   // loads don't flash it.
   const [showSpinner, setShowSpinner] = useState(false);
@@ -562,7 +571,9 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Playback failed — the file is likely damaged or an unsupported codec. */}
+      {/* Playback failed — could be a damaged file / unsupported codec, but the
+          `error` event also fires on transient hiccups (a snoozing drive, a brief
+          network stall), so offer a Retry that re-fetches the same source. */}
       {damaged && (
         <div className="absolute inset-0 grid place-items-center pointer-events-none px-6">
           <div className="flex flex-col items-center gap-2 text-center text-zinc-300">
@@ -572,7 +583,17 @@ export function VideoPlayer({
               </svg>
             </span>
             <div className="text-sm font-medium text-zinc-200">This video couldn&apos;t be played</div>
-            <div className="text-xs text-zinc-400 max-w-xs">The file may be damaged or in an unsupported format.</div>
+            <div className="text-xs text-zinc-400 max-w-xs">It may be damaged or in an unsupported format — or the drive was just waking up.</div>
+            <button
+              onClick={retry}
+              className="pointer-events-auto mt-1 inline-flex items-center gap-1.5 rounded-md
+                         bg-zinc-100 text-zinc-900 text-sm font-medium px-3 py-1.5 hover:bg-white transition"
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2v3h-3" />
+              </svg>
+              Retry
+            </button>
           </div>
         </div>
       )}
