@@ -12,6 +12,7 @@ import { vimeoProvider } from './vimeo';
 import { twitchProvider } from './twitch';
 import { archiveProvider } from './archive';
 import { rssProvider } from './rss';
+import { m3uProvider } from './m3u';
 import { streamProvider } from './stream';
 
 // Order matters: a URL is claimed by the FIRST provider whose match() is true.
@@ -24,6 +25,7 @@ const PROVIDERS: Provider[] = [
   twitchProvider,
   archiveProvider,
   rssProvider,
+  m3uProvider,    // .m3u playlists (before stream; stream matches .m3u8, not .m3u)
   streamProvider, // catch-all: bare media URLs by extension
 ];
 

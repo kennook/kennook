@@ -15,7 +15,7 @@ import path from 'node:path';
 const DATA_ROOT = process.env.KENNOOK_DATA_ROOT ?? './data';
 const REGISTRY_PATH = path.join(DATA_ROOT, 'external-sources.json');
 
-export type ExternalProvider = 'youtube' | 'stream' | 'rss' | 'archive' | 'vimeo' | 'twitch';
+export type ExternalProvider = 'youtube' | 'stream' | 'rss' | 'archive' | 'vimeo' | 'twitch' | 'm3u';
 export type ExternalSourceKind = 'channel' | 'playlist' | 'video';
 /** Which client player renders a source's items. Defined here (the base model)
  *  so `providers/types.ts` can import it without a circular dependency. */
