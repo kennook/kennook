@@ -174,6 +174,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- The search bar now works as a **filter inside external sources**. Previously,
+  searching while viewing a YouTube channel / playlist / IPTV list searched the
+  local library instead (and kicked you out of the source). Now, under an external
+  source it live-filters that source's videos/channels by title as you type, and
+  leaves the local-library search unchanged everywhere else.
 - Fixed a grid crash ("No data was found at index N") that could fire when the
   result list got shorter without a filter change — e.g. excluding/deleting an
   item, or a transient duplicate being de-duped mid-scroll. The virtualized grid

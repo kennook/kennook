@@ -794,7 +794,15 @@ function HomeContent() {
 
   const clearSimilar = () => url.set({ similar: null });
 
+  // Under an external source/category the search bar is a LIVE, client-side
+  // filter over the loaded items (external providers have no library-style
+  // search), kept in local state so it doesn't touch the URL or trigger a
+  // library search. Reset whenever the external target changes.
+  const [extFilter, setExtFilter] = useState('');
+  useEffect(() => { setExtFilter(''); }, [url.source, url.category]);
+
   const handleSearchSubmit = (q: string) => {
+    if (externalMode) { setExtFilter(q); return; } // stay in the source; just filter
     url.set({ query: q, similar: q ? null : undefined, playlist: q ? null : undefined, source: q ? null : undefined, category: q ? null : undefined });
   };
 
@@ -974,7 +982,13 @@ function HomeContent() {
             <SidebarToggleIcon />
           </button>
           <div className="flex-1">
-            <SearchBar initial={url.query} onSubmit={handleSearchSubmit} />
+            <SearchBar
+              key={externalMode ? `ext:${url.source ?? ''}:${url.category ?? ''}` : 'local'}
+              initial={externalMode ? '' : url.query}
+              placeholder={externalMode ? 'Filter this source…' : undefined}
+              onChange={externalMode ? setExtFilter : undefined}
+              onSubmit={handleSearchSubmit}
+            />
           </div>
         </div>
       </header>
@@ -1092,9 +1106,9 @@ function HomeContent() {
 
         <div className="flex-1 min-w-0">
           {inCategory ? (
-            <ExternalSourceView category={url.category!} suspended={screensaverOpen} />
+            <ExternalSourceView category={url.category!} suspended={screensaverOpen} filter={extFilter} />
           ) : inExternal ? (
-            <ExternalSourceView slug={url.source!} suspended={screensaverOpen} />
+            <ExternalSourceView slug={url.source!} suspended={screensaverOpen} filter={extFilter} />
           ) : (
           <>
           <SelectionBar

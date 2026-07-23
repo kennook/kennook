@@ -7,7 +7,7 @@ import { NativeMediaPlayer } from './players/NativeMediaPlayer';
 import { VimeoPlayer } from './players/VimeoPlayer';
 import { TwitchPlayer } from './players/TwitchPlayer';
 
-type Props = { suspended?: boolean } & (
+type Props = { suspended?: boolean; filter?: string } & (
   | { slug: string; category?: undefined }
   | { category: string; slug?: undefined }
 );
@@ -43,9 +43,16 @@ export function ExternalSourceView(props: Props) {
   // Each tile needs a STABLE, UNIQUE key. In category mode two sources can point
   // at the same video (or the same live stream added twice), so key by the
   // source slug there; in source mode the videoId is unique within a playlist.
-  const videos = isCategory
+  const allVideos = isCategory
     ? (cq.data?.items.map((i) => ({ ...i.video, key: i.slug })) ?? [])
     : (q.data?.pages.flatMap((p) => p.items).map((v) => ({ ...v, key: v.videoId })) ?? []);
+  // Live text filter (the search bar acts as a filter here). Matches title or
+  // channel/group, over the currently-loaded items.
+  const filterLc = (props.filter ?? '').trim().toLowerCase();
+  const videos = filterLc
+    ? allVideos.filter((v) =>
+        v.title?.toLowerCase().includes(filterLc) || v.channelTitle?.toLowerCase().includes(filterLc))
+    : allVideos;
   const isLoading = isCategory ? cq.isLoading : q.isLoading;
   const isError = isCategory ? cq.isError : q.isError;
   const errorMsg = isCategory ? cq.error?.message : q.error?.message;
@@ -119,7 +126,9 @@ export function ExternalSourceView(props: Props) {
         </div>
       ) : videos.length === 0 ? (
         <div className="text-center text-zinc-500 py-16 text-sm">
-          {isCategory ? 'No live channels in this category yet.' : 'No videos in this source.'}
+          {filterLc
+            ? <>No matches for &ldquo;{props.filter}&rdquo;{allVideos.length > 0 && ` in ${allVideos.length} loaded`}. {q.hasNextPage ? 'Scroll to load more, then filter.' : ''}</>
+            : isCategory ? 'No live channels in this category yet.' : 'No videos in this source.'}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
