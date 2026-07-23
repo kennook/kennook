@@ -70,7 +70,8 @@ let _secretCacheAt = 0;
  */
 const SECRET_TTL_MS = 10_000;
 
-function getSessionSecret(): Buffer {
+/** Per-instance HMAC secret (also reused by the HLS proxy to sign proxied URLs). */
+export function getSessionSecret(): Buffer {
   const now = Date.now();
   if (_secretCache && now - _secretCacheAt < SECRET_TTL_MS) return _secretCache;
   const db = getUserSqlite();

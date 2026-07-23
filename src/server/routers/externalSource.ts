@@ -15,7 +15,20 @@ import {
 } from '@/server/external-sources';
 import { detectProvider, getProvider, listProviders } from '@/server/providers/registry';
 import type { ProviderVideo } from '@/server/providers/types';
+import { proxyUrl, isHlsUrl } from '@/server/hls-proxy';
 import { publishToUser, bumpDataRev } from '@/server/sync-broker';
+
+/** Route HLS (m3u8) native items through the CORS-busting proxy. Non-HLS native
+ *  media (mp4/mp3) plays cross-origin fine via <video>, so it's left direct. */
+function proxify(v: ProviderVideo): ProviderVideo {
+  if (v.playerKind === 'native' && v.mediaUrl && isHlsUrl(v.mediaUrl)) {
+    // The proxy URL hides the .m3u8 extension, so tag it `kind=hls` for the
+    // player to still pick hls.js (the tag is outside the signed `u`, ignored
+    // by the proxy route).
+    return { ...v, mediaUrl: `${proxyUrl(v.mediaUrl)}&kind=hls` };
+  }
+  return v;
+}
 
 /** Notify this user's other windows/devices that a sidebar list changed —
  *  in-process/same-browser via the event, cross-process via the data rev. */
@@ -157,7 +170,7 @@ export const externalSourceRouter = router({
         (s) => s.kind === 'video' && (s.category ?? '').toLowerCase() === cat,
       );
       const settled = await Promise.allSettled(
-        sources.map(async (s) => ({ slug: s.slug, video: await getProvider(s.provider).fetchVideo(s) })),
+        sources.map(async (s) => ({ slug: s.slug, video: proxify(await getProvider(s.provider).fetchVideo(s)) })),
       );
       const items = settled
         .filter((r): r is PromiseFulfilledResult<{ slug: string; video: ProviderVideo }> => r.status === 'fulfilled')
@@ -176,11 +189,12 @@ export const externalSourceRouter = router({
       try {
         // A single-video/live source is just its one item; channels/playlists/feeds page.
         if (src.kind === 'video') {
-          return { items: [await provider.fetchVideo(src)], nextCursor: undefined as string | undefined };
+          return { items: [proxify(await provider.fetchVideo(src))], nextCursor: undefined as string | undefined };
         }
         // `filter` is honored by providers that can search their full set (M3U);
         // others ignore it and the client filters loaded items.
-        return await provider.fetchPage(src, input.cursor, input.filter);
+        const page = await provider.fetchPage(src, input.cursor, input.filter);
+        return { ...page, items: page.items.map(proxify) };
       } catch (e) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: e instanceof Error ? e.message : 'Failed to load videos.' });
       }

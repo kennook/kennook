@@ -49,9 +49,9 @@ Anything under **Upgrade notes** requires action on the operator's part
 - **IPTV / M3U playlist import.** Paste a public M3U playlist URL (e.g. an
   [iptv-org](https://github.com/iptv-org/iptv) list) and it imports as one source
   whose channels you can browse and flip between — live TV on the screensaver, no
-  account. Individual channel reliability varies (some are dead / geo-blocked, or
-  won't play in-browser due to CORS — Safari fares better than Chrome), but the
-  ones that work just work.
+  account. Live HLS streams now route through a **built-in CORS proxy**, so most
+  channels that a browser would otherwise block for cross-origin reasons now play.
+  (Some channels are still just dead or geo-blocked — those can't be fixed.)
 - **Storage admin redesigned as a Disk-Utility-style, per-drive view.** Drives are
   listed down the left (Internal / External / Cloud); selecting one shows its own
   panel — a capacity bar (this library's footprint vs other data vs free), indexed

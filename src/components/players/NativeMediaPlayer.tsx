@@ -12,7 +12,8 @@ export interface NativeQueueItem {
   isLive?: boolean;
 }
 
-const isHls = (url: string) => /\.(m3u8|mpd)(\?|#|$)/i.test(url);
+// `.m3u8`/`.mpd`, OR our CORS proxy which hides the extension and tags `kind=hls`.
+const isHls = (url: string) => /\.(m3u8|mpd)(\?|#|$)/i.test(url) || /[?&]kind=hls(&|$)/.test(url);
 const isAudio = (url: string) => /\.(mp3|aac|ogg|oga|m4a|flac|wav)(\?|#|$)/i.test(url);
 
 /**
