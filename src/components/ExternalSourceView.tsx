@@ -26,8 +26,22 @@ export function ExternalSourceView(props: Props) {
   const isCategory = category != null;
 
   const source = trpc.externalSource.get.useQuery({ slug: slug ?? '' }, { enabled: !!slug });
+
+  // Filtering: providers that can search their FULL item set (M3U parses the
+  // whole playlist server-side) filter on the server, so a search in a huge IPTV
+  // list finds matches beyond the loaded pages. Others filter loaded items on the
+  // client (below). The server filter is debounced so we don't refetch per key.
+  const serverFiltered = source.data?.provider === 'm3u';
+  const rawFilter = (props.filter ?? '').trim();
+  const [debouncedFilter, setDebouncedFilter] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedFilter(rawFilter), 250);
+    return () => clearTimeout(t);
+  }, [rawFilter]);
+  const serverFilter = serverFiltered && debouncedFilter ? debouncedFilter : undefined;
+
   const q = trpc.externalSource.items.useInfiniteQuery(
-    { slug: slug ?? '' },
+    { slug: slug ?? '', ...(serverFilter ? { filter: serverFilter } : {}) },
     { getNextPageParam: (last) => last.nextCursor, initialCursor: undefined, enabled: !!slug },
   );
   const cq = trpc.externalSource.categoryItems.useQuery(
@@ -46,13 +60,14 @@ export function ExternalSourceView(props: Props) {
   const allVideos = isCategory
     ? (cq.data?.items.map((i) => ({ ...i.video, key: i.slug })) ?? [])
     : (q.data?.pages.flatMap((p) => p.items).map((v) => ({ ...v, key: v.videoId })) ?? []);
-  // Live text filter (the search bar acts as a filter here). Matches title or
-  // channel/group, over the currently-loaded items.
-  const filterLc = (props.filter ?? '').trim().toLowerCase();
-  const videos = filterLc
+  // Client-side filter over LOADED items — for providers not filtered on the
+  // server (the server already narrowed the M3U set). Matches title or channel.
+  const clientFilterLc = serverFiltered ? '' : rawFilter.toLowerCase();
+  const videos = clientFilterLc
     ? allVideos.filter((v) =>
-        v.title?.toLowerCase().includes(filterLc) || v.channelTitle?.toLowerCase().includes(filterLc))
+        v.title?.toLowerCase().includes(clientFilterLc) || v.channelTitle?.toLowerCase().includes(clientFilterLc))
     : allVideos;
+  const isFiltering = rawFilter.length > 0;
   const isLoading = isCategory ? cq.isLoading : q.isLoading;
   const isError = isCategory ? cq.isError : q.isError;
   const errorMsg = isCategory ? cq.error?.message : q.error?.message;
@@ -69,8 +84,8 @@ export function ExternalSourceView(props: Props) {
   const currentVideoId = resume != null ? videos[resume.index]?.videoId ?? null : null;
 
   // Switching source/category is a fresh session — drop any open player +
-  // resume point (their indices belong to the previous list).
-  useEffect(() => { setPlayer(null); setResume(null); }, [slug, category]);
+  // resume point (their indices belong to the previous list) and the filter.
+  useEffect(() => { setPlayer(null); setResume(null); setDebouncedFilter(''); }, [slug, category]);
 
   // On exiting the player, scroll the highlighted tile into view so continuing
   // the queue doesn't mean hunting for it.
@@ -126,8 +141,8 @@ export function ExternalSourceView(props: Props) {
         </div>
       ) : videos.length === 0 ? (
         <div className="text-center text-zinc-500 py-16 text-sm">
-          {filterLc
-            ? <>No matches for &ldquo;{props.filter}&rdquo;{allVideos.length > 0 && ` in ${allVideos.length} loaded`}. {q.hasNextPage ? 'Scroll to load more, then filter.' : ''}</>
+          {isFiltering
+            ? <>No matches for &ldquo;{rawFilter}&rdquo;.{!serverFiltered && q.hasNextPage ? ' Scroll to load more, then filter.' : ''}</>
             : isCategory ? 'No live channels in this category yet.' : 'No videos in this source.'}
         </div>
       ) : (

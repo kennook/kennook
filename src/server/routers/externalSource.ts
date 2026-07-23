@@ -168,7 +168,7 @@ export const externalSourceRouter = router({
   /** A page of the source's videos — cursor is the YouTube page token, shaped
    *  for useInfiniteQuery (getNextPageParam → nextCursor). */
   items: publicProcedure
-    .input(z.object({ slug: z.string(), cursor: z.string().optional() }))
+    .input(z.object({ slug: z.string(), cursor: z.string().optional(), filter: z.string().optional() }))
     .query(async ({ input }) => {
       const src = getExternalSource(input.slug);
       if (!src) throw new TRPCError({ code: 'NOT_FOUND', message: 'Source not found.' });
@@ -178,7 +178,9 @@ export const externalSourceRouter = router({
         if (src.kind === 'video') {
           return { items: [await provider.fetchVideo(src)], nextCursor: undefined as string | undefined };
         }
-        return await provider.fetchPage(src, input.cursor);
+        // `filter` is honored by providers that can search their full set (M3U);
+        // others ignore it and the client filters loaded items.
+        return await provider.fetchPage(src, input.cursor, input.filter);
       } catch (e) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: e instanceof Error ? e.message : 'Failed to load videos.' });
       }

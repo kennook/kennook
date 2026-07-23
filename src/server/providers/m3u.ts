@@ -107,9 +107,15 @@ export const m3uProvider: Provider = {
     };
   },
 
-  async fetchPage(source: ExternalSource, cursor?: string): Promise<ProviderPage> {
+  async fetchPage(source: ExternalSource, cursor?: string, filter?: string): Promise<ProviderPage> {
     const url = String(source.meta?.feedUrl ?? source.playlistId ?? source.ref);
-    const channels = await fetchPlaylist(url);
+    const all = await fetchPlaylist(url);
+    // Server-side filter over the WHOLE playlist (name or group), so a search in
+    // a 5k-channel list finds matches beyond the loaded pages.
+    const f = (filter ?? '').trim().toLowerCase();
+    const channels = f
+      ? all.filter((c) => c.name.toLowerCase().includes(f) || c.group.toLowerCase().includes(f))
+      : all;
     const start = cursor ? parseInt(cursor, 10) || 0 : 0;
     const slice = channels.slice(start, start + PAGE);
     const next = start + PAGE;

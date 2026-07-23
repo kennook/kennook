@@ -58,8 +58,11 @@ export interface Provider {
   match(url: string): boolean;
   /** Parse + resolve a pasted URL into a storable source (may hit the network). */
   resolve(url: string, opts?: { name?: string }): Promise<ResolvedSource>;
-  /** One page of a channel/playlist/feed source's items. */
-  fetchPage(source: ExternalSource, cursor?: string): Promise<ProviderPage>;
+  /** One page of a channel/playlist/feed source's items. `filter` (optional) is a
+   *  server-side text filter — providers that can search their full item set
+   *  (e.g. M3U, which parses the whole playlist) honor it; others ignore it and
+   *  the client filters loaded items instead. */
+  fetchPage(source: ExternalSource, cursor?: string, filter?: string): Promise<ProviderPage>;
   /** The single item for a `kind: 'video'` source (also used for category tiles). */
   fetchVideo(source: ExternalSource): Promise<ProviderVideo>;
 }
