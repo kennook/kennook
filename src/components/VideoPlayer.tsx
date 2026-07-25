@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShortcut } from '@/lib/shortcuts';
 import { useHideCornerPredicate } from '@/lib/hot-corner-client';
+import { resumePlayback } from '@/lib/resume-playback';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
@@ -370,7 +371,9 @@ export function VideoPlayer({
       video.pause();
     } else if (resumeOnReleaseRef.current) {
       resumeOnReleaseRef.current = false;
-      void video.play();
+      // Resilient resume: the drive may have spun down or the stream re-buffered
+      // while the screensaver was up, so play() can reject. Retry until ready.
+      resumePlayback(video);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forcePaused]);

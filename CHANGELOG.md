@@ -174,6 +174,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Videos now reliably resume after dismissing the screensaver. Previously the
+  resume could fail silently if the source drive had spun down (or a live stream
+  re-buffered) while the screensaver was up — the browser's `play()` rejects when
+  the media isn't ready, and nothing retried. It now retries until the drive/
+  stream wakes up.
 - The search bar now works as a **filter inside external sources**. Previously,
   searching while viewing a YouTube channel / playlist / IPTV list searched the
   local library instead (and kicked you out of the source). Now, under an external

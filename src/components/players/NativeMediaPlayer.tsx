@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
+import { resumePlayback } from '@/lib/resume-playback';
 import { ActionHud } from '@/components/ActionHud';
 
 export interface NativeQueueItem {
@@ -95,7 +96,9 @@ export function NativeMediaPlayer({
       el.pause();
       el.muted = true; setMuted(true);
     } else if (wasPlayingRef.current) {
-      void el.play().catch(() => {});
+      // A live stream may have gone stale while the screensaver was up — retry
+      // until it re-buffers rather than failing silently.
+      resumePlayback(el);
     }
   }, [suspended]);
 
