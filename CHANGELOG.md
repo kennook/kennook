@@ -110,6 +110,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   "Back" link returns to the main sidebar content.
 
 ### Changed
+- Face-aware framing now centers on the **largest face** (the main subject)
+  instead of the center of *all* faces — the old average landed in the empty gap
+  between people spread across a photo. New photos use it automatically; apply it
+  to your existing library with `pnpm exec tsx scripts/face-focus.ts --recompute`
+  (no re-detection needed).
 - Slimmed the results toolbar: **Sort** moved into the left sidebar with the
   facets, **Shuffle** now sits right next to **Play**, and the **"Per page"**
   control is gone (infinite scroll handles paging — it was just a fetch-size

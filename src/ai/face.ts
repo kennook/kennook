@@ -60,9 +60,10 @@ export const FRONTAL_MAX_ASYMMETRY = 0.35;
 
 /**
  * Normalized focal point (0..1 of width/height) for framing an image on its
- * faces — the centre of the UNION of all face boxes, so a group photo keeps
- * everyone roughly in frame rather than biasing to one face. Returns null when
- * there are no faces or the dimensions are unknown.
+ * faces — the centre of the LARGEST face (the main subject). The old union-of-
+ * all-faces centre landed in the empty gap between people spread across a photo,
+ * which read as "off-centre". Returns null when there are no faces or the
+ * dimensions are unknown.
  */
 export function faceFocusPoint(
   faces: Array<{ bbox: { x: number; y: number; width: number; height: number } }>,
@@ -70,15 +71,16 @@ export function faceFocusPoint(
   height: number | null,
 ): { x: number; y: number } | null {
   if (!faces.length || !width || !height || width <= 0 || height <= 0) return null;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let best = faces[0];
+  let bestArea = best.bbox.width * best.bbox.height;
   for (const f of faces) {
-    minX = Math.min(minX, f.bbox.x);
-    minY = Math.min(minY, f.bbox.y);
-    maxX = Math.max(maxX, f.bbox.x + f.bbox.width);
-    maxY = Math.max(maxY, f.bbox.y + f.bbox.height);
+    const area = f.bbox.width * f.bbox.height;
+    if (area > bestArea) { best = f; bestArea = area; }
   }
+  const cx = best.bbox.x + best.bbox.width / 2;
+  const cy = best.bbox.y + best.bbox.height / 2;
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
-  return { x: clamp((minX + maxX) / 2 / width), y: clamp((minY + maxY) / 2 / height) };
+  return { x: clamp(cx / width), y: clamp(cy / height) };
 }
 
 // ── Model loading ───────────────────────────────────────────────────────────

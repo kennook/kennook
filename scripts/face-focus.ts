@@ -104,16 +104,19 @@ async function main() {
   sqlite.exec('UPDATE media_items SET face_focus_x = NULL, face_focus_y = NULL');
 
   if (args.mode === 'recompute') {
-    // Re-derive from the already-detected faces using the CURRENT algorithm
-    // (centre of the union of face boxes) — no re-detection needed.
+    // Re-derive from the already-detected faces using the CURRENT algorithm —
+    // the centre of the LARGEST face (matching src/ai/face.ts faceFocusPoint).
+    // SQLite quirk: with an aggregate MAX(...), the OTHER bare columns come from
+    // the row that holds that MAX — so cx/cy below are the largest face's centre.
     sqlite.exec(`
       UPDATE media_items
          SET face_focus_x = min(1.0, max(0.0, s.cx / media_items.width)),
              face_focus_y = min(1.0, max(0.0, s.cy / media_items.height))
         FROM (
           SELECT media_item_id,
-                 (min(bbox_x) + max(bbox_x + bbox_w)) / 2.0 AS cx,
-                 (min(bbox_y) + max(bbox_y + bbox_h)) / 2.0 AS cy
+                 MAX(bbox_w * bbox_h)    AS area,
+                 bbox_x + bbox_w / 2.0   AS cx,
+                 bbox_y + bbox_h / 2.0   AS cy
             FROM media_faces GROUP BY media_item_id
         ) AS s
        WHERE media_items.id = s.media_item_id
