@@ -354,7 +354,9 @@ export function VideoPlayer({
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) { void video.play(); flashHud('play'); }
+    // Catch the play() promise: a quick pause (or the screensaver engaging)
+    // before it resolves rejects with an AbortError — benign, so swallow it.
+    if (video.paused) { video.play().catch(() => {}); flashHud('play'); }
     else { video.pause(); flashHud('pause'); }
   }
 
@@ -363,6 +365,7 @@ export function VideoPlayer({
   // survives a screensaver show/dismiss. Keyed on `forcePaused` alone — we
   // sample play state at the transition, not on every render.
   const resumeOnReleaseRef = useRef(false);
+  const resumeCancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -373,8 +376,11 @@ export function VideoPlayer({
       resumeOnReleaseRef.current = false;
       // Resilient resume: the drive may have spun down or the stream re-buffered
       // while the screensaver was up, so play() can reject. Retry until ready.
-      resumePlayback(video);
+      resumeCancelRef.current = resumePlayback(video);
     }
+    // Cancel an in-flight resume if we re-suspend (or unmount) — so its retries
+    // can't fight the pause and race play()/pause() into an AbortError.
+    return () => { resumeCancelRef.current?.(); resumeCancelRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forcePaused]);
 

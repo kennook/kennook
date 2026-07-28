@@ -174,6 +174,10 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Silenced a spurious "The play() request was interrupted by a call to pause()"
+  error — a benign race (a quick pause, or the screensaver engaging, before a
+  `play()` resolved) that was surfacing as a runtime error. Play calls now handle
+  it, and an in-flight resume is canceled if the screensaver re-engages.
 - Videos now reliably resume after dismissing the screensaver. Previously the
   resume could fail silently if the source drive had spun down (or a live stream
   re-buffered) while the screensaver was up — the browser's `play()` rejects when

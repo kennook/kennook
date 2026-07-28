@@ -44,6 +44,7 @@ export function NativeMediaPlayer({
   const autoplayRef = useRef(autoplayNext); autoplayRef.current = autoplayNext;
   const indexRef = useRef(index); indexRef.current = index;
   const wasPlayingRef = useRef(false);
+  const resumeCancelRef = useRef<(() => void) | null>(null);
   const onProgressRef = useRef(onProgress); onProgressRef.current = onProgress;
   const sync = useSync();
 
@@ -98,8 +99,10 @@ export function NativeMediaPlayer({
     } else if (wasPlayingRef.current) {
       // A live stream may have gone stale while the screensaver was up — retry
       // until it re-buffers rather than failing silently.
-      resumePlayback(el);
+      resumeCancelRef.current = resumePlayback(el);
     }
+    // Cancel an in-flight resume if we re-suspend / unmount.
+    return () => { resumeCancelRef.current?.(); resumeCancelRef.current = null; };
   }, [suspended]);
 
   // Solo audio: another window/device unmuted → mute us.
@@ -110,7 +113,7 @@ export function NativeMediaPlayer({
 
   const togglePlay = () => {
     const el = videoRef.current; if (!el) return;
-    if (el.paused) { void el.play(); flashHud('play'); } else { el.pause(); flashHud('pause'); }
+    if (el.paused) { el.play().catch(() => {}); flashHud('play'); } else { el.pause(); flashHud('pause'); }
   };
   const toggleMute = () => {
     const el = videoRef.current; if (!el) return;
