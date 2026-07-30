@@ -179,6 +179,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   panel).
 
 ### Fixed
+- Dismissing the screensaver no longer sometimes leaves the **slideshow paused**.
+  The screensaver used to pause the auto-advance by flipping the play/pause state
+  and restoring it on dismiss — a fragile save/restore that could get stuck off.
+  It now freezes the auto-advance directly while the screensaver is up without
+  touching your play/pause intent, so it always resumes as it was.
 - Silenced a spurious "The play() request was interrupted by a call to pause()"
   error — a benign race (a quick pause, or the screensaver engaging, before a
   `play()` resolved) that was surfacing as a runtime error. Play calls now handle

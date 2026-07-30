@@ -622,32 +622,18 @@ export function MediaViewer({
   // (sessionStorage) so a screen looping a clip doesn't flip every other window
   // in a multi-screen setup — unlike the cross-tab Preferences store.
   const [loopSlideshowVideo, setLoopSlideshowVideo] = useSessionFlag('kennook.loopSlideshowVideo');
+  // Auto-advance is gated on `!suspended` so the screensaver freezes it WITHOUT
+  // touching `paused` (the user's play/pause intent). When the screensaver
+  // dismisses, `suspended` flips back and this effect re-runs, resuming the
+  // slideshow at the user's intent — no fragile save/restore that could leave
+  // autoplay stuck off. Videos pause separately via VideoPlayer.forcePaused.
   useEffect(() => {
-    if (!slideshow || paused || !item) return;
+    if (!slideshow || paused || suspended || !item) return;
     if (item.kind !== 'photo') return;
     if (!onNext) return;
     const t = window.setTimeout(() => onNext(), slideshowPhotoMs);
     return () => window.clearTimeout(t);
-  }, [item, slideshow, paused, onNext, slideshowPhotoMs]);
-
-  // 4) Screensaver suspend. While the screensaver is up, freeze the slideshow
-  //    auto-advance (Ken Burns + photo timer) so it doesn't run unseen. On
-  //    dismiss, resume only if it was playing when the screensaver appeared —
-  //    a manual pause is preserved. Videos pause via VideoPlayer.forcePaused.
-  //    Keyed on `suspended` alone; `paused` is sampled at the transition (the
-  //    user can't toggle it while the screensaver captures all input).
-  const slideshowResumeRef = useRef(false);
-  useEffect(() => {
-    if (!slideshow) return;
-    if (suspended) {
-      slideshowResumeRef.current = !paused;
-      setPaused(true);
-    } else if (slideshowResumeRef.current) {
-      slideshowResumeRef.current = false;
-      setPaused(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suspended, slideshow]);
+  }, [item, slideshow, paused, suspended, onNext, slideshowPhotoMs]);
 
   // Brief overlay shown when the user adjusts slideshow speed.
   // Incrementing the key re-mounts the indicator so its fade-out
