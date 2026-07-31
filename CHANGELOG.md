@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-31
+
 - **Per-drive activity indicator.** In the storage admin's drive list, a drive with
   a running or queued job now pulses its icon and shows a small spinner — so you can
   see which drives are working at a glance (handy now that multiple drives can index
