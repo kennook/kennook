@@ -1473,7 +1473,9 @@ export function MediaViewer({
             <div
               data-component="viewer-reel-wrapper"
               className={`absolute inset-x-0 z-20 ${chromeFadeClass}
-                          ${item.kind === 'video' ? (maxed ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-24') : 'bottom-3'}
+                          ${item.kind === 'video'
+                            ? (maxed ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-24')
+                            : (maxed ? 'bottom-[var(--kn-toolbar-clearance)]' : 'bottom-3')}
                           px-3 flex justify-center pointer-events-none`}
             >
               <div className="pointer-events-auto" {...chromeHoverHandlers}>

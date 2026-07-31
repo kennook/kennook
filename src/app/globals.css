@@ -112,6 +112,12 @@
 @media (min-width: 2200px), (min-height: 2200px) { :root { --kn-controls-clearance: 10rem; } }  /* 160px */
 @media (min-width: 3000px), (min-height: 3000px) { :root { --kn-controls-clearance: 12rem; } }  /* 192px */
 
+/* Clearance for the photo "coming up" reel to sit ABOVE the maxed toolbar row.
+   The toolbar docks at bottom-3 (0.75rem) and its h-9 (2.25rem) buttons are
+   zoomed by --kn-chrome-scale; add a small gap so the reel never overlaps the
+   action buttons as their count grows. Scales in lockstep with the bar. */
+:root { --kn-toolbar-clearance: calc(0.75rem + 2.25rem * var(--kn-chrome-scale, 1) + 0.5rem); }
+
 
 /* Range-slider styling. Filled portion is driven by `--fill` inline. */
 .kn-slider {
