@@ -5,6 +5,7 @@ import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
 import { useHideCornerPredicate } from '@/lib/hot-corner-client';
+import { FaceDebugOverlay } from './FaceDebugOverlay';
 import { effectiveSensitive } from '@/lib/sensitive-thresholds';
 import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
@@ -184,6 +185,29 @@ export function MediaViewer({
   // preview modal, now a right slide-in toggled by the (i) button. Closes when
   // the viewer leaves maxed mode.
   const [infoOpen, setInfoOpen] = useState(false);
+
+  // Face-framing debug inset — toggled with ` in fullscreen (persisted). Draws
+  // detected face boxes + the stored focal point on a native-aspect inset.
+  const [faceDebug, setFaceDebug] = useState(false);
+  useEffect(() => {
+    setFaceDebug(typeof window !== 'undefined' && localStorage.getItem('kennook.faceDebug') === '1');
+  }, []);
+  useEffect(() => {
+    if (!maxed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '`' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      setFaceDebug((v) => {
+        const next = !v;
+        try { localStorage.setItem('kennook.faceDebug', next ? '1' : '0'); } catch { /* private */ }
+        return next;
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [maxed]);
 
   // Chrome auto-hide in maxed mode: floating buttons + nav arrows + position
   // indicator fade out after ~2.5s of mouse inactivity. Same UX as YouTube
@@ -1135,6 +1159,12 @@ export function MediaViewer({
     >
       {/* Transient action glyph (shortcuts + background sync events). */}
       <ActionHud />
+
+      {/* Face-framing debug inset (` toggles). Photos only — that's where the
+          face focal point drives the crop/pan. */}
+      {maxed && faceDebug && item.kind === 'photo' && (
+        <FaceDebugOverlay uuid={item.uuid} librarySlug={item.librarySlug} previewUrl={item.previewUrl} />
+      )}
 
       {/* ── Media area — single mounted instance across modes ────────── */}
       <div

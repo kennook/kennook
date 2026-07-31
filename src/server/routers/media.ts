@@ -686,6 +686,37 @@ export const mediaRouter = router({
       };
     }),
 
+  /** Detected face boxes + the stored focal point for an item — powers the
+   *  face-framing debug overlay. Boxes are normalized to 0..1 of the image so
+   *  the client can draw them at any size. */
+  faceBoxes: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .query(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const row = sqlite.prepare(
+        `SELECT id, width, height, face_focus_x, face_focus_y, face_status
+           FROM media_items WHERE uuid = ? AND deleted_at IS NULL`,
+      ).get(input.uuid) as {
+        id: number; width: number | null; height: number | null;
+        face_focus_x: number | null; face_focus_y: number | null; face_status: string | null;
+      } | undefined;
+      if (!row) return null;
+      const w = row.width ?? 0, h = row.height ?? 0;
+      const raw = sqlite.prepare(
+        `SELECT bbox_x, bbox_y, bbox_w, bbox_h, confidence FROM media_faces WHERE media_item_id = ?`,
+      ).all(row.id) as Array<{ bbox_x: number; bbox_y: number; bbox_w: number; bbox_h: number; confidence: number | null }>;
+      const faces = w > 0 && h > 0
+        ? raw.map((f) => ({ x: f.bbox_x / w, y: f.bbox_y / h, w: f.bbox_w / w, h: f.bbox_h / h, confidence: f.confidence }))
+        : [];
+      return {
+        width: row.width, height: row.height,
+        faceStatus: row.face_status,
+        focusX: row.face_focus_x, focusY: row.face_focus_y,
+        faces,
+      };
+    }),
+
   similar: publicProcedure
     .input(z.object({
       uuid: z.string(),

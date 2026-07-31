@@ -12,6 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Face-framing debug overlay.** In the full-screen photo viewer, press `` ` ``
+  (backtick) to toggle a small inset showing the detected face boxes and the stored
+  focal point drawn on the image — so you can tell, on an off-centre photo, whether
+  a face was detected, where its box is, and where the crop anchors.
 - **Per-drive activity indicator.** In the storage admin's drive list, a drive with
   a running or queued job now pulses its icon and shows a small spinner — so you can
   see which drives are working at a glance (handy now that multiple drives can index
