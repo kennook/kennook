@@ -43,6 +43,10 @@ const SLIDESHOW_MIN_MS = 2000;
 const SLIDESHOW_MAX_MS = 30000;
 const SLIDESHOW_STEP_MS = 1000;
 
+// The face-framing debug inset ships only in development. `process.env.NODE_ENV`
+// is inlined at build time, so the whole feature tree-shakes out of prod.
+const FACE_DEBUG_ENABLED = process.env.NODE_ENV !== 'production';
+
 interface Props {
   item: MediaItemDto | null;
   onClose: () => void;
@@ -186,28 +190,32 @@ export function MediaViewer({
   // the viewer leaves maxed mode.
   const [infoOpen, setInfoOpen] = useState(false);
 
-  // Face-framing debug inset — toggled with ` in fullscreen (persisted). Draws
-  // detected face boxes + the stored focal point on a native-aspect inset.
+  // Face-framing debug inset — DEV ONLY (the whole block tree-shakes out of the
+  // production bundle since NODE_ENV is inlined at build time). A toolbar button
+  // toggles it; ` is a shortcut for the same. Draws detected face boxes + the
+  // stored focal point on a native-aspect inset.
   const [faceDebug, setFaceDebug] = useState(false);
+  const toggleFaceDebug = useCallback(() => setFaceDebug((v) => {
+    const next = !v;
+    try { localStorage.setItem('kennook.faceDebug', next ? '1' : '0'); } catch { /* private */ }
+    return next;
+  }), []);
   useEffect(() => {
+    if (!FACE_DEBUG_ENABLED) return;
     setFaceDebug(typeof window !== 'undefined' && localStorage.getItem('kennook.faceDebug') === '1');
   }, []);
   useEffect(() => {
-    if (!maxed) return;
+    if (!FACE_DEBUG_ENABLED || !maxed) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '`' || e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       e.preventDefault();
-      setFaceDebug((v) => {
-        const next = !v;
-        try { localStorage.setItem('kennook.faceDebug', next ? '1' : '0'); } catch { /* private */ }
-        return next;
-      });
+      toggleFaceDebug();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [maxed]);
+  }, [maxed, toggleFaceDebug]);
 
   // Chrome auto-hide in maxed mode: floating buttons + nav arrows + position
   // indicator fade out after ~2.5s of mouse inactivity. Same UX as YouTube
@@ -1160,9 +1168,9 @@ export function MediaViewer({
       {/* Transient action glyph (shortcuts + background sync events). */}
       <ActionHud />
 
-      {/* Face-framing debug inset (` toggles). Photos only — that's where the
-          face focal point drives the crop/pan. */}
-      {maxed && faceDebug && item.kind === 'photo' && (
+      {/* Face-framing debug inset (dev only; toolbar button or ` toggles). Photos
+          only — that's where the face focal point drives the crop/pan. */}
+      {FACE_DEBUG_ENABLED && maxed && faceDebug && item.kind === 'photo' && (
         <FaceDebugOverlay uuid={item.uuid} librarySlug={item.librarySlug} previewUrl={item.previewUrl} />
       )}
 
@@ -1689,6 +1697,16 @@ export function MediaViewer({
             >
               <InfoIcon />
             </ToolbarButton>
+            {/* Dev-only face-framing debug toggle (photos). */}
+            {FACE_DEBUG_ENABLED && item.kind === 'photo' && (
+              <ToolbarButton
+                onClick={toggleFaceDebug}
+                title="Face-framing debug (`)"
+                className={faceDebug ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+              >
+                <FaceDebugIcon />
+              </ToolbarButton>
+            )}
             {(onSlideshowEnter || onSlideshowExit) && (
               <ToolbarButton
                 onClick={() => (slideshow ? onSlideshowExit?.() : onSlideshowEnter?.())}
@@ -2194,6 +2212,14 @@ function InfoIcon() { return (
     <circle cx="8" cy="8" r="6.5" />
     <path d="M8 7.5v3.5" />
     <circle cx="8" cy="5" r="0.6" fill="currentColor" stroke="none" />
+  </svg>
+); }
+function FaceDebugIcon() { return (
+  // A framing bracket around a face dot — the debug focal target.
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 5V3.5A1.5 1.5 0 0 1 3.5 2H5M11 2h1.5A1.5 1.5 0 0 1 14 3.5V5M14 11v1.5a1.5 1.5 0 0 1-1.5 1.5H11M5 14H3.5A1.5 1.5 0 0 1 2 12.5V11" />
+    <circle cx="8" cy="8" r="1.5" />
   </svg>
 ); }
 function AutoplayIcon({ on }: { on: boolean }) { return (

@@ -126,8 +126,8 @@ async function main() {
   const markStatus = sqlite.prepare(`
     UPDATE media_items SET face_status = ? WHERE id = ?
   `);
-  // Face-aware default framing: centre of the union of the stored (quality-gated)
-  // faces, normalized. NULL clears it (e.g. re-run that now finds no faces).
+  // Face-aware default framing: centre of the largest stored (quality-gated)
+  // face, normalized. NULL clears it (e.g. re-run that now finds no faces).
   const setFocus = sqlite.prepare(`
     UPDATE media_items SET face_focus_x = ?, face_focus_y = ? WHERE id = ?
   `);
