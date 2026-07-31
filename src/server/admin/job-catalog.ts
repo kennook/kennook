@@ -217,7 +217,7 @@ export const JOB_CATALOG: JobDefinition[] = [
       { flag: 'library', type: 'library', label: 'Library' },
       { flag: 'limit', type: 'number', label: 'Limit', help: 'Cap photos per run — use this to run a small batch' },
       { flag: 'reset', type: 'boolean', label: 'Reset (drops ALL face rows, re-detects everything)' },
-      { flag: 'min-face', type: 'number', label: 'Min face size (px)', help: 'Skip faces smaller than this; default 40' },
+      { flag: 'min-face', type: 'number', label: 'Min face size (px)', help: 'Skip faces smaller than this; default 24' },
     ],
   },
   {

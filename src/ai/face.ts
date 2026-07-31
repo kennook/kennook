@@ -33,7 +33,10 @@ const ARCFACE_URL = `https://huggingface.co/onnxmodelzoo/arcfaceresnet100-8/reso
 // YuNet runs at a fixed 640×640; detection input is letterboxed to it.
 const YUNET_SIZE = 640;
 const YUNET_STRIDES = [8, 16, 32];
-const YUNET_CONF = 0.6;      // sqrt(cls·obj) score cutoff
+// sqrt(cls·obj) score cutoff. Lowered from 0.6 → 0.45 to catch harder faces
+// (odd lighting/pose) that were being missed entirely — the frontality + size
+// gates downstream still drop the weak/false ones.
+const YUNET_CONF = 0.45;
 const YUNET_NMS_IOU = 0.3;
 
 const ARC_SIZE = 112;
@@ -55,8 +58,12 @@ export interface DetectedFace {
   yawAsym: number;
 }
 
-/** Faces above this yaw asymmetry are too non-frontal to embed reliably. */
-export const FRONTAL_MAX_ASYMMETRY = 0.35;
+/** Faces above this yaw asymmetry are too non-frontal to embed reliably.
+ *  Raised 0.35 → 0.55: the old cutoff dropped candid / 3-4 view faces ENTIRELY,
+ *  so a single off-angle subject got no box → no focal point → an off-centre
+ *  centre-crop. Keeping them costs some clustering precision (ArcFace embeds
+ *  profiles worse) but recovers framing on far more photos. */
+export const FRONTAL_MAX_ASYMMETRY = 0.55;
 
 /**
  * Normalized focal point (0..1 of width/height) for framing an image on its

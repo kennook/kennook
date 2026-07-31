@@ -35,7 +35,7 @@ function parseArgs(argv: string[]): Args {
   let librarySlug = DEFAULT_LIBRARY_SLUG;
   let reset = false;
   let limit: number | null = null;
-  let minFace = 40; // px; drop tiny detections (unreliable embeddings, often false positives)
+  let minFace = 24; // px; drop tiny detections (unreliable embeddings, often false positives)
   let storage: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
