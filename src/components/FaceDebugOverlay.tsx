@@ -20,7 +20,7 @@ export function FaceDebugOverlay({
   const pct = (v: number) => `${(v * 100).toFixed(2)}%`;
 
   return (
-    <div className="absolute bottom-4 left-4 z-40 w-64 max-w-[40vw] select-none">
+    <div className="absolute top-4 left-4 z-40 w-64 max-w-[40vw] select-none">
       <div
         className="relative rounded-md overflow-hidden ring-1 ring-emerald-500/60 bg-black shadow-2xl"
         style={{ aspectRatio: w > 0 && h > 0 ? `${w} / ${h}` : '1 / 1' }}
