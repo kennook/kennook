@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Player from '@vimeo/player';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
+import { writeAudioOwner } from '@/lib/audio-owner';
 import { ActionHud } from '@/components/ActionHud';
 import { EmbedChrome, type EmbedQueueItem } from './EmbedChrome';
 
@@ -62,6 +63,7 @@ export function VimeoPlayer({
 
   useSyncEvent('audio.unmuted', () => {
     const p = playerRef.current; if (p) { void p.setMuted(true); setMuted(true); flashHud('mute'); }
+    writeAudioOwner(false); // soloed out → no longer the owner
   });
 
   const toggleMute = () => {
@@ -69,6 +71,7 @@ export function VimeoPlayer({
     const next = !muted;
     void p.setMuted(next); setMuted(next);
     flashHud(next ? 'mute' : 'unmute');
+    writeAudioOwner(!next); // keep the cross-reload audio-owner flag accurate
     if (!next) sync.publish({ type: 'audio.unmuted' });
   };
 

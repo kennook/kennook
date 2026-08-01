@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useShortcut } from '@/lib/shortcuts';
 import { useHideCornerPredicate } from '@/lib/hot-corner-client';
 import { resumePlayback } from '@/lib/resume-playback';
+import { restoreAudioOwner, writeAudioOwner } from '@/lib/audio-owner';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
@@ -159,10 +160,11 @@ export function VideoPlayer({
     return () => window.clearTimeout(t);
   }, [buffering]);
   // Volume *level* stays a cross-tab preference (same loudness everywhere).
-  // Mute is per-window and deliberately NOT persisted: a fresh window load
-  // always starts muted (also autoplay-policy friendly), and the user unmutes
-  // when they want sound. There's no shared mute state worth remembering
-  // because unmuting one window mutes all the others (the solo-audio rule).
+  // Mute starts on for every fresh element (autoplay-policy friendly), but the
+  // per-window "audio owner" state IS remembered across a reload: if this window
+  // was the unmuted owner, it comes back unmuted (see the restore effect below +
+  // src/lib/audio-owner.ts). Other windows keep their own sessionStorage, so
+  // muted windows stay muted and only one window ever owns audio (solo rule).
   const [muted, setMuted] = useState(true);
   // Latest `muted` in a ref so the sync handler can check it WITHOUT a
   // side-effecting state updater (flashing the HUD inside setMuted's updater
@@ -190,12 +192,32 @@ export function VideoPlayer({
     // Side effect lives OUTSIDE the state updater (updaters must stay pure).
     if (!mutedRef.current) flashHud('mute');
     setMuted(true);
+    writeAudioOwner(false); // soloed out by someone else → no longer the owner
   });
-  const applyMute = (next: boolean) => {
+  const applyMute = (next: boolean, opts?: { flash?: boolean }) => {
     setMuted(next);
-    flashHud(next ? 'mute' : 'unmute');
+    if (opts?.flash !== false) flashHud(next ? 'mute' : 'unmute');
+    writeAudioOwner(!next); // remember ownership across reloads (this window only)
     if (!next) sync.publish({ type: 'audio.unmuted' });
   };
+
+  // Restore this window's audio ownership across a reload: if we were the
+  // unmuted owner, come back unmuted once playback starts (restoreAudioOwner
+  // handles the autoplay-policy fallback — muted-but-playing + unmute on first
+  // gesture when the browser refuses unmuted autoplay). Runs once, on mount.
+  const audioRestoredRef = useRef(false);
+  useEffect(() => {
+    if (audioRestoredRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
+    audioRestoredRef.current = true;
+    return restoreAudioOwner(video, {
+      onUnmute: () => applyMute(false, { flash: false }),
+      onMute: () => applyMute(true, { flash: false }),
+      onRestored: () => flashHud('unmute'),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [controlsVisible, setControlsVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
 

@@ -12,6 +12,20 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Sound stays on across a reload.** The window you last turned sound on in now
+  comes back unmuted after a reload, instead of always starting muted. It's
+  remembered per-window (so muted windows and other screens stay muted, and only
+  one window ever plays audio — the solo-audio rule is unchanged). If the browser
+  blocks unmuted autoplay on a fresh load, playback starts muted and unmutes on
+  your first click or keypress. Works for local videos and native streams (HLS /
+  audio); embedded players (YouTube, Twitch, Vimeo) keep the ownership accurate
+  but still follow their platform's autoplay rules.
+- **Reshuffle from full screen.** While shuffle is on, the viewer shows a
+  reshuffle button that mints a fresh random order without leaving full screen,
+  keeping the item you're watching pinned to the top. If a filter (e.g.
+  "unwatched") excludes that item from the new order, the viewer now continues
+  from the new first item instead of getting stuck.
+
 ## [0.4.0] - 2026-07-31
 
 - **Per-drive activity indicator.** In the storage admin's drive list, a drive with

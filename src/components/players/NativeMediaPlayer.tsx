@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
 import { resumePlayback } from '@/lib/resume-playback';
+import { restoreAudioOwner, writeAudioOwner } from '@/lib/audio-owner';
 import { ActionHud } from '@/components/ActionHud';
 
 export interface NativeQueueItem {
@@ -108,20 +109,44 @@ export function NativeMediaPlayer({
   // Solo audio: another window/device unmuted → mute us.
   useSyncEvent('audio.unmuted', () => {
     const el = videoRef.current;
-    if (el && !el.muted) { el.muted = true; setMuted(true); flashHud('mute'); }
+    if (el && !el.muted) {
+      el.muted = true; setMuted(true); flashHud('mute');
+      writeAudioOwner(false); // soloed out → no longer the owner
+    }
   });
 
   const togglePlay = () => {
     const el = videoRef.current; if (!el) return;
     if (el.paused) { el.play().catch(() => {}); flashHud('play'); } else { el.pause(); flashHud('pause'); }
   };
-  const toggleMute = () => {
+  const applyMute = (next: boolean, opts?: { flash?: boolean }) => {
     const el = videoRef.current; if (!el) return;
-    const next = !el.muted;
     el.muted = next; setMuted(next);
-    flashHud(next ? 'mute' : 'unmute');
+    if (opts?.flash !== false) flashHud(next ? 'mute' : 'unmute');
+    writeAudioOwner(!next); // remember ownership across reloads (this window only)
     if (!next) sync.publish({ type: 'audio.unmuted' }); // solo — mute everyone else
   };
+  const toggleMute = () => {
+    const el = videoRef.current; if (!el) return;
+    applyMute(!el.muted);
+  };
+
+  // Restore this window's audio ownership across a reload: if we were the
+  // unmuted owner, come back unmuted once the stream is playing (with the
+  // autoplay-policy fallback in restoreAudioOwner). Runs once, on mount.
+  const audioRestoredRef = useRef(false);
+  useEffect(() => {
+    if (audioRestoredRef.current) return;
+    const el = videoRef.current;
+    if (!el) return;
+    audioRestoredRef.current = true;
+    return restoreAudioOwner(el, {
+      onUnmute: () => applyMute(false, { flash: false }),
+      onMute: () => applyMute(true, { flash: false }),
+      onRestored: () => flashHud('unmute'),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Esc closes.
   useEffect(() => {

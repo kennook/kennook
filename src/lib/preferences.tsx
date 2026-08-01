@@ -28,9 +28,10 @@ import {
 // ─── Schema ─────────────────────────────────────────────────────────────
 
 export interface Preferences {
-  /** Video playback. Mute is intentionally NOT a preference — it's per-window
-   *  session state (starts muted, see VideoPlayer + the audio.unmuted sync
-   *  event); only the volume LEVEL persists. */
+  /** Video playback. Mute is intentionally NOT a cross-tab preference — it's
+   *  per-window state (starts muted; see VideoPlayer + the audio.unmuted sync
+   *  event). Only the volume LEVEL persists here; a window's unmuted "audio
+   *  owner" state persists per-window via sessionStorage (src/lib/audio-owner). */
   videoVolume: number;       // 0.0 – 1.0
   videoPlaybackRate: number; // 1.0 normal; 0.5/1.5/2.0 etc.
   /** Default fit when entering maxed video/photo mode. */

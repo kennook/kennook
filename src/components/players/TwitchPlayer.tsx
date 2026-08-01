@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
+import { writeAudioOwner } from '@/lib/audio-owner';
 import { ActionHud } from '@/components/ActionHud';
 import { EmbedChrome, type EmbedQueueItem } from './EmbedChrome';
 
@@ -100,6 +101,7 @@ export function TwitchPlayer({
 
   useSyncEvent('audio.unmuted', () => {
     const p = playerRef.current; if (p) { p.setMuted(true); setMuted(true); flashHud('mute'); }
+    writeAudioOwner(false); // soloed out → no longer the owner
   });
 
   const toggleMute = () => {
@@ -107,6 +109,7 @@ export function TwitchPlayer({
     const next = !muted;
     p.setMuted(next); setMuted(next);
     flashHud(next ? 'mute' : 'unmute');
+    writeAudioOwner(!next); // keep the cross-reload audio-owner flag accurate
     if (!next) sync.publish({ type: 'audio.unmuted' });
   };
 

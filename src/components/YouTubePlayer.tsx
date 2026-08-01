@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
+import { writeAudioOwner } from '@/lib/audio-owner';
 import { ActionHud } from './ActionHud';
 import { loadYouTubeApi, type YTPlayer } from '@/lib/youtube-iframe';
 
@@ -133,6 +134,7 @@ export function YouTubePlayer({
       if (isMuted === lastMutedRef.current) return;
       lastMutedRef.current = isMuted;
       setMuted(isMuted);
+      writeAudioOwner(!isMuted); // keep the cross-reload audio-owner flag accurate
       if (!isMuted) {
         flashHud('unmute');
         sync.publish({ type: 'audio.unmuted' }); // solo — mute everything else
@@ -145,7 +147,7 @@ export function YouTubePlayer({
 
   // Solo-audio: another window/device took audio → mute this player. The poll
   // above reconciles the state + HUD.
-  useSyncEvent('audio.unmuted', () => { playerRef.current?.mute(); });
+  useSyncEvent('audio.unmuted', () => { playerRef.current?.mute(); writeAudioOwner(false); });
 
   // Apply captions on load and on every video change (loading a new video
   // resets them). Legacy captions module API — best-effort per video.
