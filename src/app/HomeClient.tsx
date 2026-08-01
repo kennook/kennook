@@ -662,6 +662,25 @@ function HomeContent() {
     }
   }, [items.length, selectedIndex, setSelectedUuid]);
 
+  // Reshuffling re-pins the item you're viewing to the top — but the anchor is
+  // only an ORDER BY hint, so if a filter (e.g. "unwatched", and viewing just
+  // marked it watched) excludes that item, it drops out of the reshuffled set
+  // entirely. `selectedUuid` then points at an item that's no longer in `items`
+  // (selectedIndex = -1), which orphans the viewer: Next can't advance and the
+  // reel loses its position. When that happens, jump to the new head of the
+  // shuffled list so playback continues. `isPlaceholderData` guards against
+  // acting on the kept-previous data before the real reshuffled page lands.
+  const reshuffleJumpRef = useRef(false);
+  const showingStale = active.isPlaceholderData;
+  useEffect(() => {
+    if (!reshuffleJumpRef.current) return;
+    if (showingStale || active.isLoading) return; // wait for the fresh result set
+    reshuffleJumpRef.current = false;
+    if (selectedUuid && items.length > 0 && !items.some((i) => i.uuid === selectedUuid)) {
+      setSelectedUuid(items[0].uuid);
+    }
+  }, [showingStale, active.isLoading, items, selectedUuid, setSelectedUuid]);
+
   // ── Handlers ──────────────────────────────────────────────────────────
 
   const handleOpen = (item: MediaItemDto, match?: { tStartMs: number | null }) => {
@@ -717,6 +736,10 @@ function HomeContent() {
       (lastViewed && items.some((i) => i.uuid === lastViewed.uuid) && lastViewed.uuid) ||
       items[0]?.uuid ||
       null;
+    // If we're reshuffling from inside the viewer, the anchor may be filtered out
+    // of the fresh set (see reshuffleJumpRef) — arm the fallback that lands the
+    // viewer on the new head once the reshuffled page arrives.
+    if (url.item) reshuffleJumpRef.current = true;
     url.set({ shuffle: Math.floor(Math.random() * 2_000_000_000), shuffleAnchor: anchor });
   };
   const toggleShuffle = () => {
