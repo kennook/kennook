@@ -12,6 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Nicer tooltips.** Control tooltips are no longer the browser's slow, tiny
+  native ones — they appear quickly, are clearly styled, and scale up on large
+  displays so they stay readable instead of shrinking to a footnote. Applies
+  everywhere automatically.
 - **Sound stays on across a reload.** The window you last turned sound on in now
   comes back unmuted after a reload, instead of always starting muted. It's
   remembered per-window (so muted windows and other screens stay muted, and only

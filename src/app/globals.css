@@ -119,6 +119,34 @@
 :root { --kn-toolbar-clearance: calc(0.75rem + 2.25rem * var(--kn-chrome-scale, 1) + 0.5rem); }
 
 
+/* Custom tooltips (see src/components/TooltipLayer). A fast, legible replacement
+   for the slow, tiny native `title` tooltip. Sizing tracks --kn-chrome-scale so
+   it stays readable on large displays instead of shrinking to an ant's footnote. */
+.kn-tooltip {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  width: max-content;
+  max-width: min(60vw, 24rem);
+  padding: calc(0.3rem * var(--kn-chrome-scale, 1)) calc(0.6rem * var(--kn-chrome-scale, 1));
+  border-radius: calc(0.4rem * var(--kn-chrome-scale, 1));
+  background: rgba(24, 24, 27, 0.98);           /* zinc-900 */
+  color: #f4f4f5;                                /* zinc-100 */
+  border: 1px solid rgba(82, 82, 91, 0.55);      /* zinc-600 */
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  font-size: calc(0.8rem * var(--kn-chrome-scale, 1));
+  line-height: 1.3;
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: break-word;
+  animation: kn-tooltip-in 90ms ease-out;
+}
+@keyframes kn-tooltip-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) { .kn-tooltip { animation: none; } }
+
 /* Range-slider styling. Filled portion is driven by `--fill` inline. */
 .kn-slider {
   -webkit-appearance: none;
