@@ -708,17 +708,23 @@ function HomeContent() {
   // first result — so it reads as "a fresh playlist starting from here" and Play
   // walks the new order. While on, sort is overridden (server) and disabled (the
   // sidebar). Off: clear both, restoring the previous sort/order.
-  const toggleShuffle = () => {
-    if (url.shuffle != null) {
-      url.set({ shuffle: null, shuffleAnchor: null });
-      return;
-    }
+  // Mint a fresh shuffle order, pinning the "current" item (viewing → last-viewed
+  // → first result) to the top. Used both to turn shuffle on and to reshuffle
+  // while it's already on (e.g. the viewer's reshuffle button).
+  const reshuffle = () => {
     const anchor =
       (url.item && items.some((i) => i.uuid === url.item) && url.item) ||
       (lastViewed && items.some((i) => i.uuid === lastViewed.uuid) && lastViewed.uuid) ||
       items[0]?.uuid ||
       null;
     url.set({ shuffle: Math.floor(Math.random() * 2_000_000_000), shuffleAnchor: anchor });
+  };
+  const toggleShuffle = () => {
+    if (url.shuffle != null) {
+      url.set({ shuffle: null, shuffleAnchor: null });
+      return;
+    }
+    reshuffle();
   };
 
   const handleToggleSelection = (item: MediaItemDto, e: React.MouseEvent) => {
@@ -1386,6 +1392,7 @@ function HomeContent() {
         onSlideshowEnter={() => url.set({ view: 'slideshow' })}
         shuffleActive={url.shuffle != null}
         onToggleShuffle={inPlaylist ? undefined : toggleShuffle}
+        onReshuffle={inPlaylist ? undefined : reshuffle}
         currentPersonUuid={url.person}
         onReassignPerson={(it) => setReassignItems([it])}
         onRotate={handleRotate}

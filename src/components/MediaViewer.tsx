@@ -67,11 +67,14 @@ interface Props {
   /** Turn slideshow (auto-advance) ON from within fullscreen — the in-viewer
    *  autoplay toggle, so you don't have to exit to enable it. */
   onSlideshowEnter?: () => void;
-  /** Shuffle state + toggle, exposed in the maxed toolbar so you can reshuffle
-   *  the "coming up" order (pinning the current item to the top) without exiting
-   *  the viewer. `shuffleActive` lights the button. */
+  /** Shuffle state + toggle, exposed in the maxed toolbar so you can turn shuffle
+   *  on/off without exiting the viewer. `shuffleActive` lights the button.
+   *  `onReshuffle` (shown only while active) mints a fresh random order, re-pinning
+   *  the item you're currently viewing to the top — so you can keep reshuffling the
+   *  "coming up" order from full screen. */
   shuffleActive?: boolean;
   onToggleShuffle?: () => void;
+  onReshuffle?: () => void;
   /** If the page is filtering by a person, pass that uuid here so the
    *  viewer can show a "Reassign person" affordance. */
   currentPersonUuid?: string | null;
@@ -130,7 +133,7 @@ interface Props {
 export function MediaViewer({
   item, onClose, onPrev, onNext, onSeeSimilar, onSetLikes, position,
   slideshow = false, onSlideshowExit, onSlideshowEnter,
-  shuffleActive = false, onToggleShuffle,
+  shuffleActive = false, onToggleShuffle, onReshuffle,
   currentPersonUuid = null, onReassignPerson,
   onRotate,
   reelItems, reelHasMore, onSelectItem,
@@ -1729,6 +1732,17 @@ export function MediaViewer({
                 <ShuffleIcon />
               </ToolbarButton>
             )}
+            {/* Reshuffle — only while shuffle is on. Mints a fresh order, keeping
+                the item you're viewing pinned to the top. */}
+            {shuffleActive && onReshuffle && (
+              <ToolbarButton
+                onClick={onReshuffle}
+                title="Reshuffle — new random order from this item"
+                className="ring-1 ring-emerald-500/60 text-emerald-300"
+              >
+                <ReshuffleIcon />
+              </ToolbarButton>
+            )}
             {onAddToPlaylist && (
               <ToolbarButton
                 onClick={() => onAddToPlaylist(item)}
@@ -2237,6 +2251,14 @@ function ShuffleIcon() { return (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
        strokeLinecap="round" strokeLinejoin="round">
     <path d="M2 4h2.5l7 8H14M2 12h2.5l3-3.4M11 9l3 3-3 3M11 1l3 3-3 3" />
+  </svg>
+); }
+function ReshuffleIcon() { return (
+  // Circular "refresh" arrows — reshuffle = generate a fresh order again.
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M13 5.5A5.5 5.5 0 1 0 13.5 10" />
+    <path d="M13.5 2.5V6H10" />
   </svg>
 ); }
 function FitCoverIcon() { return (
