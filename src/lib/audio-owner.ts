@@ -14,10 +14,13 @@
  *
  * Autoplay policy is the catch: a freshly-loaded document has no user
  * activation, so the browser may refuse unmuted playback. `restoreAudioOwner`
- * handles that — it unmutes optimistically (works when the browser's media
- * engagement grants sound) and, if the browser pushes back by pausing the
- * element, falls back to muted-but-playing and unmutes on the first user
- * gesture (which is always permitted).
+ * probes for permission the sanctioned way — it sets the element unmuted BEFORE
+ * calling `play()` and reads the returned promise: resolve → the browser granted
+ * sound, keep it unmuted; reject → settle to muted playback and leave it. We do
+ * NOT fight the policy (no unmuting an already-playing element, which makes the
+ * browser yank it to a pause, and no hidden "unmute on first click" gesture that
+ * collides with play/pause). When the browser won't allow sound on load, we just
+ * live with muted-by-default.
  */
 
 const AUDIO_OWNER_KEY = 'kennook.audioOwner';
@@ -41,21 +44,23 @@ export function writeAudioOwner(owner: boolean): void {
 }
 
 interface RestoreHandlers {
-  /** Unmute the element + React state, solo audio, and persist ownership. */
-  onUnmute: () => void;
-  /** Mute the element + React state, and clear ownership. */
-  onMute: () => void;
-  /** Optional: called once if the optimistic unmute sticks (for a HUD flash). */
-  onRestored?: () => void;
+  /** Sound was granted: commit unmuted React state, solo audio, persist, flash. */
+  onUnmuted: () => void;
+  /** Sound was refused: reflect the (already-muted) element in React state.
+   *  Leaves the persisted "owner" intent alone so a later reload can try again. */
+  onMuted: () => void;
 }
 
 /**
- * If this window was the audio owner, restore its unmuted state on the given
- * media element once it's playing — with the autoplay-policy fallback described
- * above. No-op (returns a noop cleanup) when this window wasn't the owner.
+ * If this window was the audio owner, try to restore its unmuted state on the
+ * given media element. Sets the element unmuted and probes autoplay permission
+ * via the `play()` promise (see the module doc): granted → `onUnmuted`; refused
+ * → mute + resume muted playback + `onMuted`. No-op when this window wasn't the
+ * owner. Returns a cleanup that cancels the pending probe.
  *
- * Returns a cleanup function; call it on unmount to cancel pending timers and
- * listeners.
+ * Doing this BEFORE playback has visibly started (the common case on a cold
+ * drive that's still buffering) means the element never plays muted first, so
+ * there's no flicker — and no gesture hacks that fight the browser.
  */
 export function restoreAudioOwner(
   video: HTMLMediaElement,
@@ -63,53 +68,23 @@ export function restoreAudioOwner(
 ): () => void {
   if (!readAudioOwner()) return () => {};
 
-  let settleTimer = 0;
-  let gestureArmed = false;
+  let cancelled = false;
 
-  const armGestureUnmute = () => {
-    if (gestureArmed) return;
-    gestureArmed = true;
-    const onGesture = () => {
-      window.removeEventListener('pointerdown', onGesture, true);
-      window.removeEventListener('keydown', onGesture, true);
-      handlers.onUnmute();
-      void video.play().catch(() => {});
-    };
-    // Capture-phase + once: fire on the very first interaction anywhere.
-    window.addEventListener('pointerdown', onGesture, true);
-    window.addEventListener('keydown', onGesture, true);
-  };
+  // Unmute first, then let play()'s promise report whether the browser permits
+  // sound — the sanctioned, flicker-free probe.
+  video.muted = false;
+  Promise.resolve(video.play()).then(() => {
+    if (cancelled) return;
+    handlers.onUnmuted(); // browser granted sound → keep it unmuted + solo
+  }).catch(() => {
+    if (cancelled) return;
+    // Browser refused unmuted playback on this fresh load. Settle to muted
+    // playback and leave it — we live with muted-by-default rather than
+    // hacking around the native autoplay policy.
+    video.muted = true;
+    handlers.onMuted();
+    void video.play().catch(() => {});
+  });
 
-  const attempt = () => {
-    // Optimistic unmute — the handlers unmute the element, solo, and persist.
-    handlers.onUnmute();
-    // Give the autoplay policy a beat to react. If it refused (it pauses the
-    // element to enforce "no unmuted playback without a gesture"), fall back to
-    // muted playback and wait for the first user gesture to unmute for real.
-    settleTimer = window.setTimeout(() => {
-      if (video.paused) {
-        handlers.onMute();
-        void video.play().catch(() => {});
-        armGestureUnmute();
-      } else {
-        handlers.onRestored?.();
-      }
-    }, 200);
-  };
-
-  // Only unmute once it's actually playing — checking `paused` before playback
-  // has begun would misread "not started yet" as "policy refused".
-  let cleanupPlaying = () => {};
-  if (!video.paused && video.currentTime > 0) {
-    attempt();
-  } else {
-    const onPlaying = () => attempt();
-    video.addEventListener('playing', onPlaying, { once: true });
-    cleanupPlaying = () => video.removeEventListener('playing', onPlaying);
-  }
-
-  return () => {
-    window.clearTimeout(settleTimer);
-    cleanupPlaying();
-  };
+  return () => { cancelled = true; };
 }

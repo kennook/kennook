@@ -119,10 +119,10 @@ export function NativeMediaPlayer({
     const el = videoRef.current; if (!el) return;
     if (el.paused) { el.play().catch(() => {}); flashHud('play'); } else { el.pause(); flashHud('pause'); }
   };
-  const applyMute = (next: boolean, opts?: { flash?: boolean }) => {
+  const applyMute = (next: boolean) => {
     const el = videoRef.current; if (!el) return;
     el.muted = next; setMuted(next);
-    if (opts?.flash !== false) flashHud(next ? 'mute' : 'unmute');
+    flashHud(next ? 'mute' : 'unmute');
     writeAudioOwner(!next); // remember ownership across reloads (this window only)
     if (!next) sync.publish({ type: 'audio.unmuted' }); // solo — mute everyone else
   };
@@ -132,17 +132,17 @@ export function NativeMediaPlayer({
   };
 
   // Restore this window's audio ownership across a reload: if we were the
-  // unmuted owner, come back unmuted once the stream is playing (with the
-  // autoplay-policy fallback in restoreAudioOwner). Runs once per mount; the
-  // cleanup disarms it, so React StrictMode's dev double-invoke nets to a single
-  // live arming (no manual ref guard — that would let cleanup win).
+  // unmuted owner, probe autoplay permission and come back unmuted if the
+  // browser grants sound (otherwise stay muted — no hacks; see audio-owner.ts).
+  // Runs once per mount; the cleanup cancels the probe, so React StrictMode's
+  // dev double-invoke nets to a single live arming (no manual ref guard — that
+  // would let cleanup win).
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     return restoreAudioOwner(el, {
-      onUnmute: () => applyMute(false, { flash: false }),
-      onMute: () => applyMute(true, { flash: false }),
-      onRestored: () => flashHud('unmute'),
+      onUnmuted: () => applyMute(false), // sound granted → unmute + solo + flash
+      onMuted: () => setMuted(true),     // refused → element already muted; keep intent
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

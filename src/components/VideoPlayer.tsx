@@ -194,27 +194,26 @@ export function VideoPlayer({
     setMuted(true);
     writeAudioOwner(false); // soloed out by someone else → no longer the owner
   });
-  const applyMute = (next: boolean, opts?: { flash?: boolean }) => {
+  const applyMute = (next: boolean) => {
     setMuted(next);
-    if (opts?.flash !== false) flashHud(next ? 'mute' : 'unmute');
+    flashHud(next ? 'mute' : 'unmute');
     writeAudioOwner(!next); // remember ownership across reloads (this window only)
     if (!next) sync.publish({ type: 'audio.unmuted' });
   };
 
   // Restore this window's audio ownership across a reload: if we were the
-  // unmuted owner, come back unmuted once playback starts (restoreAudioOwner
-  // handles the autoplay-policy fallback — muted-but-playing + unmute on first
-  // gesture when the browser refuses unmuted autoplay). Runs once per mount; the
-  // returned cleanup disarms it, so React StrictMode's dev double-invoke (arm →
-  // cleanup → re-arm) nets out to a single live arming. No manual guard — a ref
-  // guard would let StrictMode's cleanup disarm run #1 while run #2 no-ops.
+  // unmuted owner, probe autoplay permission and come back unmuted if the
+  // browser grants sound (otherwise stay muted — no hacks; see audio-owner.ts).
+  // Runs once per mount; the returned cleanup cancels the probe, so React
+  // StrictMode's dev double-invoke nets out to a single live arming. No manual
+  // guard — a ref guard would let StrictMode's cleanup cancel run #1 while run
+  // #2 no-ops.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     return restoreAudioOwner(video, {
-      onUnmute: () => applyMute(false, { flash: false }),
-      onMute: () => applyMute(true, { flash: false }),
-      onRestored: () => flashHud('unmute'),
+      onUnmuted: () => applyMute(false), // sound granted → unmute + solo + flash
+      onMuted: () => setMuted(true),     // refused → element already muted; keep intent
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
