@@ -133,13 +133,12 @@ export function NativeMediaPlayer({
 
   // Restore this window's audio ownership across a reload: if we were the
   // unmuted owner, come back unmuted once the stream is playing (with the
-  // autoplay-policy fallback in restoreAudioOwner). Runs once, on mount.
-  const audioRestoredRef = useRef(false);
+  // autoplay-policy fallback in restoreAudioOwner). Runs once per mount; the
+  // cleanup disarms it, so React StrictMode's dev double-invoke nets to a single
+  // live arming (no manual ref guard — that would let cleanup win).
   useEffect(() => {
-    if (audioRestoredRef.current) return;
     const el = videoRef.current;
     if (!el) return;
-    audioRestoredRef.current = true;
     return restoreAudioOwner(el, {
       onUnmute: () => applyMute(false, { flash: false }),
       onMute: () => applyMute(true, { flash: false }),

@@ -204,13 +204,13 @@ export function VideoPlayer({
   // Restore this window's audio ownership across a reload: if we were the
   // unmuted owner, come back unmuted once playback starts (restoreAudioOwner
   // handles the autoplay-policy fallback — muted-but-playing + unmute on first
-  // gesture when the browser refuses unmuted autoplay). Runs once, on mount.
-  const audioRestoredRef = useRef(false);
+  // gesture when the browser refuses unmuted autoplay). Runs once per mount; the
+  // returned cleanup disarms it, so React StrictMode's dev double-invoke (arm →
+  // cleanup → re-arm) nets out to a single live arming. No manual guard — a ref
+  // guard would let StrictMode's cleanup disarm run #1 while run #2 no-ops.
   useEffect(() => {
-    if (audioRestoredRef.current) return;
     const video = videoRef.current;
     if (!video) return;
-    audioRestoredRef.current = true;
     return restoreAudioOwner(video, {
       onUnmute: () => applyMute(false, { flash: false }),
       onMute: () => applyMute(true, { flash: false }),
