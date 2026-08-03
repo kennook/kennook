@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSyncEvent } from '@/lib/sync';
+import { useScreensaverActive } from '@/lib/screensaver-active';
 import { KENNOOK_VERSION, KENNOOK_BUILD_ID } from '@/lib/version';
 import { classifyBump } from '@/lib/semver';
 
@@ -42,6 +43,7 @@ interface Prompt {
 
 export function ReloadPrompt() {
   const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const screensaverActive = useScreensaverActive();
 
   useSyncEvent('server-version', (e) => {
     // Identical to what this tab loaded against → nothing to do. We check BOTH
@@ -51,6 +53,14 @@ export function ReloadPrompt() {
     // buildId difference must still prompt.
     if (e.version === KENNOOK_VERSION && e.buildId === KENNOOK_BUILD_ID) {
       setPrompt(null);
+      return;
+    }
+    // Screensaver is up → the user isn't looking at or using the app, so update
+    // silently: reload now instead of surfacing a banner. The persisted (per-
+    // user) screensaver state re-opens it on load, so the swap is invisible.
+    // The reloaded bundle runs the new version, so this can't loop.
+    if (screensaverActive) {
+      window.location.reload();
       return;
     }
     const bump = classifyBump(KENNOOK_VERSION, e.version);
@@ -63,6 +73,12 @@ export function ReloadPrompt() {
     }
     setPrompt({ severity, version: e.version, buildId: e.buildId });
   });
+
+  // Also cover the reverse order: a banner was already showing (update detected
+  // earlier) and THEN the screensaver comes up. Reload silently at that point.
+  useEffect(() => {
+    if (prompt && screensaverActive) window.location.reload();
+  }, [prompt, screensaverActive]);
 
   if (!prompt) return null;
 

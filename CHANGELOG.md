@@ -12,6 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Silent updates while the screensaver is up.** If a new version starts running
+  while the screensaver is active, the display reloads onto it silently instead of
+  showing a reload banner — the screensaver simply comes back on the new build, so
+  an always-on screen keeps itself current without anyone touching it.
+- **Screensaver hides everything underneath.** While the screensaver is up, the
+  rest of the app is now truly hidden (not just covered) — so if the screensaver
+  is ever removed by other means, the private content underneath isn't exposed.
 - **Overall rating stays put.** In the grid, an item's overall (average) rating
   no longer disappears when you add your own rating — it stays visible alongside
   your personal heart.

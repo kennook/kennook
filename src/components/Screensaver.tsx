@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useScreensaverIndex } from '@/lib/sync';
+import { setScreensaverActive } from '@/lib/screensaver-active';
 import { trpc } from '@/lib/trpc-client';
 import { PinInput } from '@/components/PinInput';
 
@@ -299,10 +300,27 @@ export function Screensaver({ open, onExit }: Props) {
     };
   }, [open, prompting, onExit]);
 
+  // Publish the true "the screensaver is covering the screen" state (only once a
+  // video has resolved and we actually render). Two readers depend on it: the
+  // app-content shroud hides everything else as a fallback, and the reload
+  // watcher updates silently while it's up. Cleanup forces it false on unmount so
+  // a torn-down screensaver can never leave the app stuck hidden.
+  const covering = open && src != null;
+  useEffect(() => {
+    setScreensaverActive(covering);
+    return () => setScreensaverActive(false);
+  }, [covering]);
+
   if (!open || !src) return null;
 
   return (
-    <div className={`fixed inset-0 z-[100] bg-black ${prompting ? '' : 'cursor-none'}`}>
+    // `visibility: visible` re-asserts against the shroud's inherited
+    // `visibility: hidden` — a visible descendant beats a hidden ancestor, so the
+    // screensaver shows while the app underneath stays hidden.
+    <div
+      className={`fixed inset-0 z-[100] bg-black ${prompting ? '' : 'cursor-none'}`}
+      style={{ visibility: 'visible' }}
+    >
       <video
         src={src}
         autoPlay
