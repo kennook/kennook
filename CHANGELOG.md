@@ -12,6 +12,9 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Overall rating stays put.** In the grid, an item's overall (average) rating
+  no longer disappears when you add your own rating — it stays visible alongside
+  your personal heart.
 - **Nicer tooltips.** Control tooltips are no longer the browser's slow, tiny
   native ones — they appear quickly, are clearly styled, and scale up on large
   displays so they stay readable instead of shrinking to a footnote. Applies

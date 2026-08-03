@@ -104,11 +104,11 @@ export function MediaCard({
   }, [likeCount, optimisticCount]);
   const displayCount = optimisticCount ?? likeCount;
 
-  // "Overall" score = the community average across ALL raters. Only surface it
-  // when someone OTHER than the current user has rated (raters minus yourself),
-  // so a single-user library doesn't just mirror your own heart back at you.
-  const othersRated = communityLikeCount - (likeCount > 0 ? 1 : 0);
-  const showCommunity = communityLikeAvg != null && othersRated > 0;
+  // "Overall" score = the community average across ALL raters (includes your own
+  // rating). Kept visible whenever the item has any rating, so it doesn't vanish
+  // the moment you rate — in a single-user library it simply reflects your own
+  // rating alongside the personal heart.
+  const showCommunity = communityLikeAvg != null && communityLikeCount > 0;
 
   // Sparkle burst — re-mounted (via the `key` prop) when the leading-edge
   // cooldown allows it. Starts at 0 so the initial paint doesn't fire an
@@ -271,10 +271,10 @@ export function MediaCard({
         </button>
       )}
 
-      {/* Bottom-left rating cluster. Community average (hollow heart — "what
-          others think") is always visible when others have rated; the personal
-          heart (filled, colored) sits to its right, hover-revealed until you
-          rate. So an unrated item still shows the community score. */}
+      {/* Bottom-left rating cluster. The overall average (hollow heart) stays
+          visible whenever the item has any rating — it doesn't disappear when you
+          add your own. The personal heart (filled, colored) sits to its right,
+          hover-revealed until you rate. */}
       {(onSetLikes || showCommunity) && (
         <div className="absolute bottom-2 left-2 z-10 flex items-center gap-1">
           {showCommunity && communityLikeAvg != null && (
