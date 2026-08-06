@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-06
+
 - **Silent updates while the screensaver is up.** If a new version starts running
   while the screensaver is active, the display reloads onto it silently instead of
   showing a reload banner — the screensaver simply comes back on the new build, so
