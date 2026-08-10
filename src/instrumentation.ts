@@ -10,4 +10,9 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   const { startDiscovery } = await import('@/server/discovery');
   await startDiscovery();
+
+  // Pre-spawn + warm the search embed worker so the first query doesn't pay for
+  // model load, and so ONNX inference never blocks this server's event loop.
+  const { warmEmbedWorker } = await import('@/ai/embed-client');
+  warmEmbedWorker();
 }

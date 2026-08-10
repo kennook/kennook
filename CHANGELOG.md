@@ -12,6 +12,14 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Search no longer hitches the whole app.** Running a search briefly froze
+  everything else the server was doing — other windows' thumbnails, video, and
+  live updates would stall for a beat while the search ran its AI matching (the
+  query's semantic embedding ran on the server's single thread, blocking every
+  other request). That step now runs in a separate process, so searching in one
+  window no longer stalls the others. Identical queries (and multiple screens
+  searching the same thing) now share one computation, too.
+
 ## [0.5.0] - 2026-08-06
 
 - **Silent updates while the screensaver is up.** If a new version starts running

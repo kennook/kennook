@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { router, publicProcedure } from '@/server/trpc';
 import { getRawSqlite, ensureLibraryUser } from '@/db/client';
 import { getUserSqlite } from '@/db/user-client';
-import { embedText, floatArrayToBuffer } from '@/ai/embeddings';
+import { floatArrayToBuffer } from '@/ai/embeddings';
+import { embedTextOffThread } from '@/ai/embed-client';
 import type { Context } from '@/server/trpc';
 import { publishToUser, publishToAll } from '@/server/sync-broker';
 import { getConfigValue } from '@/server/app-config';
@@ -414,7 +415,7 @@ async function getCandidateIds(
       ).get(opts.query.trim(), ctx.sharedUserId) as { id: number } | undefined;
       return row ? [row.id] : [];
     }
-    const queryEmbed = await embedText(opts.query);
+    const queryEmbed = await embedTextOffThread(opts.query);
     const queryBuf = floatArrayToBuffer(queryEmbed);
     const rows = sqlite.prepare(`
       SELECT rowid AS id, distance FROM media_embeddings
@@ -849,7 +850,7 @@ export const mediaRouter = router({
         };
       }
 
-      const queryEmbed = await embedText(input.query);
+      const queryEmbed = await embedTextOffThread(input.query);
       const queryBuf = floatArrayToBuffer(queryEmbed);
       const ftsQuery = toFtsQuery(input.query);
 
