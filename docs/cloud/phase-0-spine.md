@@ -13,7 +13,7 @@ metadata sync) hangs off of, and nothing more. Concretely it delivers:
 1. A **consumer account** at kennook.com with membership/billing (Stripe).
 2. **Agent enrollment** — a local KenNook instance pairs to an account and gets a
    durable identity (an mTLS client cert).
-3. A **`*.<hash>.kennook.direct` wildcard TLS cert** per agent, so browsers reach
+3. A **`*.<hash>.d.kennook.net` wildcard TLS cert** per agent, so browsers reach
    the LAN instance over real, no-warning HTTPS/**h2**.
 4. A **heartbeat** — the agent reports IP + version + health and pulls
    entitlements; the cloud keeps the agent's DNS current.
@@ -58,7 +58,7 @@ Two planes. The **local agent is today's app**; the cloud bolts on.
 ```mermaid
 flowchart LR
   subgraph Home["User's LAN"]
-    B[Browser] -->|h2 TLS<br/>*.hash.kennook.direct| A[KenNook agent<br/>= today's app + caddy]
+    B[Browser] -->|h2 TLS<br/>*.hash.d.kennook.net| A[KenNook agent<br/>= today's app + caddy]
     A --- M[(media + user.db<br/>never leave home)]
   end
 
@@ -66,7 +66,7 @@ flowchart LR
     API[Control-plane API<br/>enroll · heartbeat · entitlement]
     CA[Internal CA<br/>agent mTLS certs]
     ACME[Cert issuer<br/>Let's Encrypt DNS-01]
-    DNS[(Route 53<br/>kennook.direct)]
+    DNS[(Route 53<br/>d.kennook.net)]
     DB[(DynamoDB<br/>accounts · agents · entitlements)]
     ID[Cognito<br/>consumer accounts]
     PAY[Stripe]
@@ -96,7 +96,7 @@ A frequent source of confusion — Phase 0 uses **two independent** cert systems
 
 | | Internal CA (KenNook) | Let's Encrypt |
 |---|---|---|
-| Issues | **Agent client certs** (mTLS) | **Server certs** `*.<hash>.kennook.direct` |
+| Issues | **Agent client certs** (mTLS) | **Server certs** `*.<hash>.d.kennook.net` |
 | Purpose | Authenticate agent → cloud | Authenticate agent → browser |
 | Trust | Private (only the cloud trusts it) | Public (every browser trusts it) |
 | Key custody | Agent generates keypair; CA signs CSR | Agent generates keypair; LE signs CSR |
@@ -107,37 +107,57 @@ cloud only ever sees a CSR and returns a signed public cert.
 
 ---
 
-## 5. The `.kennook.direct` cert scheme
+## 5. The `d.kennook.net` cert scheme
 
-Plex's mechanism, adopted directly.
+Plex's `plex.direct` mechanism, adopted onto a **dedicated subdomain of a domain
+we already own** (`kennook.net`) instead of a purchased `.direct` and instead of
+the brand domains. Rationale for that choice — CT-log/customer-count privacy, DNS
+blast-radius, reputation isolation, and reserving `.ai` for the AI product — is in
+§15. The apex `kennook.net` is untouched; everything lives under the `d.` label
+(see §5.1 for why a subdomain, not the apex).
 
 - Each agent gets a stable **`<hash>`** (opaque, e.g. 32 hex chars) at enrollment.
-- Its wildcard cert is **`*.<hash>.kennook.direct`**.
-- A browser reaches it at **`<dashed-ip>.<hash>.kennook.direct`**, e.g.
-  `192-168-1-50.ab12…ef.kennook.direct`, which resolves to `192.168.1.50`.
-- Because the cert is a wildcard over `<hash>.kennook.direct`, the **same cert
+- Its wildcard cert is **`*.<hash>.d.kennook.net`**.
+- A browser reaches it at **`<dashed-ip>.<hash>.d.kennook.net`**, e.g.
+  `192-168-1-50.ab12…ef.d.kennook.net`, which resolves to `192.168.1.50`.
+- Because the cert is a wildcard over `<hash>.d.kennook.net`, the **same cert
   covers every interface** — each LAN IP, and the public IP for remote later.
 - **Per-agent** wildcard (not one shared wildcard) so each agent has its **own
   private key**: a leak compromises one agent, not the fleet.
 
-### 5.1 DNS — Phase 0 keeps it on Route 53 (no custom DNS server)
+### 5.1 DNS — a delegated `d.kennook.net` zone on Route 53 (no custom DNS server)
+
+**Why a subdomain (`d.`) and not the apex `kennook.net`:**
+- **PSL scoping.** Cookie-isolating each agent means adding the parent to the
+  Public Suffix List. At the apex we'd have to PSL-list `kennook.net` itself —
+  making the whole domain a public suffix (no cookies anywhere on it). Under `d.`
+  we list only `*.d.kennook.net`, quarantining the rule to the cert plane and
+  leaving the rest of `kennook.net` normal.
+- **Delegation + blast radius.** `d.kennook.net` is delegated (NS records at the
+  apex) to its **own hosted zone**, which can live in the cloud control-plane
+  account with least-privilege IAM for the ACME automation — while the apex zone
+  stays in the admin account. The high-churn per-agent records (and the 10k/zone
+  limit) are isolated to the subzone; an automation bug can't touch the apex.
+- **Future resolver.** The scale-option IP-decoding resolver (below) can be
+  delegated just `d.kennook.net`, leaving the rest of the domain on Route 53.
 
 We do **not** need an IP-decoding resolver for Phase 0, because the agent tells us
 its IPs on every heartbeat:
 
 1. Agent enumerates its local IPv4 interfaces and sends them in the heartbeat.
 2. Cloud derives the **public IP** from the heartbeat's source address.
-3. Cloud writes/updates Route 53 **A records**:
-   `192-168-1-50.<hash>.kennook.direct → 192.168.1.50` for each reported IP.
-4. **ACME DNS-01** TXT challenges for `_acme-challenge.<hash>.kennook.direct` are
+3. Cloud writes/updates **A records** in the `d.kennook.net` zone:
+   `192-168-1-50.<hash>.d.kennook.net → 192.168.1.50` for each reported IP.
+4. **ACME DNS-01** TXT challenges for `_acme-challenge.<hash>.d.kennook.net` are
    published via the Route 53 API (lego/certbot Route 53 provider).
 
 **Scale note (tracked, not a Phase-0 blocker):** two limits appear as the beta
-grows — (a) Let's Encrypt's ~50 certs/registered-domain/week, and (b) Route 53's
-default 10k records/zone. Both are fine for dogfood + small beta. When they bite:
-move issuance to a high-volume CA (ZeroSSL / Google Trust Services) and/or replace
-the per-agent A records with a self-hosted **IP-decoding resolver** (sslip.io-style)
-for `kennook.direct`. Flagged as an open decision (§15), deliberately out of scope now.
+grows — (a) Let's Encrypt's ~50 certs/registered-domain/week (the registered
+domain is `kennook.net`), and (b) Route 53's default 10k records/zone. Both are
+fine for dogfood + small beta. When they bite: move issuance to a high-volume CA
+(ZeroSSL / Google Trust Services) and/or replace the per-agent A records with a
+self-hosted **IP-decoding resolver** (sslip.io-style) delegated for
+`d.kennook.net`. Flagged as an open decision (§15), deliberately out of scope now.
 
 ### 5.2 Consuming the cert on the existing instance (contract rule C4)
 
@@ -174,10 +194,10 @@ sequenceDiagram
   end
   Cloud->>Cloud: mint <hash>, sign mTLS client cert, queue LE issuance
   Cloud-->>Agent: agent_id, <hash>, signed mTLS client cert
-  Agent->>Cloud: POST /agent/cert (mTLS) — TLS CSR for *.<hash>.kennook.direct
+  Agent->>Cloud: POST /agent/cert (mTLS) — TLS CSR for *.<hash>.d.kennook.net
   Note over Cloud: async DNS-01 via Route 53 → LE → signed cert
   Agent->>Cloud: GET /agent/cert (mTLS) — poll until issued
-  Cloud-->>Agent: *.<hash>.kennook.direct cert chain
+  Cloud-->>Agent: *.<hash>.d.kennook.net cert chain
   Agent->>Agent: install cert → reload caddy → start heartbeat
 ```
 
@@ -242,8 +262,8 @@ Lean on managed services; keep the plane thin (solo-dev ops burden).
 | API | **API Gateway (HTTP) + Lambda** | Serverless, per-request; mTLS via custom authorizer / ALB-mTLS |
 | Datastore | **DynamoDB** | Simple per-account access patterns; serverless |
 | Internal CA | **Lambda + KMS-held CA key** (or AWS Private CA) | Sign agent mTLS certs; evaluate Private CA cost |
-| Public cert issuer | **lego (Route 53 DNS-01)** in an async worker | `*.<hash>.kennook.direct` from Let's Encrypt |
-| DNS | **Route 53** hosted zone `kennook.direct` | A records + ACME TXT |
+| Public cert issuer | **lego (Route 53 DNS-01)** in an async worker | `*.<hash>.d.kennook.net` from Let's Encrypt |
+| DNS | **Route 53** hosted zone for `d.kennook.net`, delegated (NS) from the apex `kennook.net` | A records + ACME TXT; subzone can live in the cloud account |
 | Cert storage | Issued cert (public) in DynamoDB/S3; **no private keys** | Agent holds its own keys |
 | Billing | **Stripe** + webhook Lambda | Subscriptions → entitlement |
 | Secrets | **Secrets Manager / KMS** | CA key, Stripe keys, LE account key |
@@ -291,7 +311,7 @@ No changes to existing tables. Core queries never touch these.
   next heartbeat → **agent reverts to local-only and keeps working** (C1/C6).
 - **Data minimization (Phase 0):** identity, agent metadata, IPs, version, cert
   material only. No media/metadata.
-- **Public Suffix List:** submit `kennook.direct` to the PSL eventually (cookie
+- **Public Suffix List:** submit `*.d.kennook.net` to the PSL eventually (cookie
   isolation between agents), à la `plex.direct` — not required for Phase 0.
 
 ---
@@ -333,9 +353,13 @@ Explicitly deferred so scope can't creep into a rewrite:
 
 ## 15. Open decisions (need a call before/within build)
 
-1. **Domain:** register **`kennook.direct`**? (Plex uses a dedicated `.direct`.)
-   Fallback: a subdomain like `*.d.kennook.ai` on the existing Route 53. Decide
-   before DNS work.
+1. **Domain:** ~~register a `.direct`?~~ **RESOLVED (2026-08-10):** use
+   **`d.kennook.net`**, a delegated subzone of the already-owned `kennook.net`.
+   No purchase; separate registrable domain from the brands (so CT-log customer
+   counts, DNS blast radius, and reputation stay off `kennook.ai`/`.com`); `.ai`
+   is reserved for the AI product surface; `kennook.direct` remains optional later
+   purely for the self-documenting name. Remaining task: create the delegated
+   hosted zone + apex NS records (M0/M3).
 2. **Consumer auth:** **Cognito** vs. roll-your-own. Leaning Cognito (managed).
 3. **Internal CA:** self-managed **Lambda+KMS** vs. **AWS Private CA** (simpler,
    costs ~$400/mo — likely overkill at beta scale).
@@ -350,7 +374,8 @@ Explicitly deferred so scope can't creep into a rewrite:
 
 ## 16. Build milestones (within Phase 0)
 
-- **M0** — `kennook-cloud` CDK skeleton; Route 53 zone; DynamoDB; API GW + Lambda hello.
+- **M0** — `kennook-cloud` CDK skeleton; delegated `d.kennook.net` Route 53 zone
+  (+ apex NS records); DynamoDB; API GW + Lambda hello.
 - **M1** — Cognito accounts; kennook.com sign-up/sign-in.
 - **M2** — Enrollment (device-code) + internal CA + mTLS.
 - **M3** — Cert issuance (LE DNS-01 via Route 53) + A records + agent cert install (caddy).
