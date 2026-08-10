@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-10
+
 - **Search no longer hitches the whole app.** Running a search briefly froze
   everything else the server was doing — other windows' thumbnails, video, and
   live updates would stall for a beat while the search ran its AI matching (the
