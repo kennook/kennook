@@ -171,6 +171,43 @@ Native in-process http2 termination (for consumers who won't run caddy) is
 **Phase-0-adjacent, not Phase 0** — it's consumer-packaging work and is specced
 separately so it can't destabilize the running app.
 
+### 5.3 Naming layers — transport vs. vanity (vanity is Phase 2)
+
+Two distinct name layers; don't conflate them:
+
+- **Transport plane (Phase 0):** `<dashed-ip>.<hash>.d.kennook.net` — machine-
+  generated, invisible. Exists so ONE wildcard cert covers every interface (each
+  LAN IP + the public IP) at once, so any client constructs the hostname for the
+  IP it can reach. This is what gives the LAN its no-warning h2.
+- **Vanity instance name (Phase 2 — Remote access):** a memorable
+  `moises.kennook.net` the user reaches their instance by. **Decision:** the
+  vanity name **persists in the URL bar** (the instance serves it directly), not
+  a redirect. Cost-smart implementation: issue it as a **second SAN on the same
+  per-instance Let's Encrypt cert** as the transport wildcard —
+
+  ```
+  SAN 1: *.<hash>.d.kennook.net   (transport, all interfaces)
+  SAN 2: moises.kennook.net       (vanity, shown in the URL)
+  ```
+
+  so it's **one free cert, one renewal** — the vanity name does not add cert
+  count. Placement trade-off (Phase 2): apex-level `moises.kennook.net` is
+  prettiest but needs the cert automation to write into the apex `kennook.net`
+  zone; a delegated `moises.homes.kennook.net` keeps the automation least-
+  privileged (its own subzone) at one extra label.
+
+### 5.4 Cost posture
+
+Deliberately near-zero fixed cost. **No new domains** (owned `kennook.net`).
+**Public certs are free** (Let's Encrypt — no per-cert fee; the only limit is
+issuance *rate*, ~50/registered-domain/week, cleared by a free rate-limit bump or
+a second free CA). Internal mTLS CA is self-managed **Lambda+KMS**, avoiding AWS
+Private CA's ~$400/mo. At beta scale the AWS control plane (Route 53 + DynamoDB +
+Lambda/API GW + Cognito + a couple secrets) runs **~$15–40/mo**, scaling with
+usage and covered once members exist. Stripe has no fixed fee. The one genuinely
+expensive line — **Phase 3 cloud-AI GPU inference** — is metered and gated behind
+membership by design, so it arrives with the revenue that pays for it.
+
 ---
 
 ## 6. Enrollment — OAuth 2.0 Device Authorization Grant
