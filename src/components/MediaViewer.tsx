@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
+import { useScreensaverActive } from '@/lib/screensaver-active';
 import { useHideCornerPredicate } from '@/lib/hot-corner-client';
 import { FaceDebugOverlay } from './FaceDebugOverlay';
 import { effectiveSensitive } from '@/lib/sensitive-thresholds';
@@ -1146,10 +1147,37 @@ export function MediaViewer({
   // layer so the opacity transitions are cheap composite operations instead of
   // CPU paints — the biggest perf lever on slower hardware. Pure CSS hint, no
   // layout cost when chrome is at rest.
+  // When the screensaver reveals the app, snap the chrome to its target opacity
+  // for one frame (transition-none) to force a clean repaint. The shroud hides
+  // the app with `visibility: hidden`; a fade that ran under it leaves the
+  // will-change-promoted chrome layer STALE (opacity property finishes, but the
+  // composited pixels never repaint while hidden), so on reveal it shows a
+  // frozen, half-faded "ghost". Snapping discards that stale layer. Keyed on the
+  // shroud state (not `suspended`), so it fires exactly when the app becomes
+  // visible again — covering both local and remote (synced) dismissals.
+  const shrouded = useScreensaverActive();
+  const [snapChrome, setSnapChrome] = useState(false);
+  const wasShrouded = useRef(shrouded);
+  useEffect(() => {
+    if (wasShrouded.current && !shrouded) {
+      setSnapChrome(true);
+      const id = requestAnimationFrame(() => setSnapChrome(false));
+      wasShrouded.current = shrouded;
+      return () => cancelAnimationFrame(id);
+    }
+    wasShrouded.current = shrouded;
+  }, [shrouded]);
+
+  // During the snap frame: DROP will-change (de-promote the GPU layer so the
+  // browser repaints the element on the main thread — this is what actually
+  // discards the stale composited pixels; keeping the layer would leave the
+  // ghost) and force transition-none so it lands on its target instantly.
+  const willChange = snapChrome ? '' : 'will-change-[opacity]';
+  const snap = snapChrome ? '!transition-none' : '';
   const chromeFadeClass = quiet
-    ? 'transition-opacity duration-500 opacity-30 pointer-events-none will-change-[opacity]'
+    ? `transition-opacity duration-500 opacity-30 pointer-events-none ${willChange} ${snap}`
     : maxed
-      ? `transition-opacity duration-300 will-change-[opacity] ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`
+      ? `transition-opacity duration-300 ${willChange} ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'} ${snap}`
       : '';
 
   return (

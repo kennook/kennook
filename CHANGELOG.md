@@ -12,6 +12,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **No more ghostly controls after the screensaver.** When the screensaver was
+  dismissed — especially from another device — the full-screen controls (and the
+  thumbnail reel) could linger half-faded, stuck mid-fade, instead of settling.
+  The controls now snap cleanly to their correct state the instant the
+  screensaver clears.
+
 ## [0.5.1] - 2026-08-10
 
 - **Search no longer hitches the whole app.** Running a search briefly froze
