@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **A "starting up" splash instead of a blank page.** On a cold start the app now
+  shows the KenNook logo with a spinner while it loads, so the first moments read
+  as "working" rather than "frozen." (Doesn't change how long the load takes —
+  see below if the wait itself is long.)
+
 ## [0.6.2] - 2026-08-12
 
 - **Fix: screensaver couldn't be unlocked over an open viewer.** The 0.6.0

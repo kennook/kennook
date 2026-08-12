@@ -5,6 +5,7 @@ import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc-client';
 import { usePageState } from '@/lib/url-state';
 import { SearchBar } from '@/components/SearchBar';
+import { Splash } from '@/components/Splash';
 import {
   MediaGrid,
   selectionKey,
@@ -70,7 +71,7 @@ function patchInfinitePages(
 
 export default function HomeClient() {
   return (
-    <Suspense fallback={<div className="min-h-screen" />}>
+    <Suspense fallback={<Splash />}>
       <MobileOrDesktop />
     </Suspense>
   );
