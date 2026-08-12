@@ -13,7 +13,7 @@
     "commit": "tsx scripts/commit.ts",
     "release": "tsx scripts/release.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint",
+    "lint": "eslint .",
     "indexer": "tsx src/indexer/index.ts",
     "backfill:vectors": "tsx src/indexer/backfill-embeddings.ts",
     "backfill:previews": "tsx src/indexer/backfill-previews.ts",
@@ -39,7 +39,8 @@
     "reset": "tsx src/indexer/reset.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
@@ -71,6 +72,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "@types/node": "^22.0.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^18.3.12",

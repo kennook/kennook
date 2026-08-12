@@ -69,6 +69,9 @@ export function AdminUpdateBanner() {
         <span className="flex-1">
           <strong className="font-semibold">Upgrade started.</strong>{' '}
           Watch progress under{' '}
+          {/* Full page load (not <Link>) on purpose: the build is swapping chunks
+              right now, so a client-side nav could ChunkLoadError. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a className="underline hover:text-emerald-100" href="/admin/storage">Jobs</a>
           {' '}— you&apos;ll be prompted to restart once the build finishes. Avoid using the app while it builds.
         </span>
