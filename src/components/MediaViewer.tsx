@@ -1065,6 +1065,25 @@ export function MediaViewer({
     onHoldEnd: () => maxedVoiceTagger.stop(),
   });
 
+  // When the screensaver reveals the app, snap the chrome to its target opacity
+  // for one frame to force a clean repaint (the shroud's `visibility: hidden`
+  // leaves the will-change-promoted chrome layer STALE, so a fade run under it
+  // reveals as a frozen, half-faded "ghost"). Keyed on the shroud state, so it
+  // fires exactly when the app becomes visible again — local or remote dismiss.
+  // MUST be above the early return so the hook order is stable when item is null.
+  const shrouded = useScreensaverActive();
+  const [snapChrome, setSnapChrome] = useState(false);
+  const wasShrouded = useRef(shrouded);
+  useEffect(() => {
+    if (wasShrouded.current && !shrouded) {
+      setSnapChrome(true);
+      const id = requestAnimationFrame(() => setSnapChrome(false));
+      wasShrouded.current = shrouded;
+      return () => cancelAnimationFrame(id);
+    }
+    wasShrouded.current = shrouded;
+  }, [shrouded]);
+
   if (!item) return null;
 
   // Continuous fill↔reveal, no discontinuity at 100%:
@@ -1147,28 +1166,9 @@ export function MediaViewer({
   // layer so the opacity transitions are cheap composite operations instead of
   // CPU paints — the biggest perf lever on slower hardware. Pure CSS hint, no
   // layout cost when chrome is at rest.
-  // When the screensaver reveals the app, snap the chrome to its target opacity
-  // for one frame (transition-none) to force a clean repaint. The shroud hides
-  // the app with `visibility: hidden`; a fade that ran under it leaves the
-  // will-change-promoted chrome layer STALE (opacity property finishes, but the
-  // composited pixels never repaint while hidden), so on reveal it shows a
-  // frozen, half-faded "ghost". Snapping discards that stale layer. Keyed on the
-  // shroud state (not `suspended`), so it fires exactly when the app becomes
-  // visible again — covering both local and remote (synced) dismissals.
-  const shrouded = useScreensaverActive();
-  const [snapChrome, setSnapChrome] = useState(false);
-  const wasShrouded = useRef(shrouded);
-  useEffect(() => {
-    if (wasShrouded.current && !shrouded) {
-      setSnapChrome(true);
-      const id = requestAnimationFrame(() => setSnapChrome(false));
-      wasShrouded.current = shrouded;
-      return () => cancelAnimationFrame(id);
-    }
-    wasShrouded.current = shrouded;
-  }, [shrouded]);
-
-  // During the snap frame: DROP will-change (de-promote the GPU layer so the
+  //
+  // During the snap frame (`snapChrome`, set above the early return): DROP
+  // will-change (de-promote the GPU layer so the
   // browser repaints the element on the main thread — this is what actually
   // discards the stale composited pixels; keeping the layer would leave the
   // ghost) and force transition-none so it lands on its target instantly.
