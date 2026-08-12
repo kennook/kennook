@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-12
+
 - **Fix a viewer crash introduced in 0.6.0.** The screensaver "ghostly controls"
   fix from 0.6.0 placed a couple of React hooks in the wrong spot, which could
   crash the full-screen viewer (a "change in the order of Hooks" error) as it
