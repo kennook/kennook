@@ -28,6 +28,9 @@ export function SearchBar({ initial = '', onSubmit, onChange, placeholder }: Pro
       <div className="relative">
         <input
           type="text"
+          // Lets the full-screen viewer's shortcuts fire even when this field
+          // keeps focus behind it (see isTypingTarget in lib/shortcuts).
+          data-kn-searchbar=""
           value={value}
           onChange={(e) => { setValue(e.target.value); onChange?.(e.target.value); }}
           placeholder={placeholder ?? 'Search your library — "beach trips", "the dog", "kitchen at sunset"...'}

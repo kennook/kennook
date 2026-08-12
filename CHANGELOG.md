@@ -12,6 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Fix: screensaver couldn't be unlocked over an open viewer.** The 0.6.0
+  full-screen shortcut change was too broad — while the screensaver was up over
+  an open full-screen item, its passcode/password field couldn't be typed into
+  (keystrokes were swallowed as viewer shortcuts), so you couldn't dismiss it.
+  The shortcut bypass now applies only to the header search bar, so the
+  screensaver unlock (and any dialog) types normally again.
+
 ## [0.6.1] - 2026-08-12
 
 - **Fix a viewer crash introduced in 0.6.0.** The screensaver "ghostly controls"

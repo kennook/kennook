@@ -114,12 +114,14 @@ function isTypingTarget(e: KeyboardEvent): boolean {
   if (!t) return false;
   const isField = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
   if (!isField) return false;
-  // When the full-screen viewer is open, a field BEHIND it — typically the
-  // header search bar, which keeps focus after you click a result (clicking a
-  // <button> doesn't move focus on macOS Safari/Firefox) — must not swallow the
-  // viewer's shortcuts. Only a field INSIDE the viewer chrome (tag / bookmark
-  // inputs, marked [data-kn-chrome]) still counts as typing then.
-  if (document.querySelector('[data-kn-viewer-maxed]') && !t.closest('[data-kn-chrome]')) {
+  // When the full-screen viewer is open, ONE field behind it must not swallow
+  // the viewer's shortcuts: the header search bar, which keeps focus after you
+  // click a result (clicking a <button> doesn't move focus on macOS Safari/
+  // Firefox). We bypass ONLY for that field (marked [data-kn-searchbar]) — every
+  // OTHER field, including ones in overlays stacked ABOVE the viewer (the
+  // screensaver's unlock prompt, dialogs), is a real typing target and keeps
+  // blocking shortcuts, so it can still be typed into.
+  if (document.querySelector('[data-kn-viewer-maxed]') && t.closest('[data-kn-searchbar]')) {
     return false;
   }
   return true;
