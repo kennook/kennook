@@ -41,7 +41,7 @@ const LIKE_DEBOUNCE_MS = 500;
 // `slideshowPhotoMs` preference; constants below cap the adjustable
 // range so the slideshow can't be set unusably fast or slow.
 const SLIDESHOW_MIN_MS = 2000;
-const SLIDESHOW_MAX_MS = 30000;
+const SLIDESHOW_MAX_MS = 60000;
 const SLIDESHOW_STEP_MS = 1000;
 
 // The face-framing debug inset ships only in development. `process.env.NODE_ENV`
