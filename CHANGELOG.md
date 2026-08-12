@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-12
+
 - **Slower slideshows.** The per-photo dwell time now goes up to 60 seconds (was
   30) — set it on the slideshow speed slider or with the `,` / `.` keys.
 - **Shortcuts work the instant a video opens full screen.** Opening a result
