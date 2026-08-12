@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Shortcuts work the instant a video opens full screen.** Opening a result
+  (especially a video) left keyboard focus on the search bar behind the viewer,
+  so shortcuts did nothing until you clicked a control first. Full-screen viewer
+  shortcuts now fire immediately regardless of where focus lingered — and the
+  keys no longer leak into the hidden search box.
 - **No more ghostly controls after the screensaver.** When the screensaver was
   dismissed — especially from another device — the full-screen controls (and the
   thumbnail reel) could linger half-faded, stuck mid-fade, instead of settling.

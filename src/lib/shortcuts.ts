@@ -112,9 +112,17 @@ export function resetAllBindings() {
 function isTypingTarget(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
   if (!t) return false;
-  if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return true;
-  if (t.isContentEditable) return true;
-  return false;
+  const isField = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
+  if (!isField) return false;
+  // When the full-screen viewer is open, a field BEHIND it — typically the
+  // header search bar, which keeps focus after you click a result (clicking a
+  // <button> doesn't move focus on macOS Safari/Firefox) — must not swallow the
+  // viewer's shortcuts. Only a field INSIDE the viewer chrome (tag / bookmark
+  // inputs, marked [data-kn-chrome]) still counts as typing then.
+  if (document.querySelector('[data-kn-viewer-maxed]') && !t.closest('[data-kn-chrome]')) {
+    return false;
+  }
+  return true;
 }
 
 // ─── Binding matching (with modifiers) ──────────────────────────────────────
@@ -218,8 +226,13 @@ export function useShortcut(
       const matched = keys.find((k) => matchesBinding(e, k));
       if (!matched) return;
       // Modifier combos (e.g. ⌘←) collide with the browser's own bindings
-      // (Back/Forward on macOS) — suppress the default so navigation wins.
-      if (bindingHasModifier(matched)) e.preventDefault();
+      // (Back/Forward on macOS) — suppress the default so navigation wins. Also
+      // suppress when the full-screen viewer is open: the key is consumed by the
+      // viewer, so it must not ALSO leak into a field behind it (the search bar
+      // that kept focus) as a stray keystroke.
+      if (bindingHasModifier(matched) || document.querySelector('[data-kn-viewer-maxed]')) {
+        e.preventDefault();
+      }
       handlerRef.current(e);
     };
 

@@ -1184,6 +1184,9 @@ export function MediaViewer({
     <div
       ref={rootRef}
       tabIndex={-1}
+      // Marks the full-screen viewer as open so window-level shortcuts fire even
+      // when focus lingers on a field behind it (e.g. the header search bar).
+      data-kn-viewer-maxed={maxed ? '' : undefined}
       className={`outline-none ${maxed
         ? `fixed inset-0 z-50 bg-black ${chromeVisible ? '' : 'cursor-none'}`
         : 'fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4'}`}
