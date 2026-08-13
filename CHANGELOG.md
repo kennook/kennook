@@ -12,6 +12,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Much faster first load in production.** The server was blocking startup on
+  loading the AI stack (the search model + its runtime) before it would answer
+  the very first request — so a fresh prod start could hang the initial page load
+  for a minute or two. That warm-up now happens in the background; the app serves
+  immediately, and only the first *search* waits briefly for the model.
+
 - **A "starting up" splash instead of a blank page.** On a cold start the app now
   shows the KenNook logo with a spinner while it loads, so the first moments read
   as "working" rather than "frozen." (Doesn't change how long the load takes —
