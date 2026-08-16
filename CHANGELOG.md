@@ -12,6 +12,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Fix the UI freezing after opening several videos.** Exiting a full-screen
+  video left its `<video>` decoding in the background instead of releasing it, so
+  opening and closing a handful of videos piled up hidden decoders that
+  eventually starved the browser — the whole UI (shortcuts and buttons) would
+  stop responding. The viewer now releases the video the moment you close it.
+
 - **Much faster first load in production.** The server was blocking startup on
   loading the AI stack (the search model + its runtime) before it would answer
   the very first request — so a fresh prod start could hang the initial page load

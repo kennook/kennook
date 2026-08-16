@@ -89,6 +89,17 @@ export function NativeMediaPlayer({
     return () => { cancelled = true; if (hls) hls.destroy(); };
   }, [current]);
 
+  // Release the media decoder on unmount — same class of leak as VideoPlayer: a
+  // detached, autoplaying <video> keeps decoding until GC. pause + drop src +
+  // load() frees the pipeline immediately.
+  useEffect(() => {
+    const el = videoRef.current;
+    return () => {
+      if (!el) return;
+      try { el.pause(); el.removeAttribute('src'); el.load(); } catch { /* best-effort */ }
+    };
+  }, []);
+
   // Screensaver suspend → pause + mute; resume if we were playing.
   useEffect(() => {
     const el = videoRef.current;

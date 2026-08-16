@@ -159,6 +159,21 @@ export function VideoPlayer({
     const t = window.setTimeout(() => setShowSpinner(true), 200);
     return () => window.clearTimeout(t);
   }, [buffering]);
+
+  // Release the media decoder on unmount. A detached <video> keeps its src +
+  // buffered data and — because it autoPlays — KEEPS DECODING off-screen until
+  // GC (non-deterministic). Opening/closing several videos piled up live 1080p
+  // decoders, saturating the main thread until shortcuts AND clicks stopped
+  // responding. Explicitly pausing + dropping the src + load() frees the decode
+  // pipeline immediately. (The element is captured at mount; videoRef is stable
+  // across item swaps, so this only fires on a real close, not prev/next.)
+  useEffect(() => {
+    const video = videoRef.current;
+    return () => {
+      if (!video) return;
+      try { video.pause(); video.removeAttribute('src'); video.load(); } catch { /* best-effort */ }
+    };
+  }, []);
   // Volume *level* stays a cross-tab preference (same loudness everywhere).
   // Mute starts on for every fresh element (autoplay-policy friendly), but the
   // per-window "audio owner" state IS remembered across a reload: if this window
