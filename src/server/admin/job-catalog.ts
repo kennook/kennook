@@ -359,13 +359,13 @@ export const AGGREGATE_STEPS: Record<string, string[]> = {
   'backfill:all': ['backfill:vectors', 'backfill:previews', 'backfill:views'],
   'enrich:all': [
     'enrich:text', 'enrich:video-text', 'enrich:transcript', 'enrich:transcript-tags',
-    'enrich:faces', 'enrich:sensitive', 'enrich:people',
+    'enrich:scrub', 'enrich:faces', 'enrich:sensitive', 'enrich:people',
   ],
   'setup': [
     'indexer',
     'backfill:vectors', 'backfill:previews', 'backfill:views',
-    'enrich:text', 'enrich:video-text', 'enrich:transcript',
-    'enrich:faces', 'enrich:sensitive', 'enrich:people',
+    'enrich:text', 'enrich:video-text', 'enrich:transcript', 'enrich:transcript-tags',
+    'enrich:scrub', 'enrich:faces', 'enrich:sensitive', 'enrich:people',
   ],
 };
 

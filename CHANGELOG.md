@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **"Run" (full pipeline) now runs every step.** The admin "Setup — Full
+  pipeline" run was silently skipping **Transcript tags** and **Scrub previews**
+  (and "Enrich" skipped Scrub previews) — those steps showed in the run tree but
+  were never enqueued. The aggregate now includes them.
+
 - **Fix the UI freezing after opening several videos.** Exiting a full-screen
   video left its `<video>` decoding in the background instead of releasing it, so
   opening and closing a handful of videos piled up hidden decoders that
