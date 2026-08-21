@@ -160,6 +160,48 @@ export function VideoPlayer({
     return () => window.clearTimeout(t);
   }, [buffering]);
 
+  // Buffering watchdog — self-heal a spinner that would otherwise spin forever.
+  // `buffering` is cleared ONLY by the canplay/playing events; when the initial
+  // load silently stalls (e.g. the audio-owner probe racing native autoplay into
+  // a paused, low-readyState dead-end, or decoder/drive contention) neither event
+  // fires, no `error` fires either, and nothing else recovers — so the spinner is
+  // stuck until the user reopens the item. This polls while buffering: if the
+  // element is actually ready we missed the event → clear it (and nudge play);
+  // if it's making NO forward progress for a couple of ticks → load()+play() to
+  // restart the pipeline, the automatic equivalent of reopening. Skipped while a
+  // pause gate (screensaver) is engaged so it can't fight that.
+  useEffect(() => {
+    if (!buffering || damaged) return;
+    if (!videoRef.current) return;
+    let stalledTicks = 0;
+    let lastBufferedEnd = -1;
+    const id = window.setInterval(() => {
+      const v = videoRef.current;
+      if (!v || forcePaused) return;
+      if (v.readyState >= 3 /* HAVE_FUTURE_DATA */) {
+        setBuffering(false);
+        if (autoPlay && v.paused && !v.ended) v.play().catch(() => {});
+        return;
+      }
+      const bufferedEnd = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
+      if (bufferedEnd > lastBufferedEnd + 0.01) {
+        // Still pulling data in — slow drive/network, but progressing. Leave it.
+        lastBufferedEnd = bufferedEnd;
+        stalledTicks = 0;
+        return;
+      }
+      // No forward progress this tick. After ~6s truly stuck, restart the load
+      // (resets currentTime → re-fires loadedmetadata, which re-applies the
+      // resume/trim/deep-link seek), then retry until it catches or errors.
+      if (++stalledTicks >= 2) {
+        stalledTicks = 0;
+        lastBufferedEnd = -1;
+        try { v.load(); if (autoPlay) void v.play().catch(() => {}); } catch { /* ignore */ }
+      }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [buffering, damaged, autoPlay, forcePaused]);
+
   // Release the media decoder on unmount. A detached <video> keeps its src +
   // buffered data and — because it autoPlays — KEEPS DECODING off-screen until
   // GC (non-deterministic). Opening/closing several videos piled up live 1080p
@@ -552,6 +594,10 @@ export function VideoPlayer({
         onStalled={() => setBuffering(true)}
         onCanPlay={() => setBuffering(false)}
         onPlaying={() => setBuffering(false)}
+        // Belt-and-suspenders: if enough data landed but canplay/playing were
+        // missed (the silent-stall case), clear the spinner as soon as we have
+        // future data rather than waiting on the watchdog poll.
+        onLoadedData={(e) => { if (e.currentTarget.readyState >= 3) setBuffering(false); }}
         onError={() => { setBuffering(false); setDamaged(true); }}
         onLoadedMetadata={(e) => {
           const dur = e.currentTarget.duration;
