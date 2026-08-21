@@ -12,6 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Exclude is off the toolbar.** The destructive Exclude button no longer sits in
+  the always-visible controls; it stays available in the info panel's kebab (⋮)
+  menu, alongside Move and Sensitivity, so it can't be hit by accident.
+
 - **Removed the redundant Restore control.** Since items open straight to full
   screen (no preview panel), the Restore button and its `F` shortcut only closed
   the viewer — same as the X and Esc — so they are gone.

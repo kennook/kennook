@@ -1813,15 +1813,6 @@ export function MediaViewer({
                 <RotateIcon />
               </ToolbarButton>
             )}
-            {onExclude && (
-              <ToolbarButton
-                onClick={() => onExclude(item)}
-                title="Exclude (hide from all results)"
-                className="text-red-300 hover:text-red-200 ring-1 ring-red-900/50"
-              >
-                <TrashIcon />
-              </ToolbarButton>
-            )}
           </>
         )}
         {/* Close stays inline in the top-right toolbar in preview mode. In
