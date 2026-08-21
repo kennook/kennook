@@ -149,6 +149,11 @@ const CHRON_TIEBREAK = 'COALESCE(m.captured_at, m.created_at) DESC';
 function buildOrderBy(
   filters: MediaFilters,
   fallback: string,
+  /** Optional priority key prepended to EVERY ordering below (sort AND shuffle),
+   *  e.g. search passes "float user-tag / bookmark matches to the top" so a
+   *  deliberate label wins regardless of the active sort. References only columns
+   *  available in the caller's query. */
+  leadExpr?: string,
 ): { sql: string; params: SqlParam[] } {
   // EVERY ordering ends with `m.id` — the primary key, so a fully-unique final
   // tiebreak. Without it, ties (shuffle_key hash collisions, equal timestamps,
@@ -159,6 +164,7 @@ function buildOrderBy(
   // React flags as "two children with the same key". m.id makes the order
   // strictly total, so offset pagination is stable.
   const TIEBREAK = 'm.id';
+  const LEAD = leadExpr ? `${leadExpr}, ` : '';
   if (filters.shuffleSeed != null) {
     // shuffle_key is a custom SQL function registered per connection (see
     // src/db/client.ts) — a proper avalanche hash, stable per seed. An optional
@@ -167,11 +173,11 @@ function buildOrderBy(
     // shuffle_key.
     if (filters.shuffleAnchor) {
       return {
-        sql: `ORDER BY (m.uuid = ?) DESC, shuffle_key(m.id, ?), ${TIEBREAK}`,
+        sql: `ORDER BY ${LEAD}(m.uuid = ?) DESC, shuffle_key(m.id, ?), ${TIEBREAK}`,
         params: [filters.shuffleAnchor, filters.shuffleSeed],
       };
     }
-    return { sql: `ORDER BY shuffle_key(m.id, ?), ${TIEBREAK}`, params: [filters.shuffleSeed] };
+    return { sql: `ORDER BY ${LEAD}shuffle_key(m.id, ?), ${TIEBREAK}`, params: [filters.shuffleSeed] };
   }
   let expr: string;
   switch (filters.sort) {
@@ -184,7 +190,7 @@ function buildOrderBy(
     case 'views':      expr = `(SELECT COALESCE(SUM(view_count), 0) FROM media_views WHERE media_item_id = m.id) DESC, ${CHRON_TIEBREAK}`; break;
     default:           expr = fallback;
   }
-  return { sql: `ORDER BY ${expr}, ${TIEBREAK}`, params: [] };
+  return { sql: `ORDER BY ${LEAD}${expr}, ${TIEBREAK}`, params: [] };
 }
 
 // Records that the current user has INTERACTED with the item (like, tag,
@@ -856,7 +862,15 @@ export const mediaRouter = router({
 
       const { where, params } = buildFilterClauses(input, ctx);
       // Relevance is the natural default; an explicit sort/shuffle overrides it.
-      const order = buildOrderBy(input, 'final_score DESC');
+      // A USER tag (boost 1.5) or a BOOKMARK match floats to the very top of the
+      // results, ahead of the active sort/shuffle — a deliberate label the user
+      // put on an item should win when they search that word. (Auto AI tags,
+      // boost 0.4, stay in the relevance score below, not this top tier.)
+      const order = buildOrderBy(
+        input,
+        'final_score DESC',
+        '(CASE WHEN COALESCE(c.tag_boost, 0) > 1.0 OR c.has_bm = 1 THEN 1 ELSE 0 END) DESC',
+      );
 
       // Sanitized query tokens — drive the tag/bookmark candidate match below AND
       // the post-query occurrence highlighting further down.

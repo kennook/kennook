@@ -12,6 +12,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Your tags & bookmarks now win in search.** Search a word you've used as a
+  tag or bookmark label and those items jump to the top of the results — even if
+  a sort (newest, most-liked…) or shuffle is active. Previously an active sort
+  overrode relevance, so the boost your deliberate labels already carried never
+  actually reordered the results.
+
 - **Toggle controls now clearly show on vs. off.** In the full-screen viewer, a
   toggle that is ON (Autoplay, Shuffle, Details) now turns solid green with a
   white icon and a pushed-in bevel, instead of a hard-to-see thin outline; OFF is
