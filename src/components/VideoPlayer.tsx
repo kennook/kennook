@@ -183,6 +183,16 @@ export function VideoPlayer({
         if (autoPlay && v.paused && !v.ended) v.play().catch(() => {});
         return;
       }
+      // Source went missing (e.g. stripped by a StrictMode remount) → a bare
+      // load() can't recover, so re-assert it before restarting.
+      if (src && !v.getAttribute('src')) {
+        v.setAttribute('src', src);
+        v.load();
+        if (autoPlay) void v.play().catch(() => {});
+        stalledTicks = 0;
+        lastBufferedEnd = -1;
+        return;
+      }
       const bufferedEnd = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
       if (bufferedEnd > lastBufferedEnd + 0.01) {
         // Still pulling data in — slow drive/network, but progressing. Leave it.
@@ -200,7 +210,7 @@ export function VideoPlayer({
       }
     }, 3000);
     return () => window.clearInterval(id);
-  }, [buffering, damaged, autoPlay, forcePaused]);
+  }, [buffering, damaged, autoPlay, forcePaused, src]);
 
   // Release the media decoder on unmount. A detached <video> keeps its src +
   // buffered data and — because it autoPlays — KEEPS DECODING off-screen until
@@ -209,12 +219,25 @@ export function VideoPlayer({
   // responding. Explicitly pausing + dropping the src + load() frees the decode
   // pipeline immediately. (The element is captured at mount; videoRef is stable
   // across item swaps, so this only fires on a real close, not prev/next.)
+  //
+  // StrictMode caveat: in dev, React runs every effect mount → cleanup → mount.
+  // That intermediate cleanup strips `src` off the LIVE element, and React won't
+  // re-apply an unchanged `src` prop — so the video was stranded at networkState
+  // EMPTY and spun forever ("sometimes", depending on whether the item's src was
+  // present at first commit or arrived a render later). Re-assert the committed
+  // src on (re)mount to repair that strip. No-op in prod, where cleanup only runs
+  // on a true unmount, so the attribute is never missing when setup runs.
   useEffect(() => {
     const video = videoRef.current;
+    if (video && src && !video.getAttribute('src')) {
+      video.setAttribute('src', src);
+      video.load();
+    }
     return () => {
       if (!video) return;
       try { video.pause(); video.removeAttribute('src'); video.load(); } catch { /* best-effort */ }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Volume *level* stays a cross-tab preference (same loudness everywhere).
   // Mute starts on for every fresh element (autoplay-policy friendly), but the

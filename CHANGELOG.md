@@ -12,15 +12,16 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
-- **Video loader self-heals a stuck spinner.** Opening a video full-screen could
-  occasionally spin forever — the load stalled silently (no `canplay`, no
-  `error`), and the spinner was cleared *only* by those events, so nothing ever
-  recovered until you reopened the item. Added a buffering watchdog that clears
-  the spinner when the element is actually ready (a missed event) and restarts a
-  genuinely dead load (`load()`+`play()`) — the automatic equivalent of
-  reopening — plus an `onLoadedData` fast-path. Likely trigger was the
-  audio-owner unmute probe racing native autoplay into a paused, low-readyState
-  dead-end.
+- **Fixed a video that would sometimes spin forever on open.** Opening a video
+  full-screen occasionally hung on the spinner with nothing loading; opening
+  another and coming back played it fine. Root cause: the decoder-release cleanup
+  (which strips the `<video>` `src` to free the decoder on close) was firing at
+  the wrong moment, leaving the live element with no source — stranded with
+  nothing to load. It now re-asserts the source if it finds it missing. Also
+  added a buffering watchdog that self-heals a stuck spinner (re-attaches a
+  missing source, clears the spinner on a missed ready-event, and restarts a
+  genuinely dead load — the automatic equivalent of reopening) plus an
+  `onLoadedData` fast-path.
 
 - **Exclude is off the toolbar.** The destructive Exclude button no longer sits in
   the always-visible controls; it stays available in the info panel's kebab (⋮)
