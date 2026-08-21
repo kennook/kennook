@@ -853,8 +853,6 @@ export function MediaViewer({
     { enabled: !!item && slideshow && item?.kind === 'photo' },
   );
 
-  useShortcut('viewer.maximize', () => setMaxed((v) => !v), { enabled: !!item });
-
   useShortcut('viewer.fitToggle', () => {
     if (maxed) {
       toggleFitFill();
@@ -1824,9 +1822,6 @@ export function MediaViewer({
                 <TrashIcon />
               </ToolbarButton>
             )}
-            <ToolbarButton onClick={() => setMaxed(false)} title="Restore — F or Esc">
-              <MinimizeIcon />
-            </ToolbarButton>
           </>
         )}
         {/* Close stays inline in the top-right toolbar in preview mode. In
@@ -2256,11 +2251,6 @@ function DebugId({ label, value }: { label: string; value: string }) {
 function MaximizeIcon() { return (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" strokeLinecap="round" />
-  </svg>
-); }
-function MinimizeIcon() { return (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-    <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" strokeLinecap="round" />
   </svg>
 ); }
 function InfoIcon() { return (

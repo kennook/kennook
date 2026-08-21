@@ -12,6 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Removed the redundant Restore control.** Since items open straight to full
+  screen (no preview panel), the Restore button and its `F` shortcut only closed
+  the viewer — same as the X and Esc — so they are gone.
+
 - **Your tags & bookmarks now win in search.** Search a word you've used as a
   tag or bookmark label and those items jump to the top of the results — even if
   a sort (newest, most-liked…) or shuffle is active. Previously an active sort

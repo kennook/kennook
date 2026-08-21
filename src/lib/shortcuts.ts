@@ -38,7 +38,6 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
 
   // Viewer
   { id: 'viewer.close',      label: 'Close',                   category: 'viewer', defaultKeys: ['Escape'] },
-  { id: 'viewer.maximize',   label: 'Toggle maximize',         category: 'viewer', defaultKeys: ['f', 'F'] },
   { id: 'viewer.fitToggle',  label: 'Toggle fit / fill',       category: 'viewer', defaultKeys: ['c', 'C'], description: 'Only in maximize mode' },
   { id: 'viewer.zoomIn',     label: 'Zoom in',                 category: 'viewer', defaultKeys: ['+', '='], description: 'Maximize mode only · ranges 100%–400%' },
   { id: 'viewer.zoomOut',    label: 'Zoom out',                category: 'viewer', defaultKeys: ['-', '_'], description: 'Maximize mode only · clamped at 100% (use C for Fit)' },
