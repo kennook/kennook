@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-21
+
 - **Fixed a video that would sometimes spin forever on open.** Opening a video
   full-screen occasionally hung on the spinner with nothing loading; opening
   another and coming back played it fine. Root cause: the decoder-release cleanup
