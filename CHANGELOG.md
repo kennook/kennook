@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Toggle controls now clearly show on vs. off.** In the full-screen viewer, a
+  toggle that is ON (Autoplay, Shuffle, Details) now turns solid green with a
+  white icon and a pushed-in bevel, instead of a hard-to-see thin outline; OFF is
+  the normal dark button.
+
 - **"Run" (full pipeline) now runs every step.** The admin "Setup — Full
   pipeline" run was silently skipping **Transcript tags** and **Scrub previews**
   (and "Enrich" skipped Scrub previews) — those steps showed in the run tree but

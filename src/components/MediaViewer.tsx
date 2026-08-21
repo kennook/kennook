@@ -1729,7 +1729,7 @@ export function MediaViewer({
             <ToolbarButton
               onClick={toggleInfo}
               title="Details (I)"
-              className={infoOpen ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+              active={infoOpen}
             >
               <InfoIcon />
             </ToolbarButton>
@@ -1738,7 +1738,7 @@ export function MediaViewer({
               <ToolbarButton
                 onClick={toggleFaceDebug}
                 title="Face-framing debug (`)"
-                className={faceDebug ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+                active={faceDebug}
               >
                 <FaceDebugIcon />
               </ToolbarButton>
@@ -1747,7 +1747,7 @@ export function MediaViewer({
               <ToolbarButton
                 onClick={() => (slideshow ? onSlideshowExit?.() : onSlideshowEnter?.())}
                 title={slideshow ? 'Autoplay on — stop slideshow' : 'Autoplay off — start slideshow'}
-                className={slideshow ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+                active={slideshow}
               >
                 <AutoplayIcon on={slideshow} />
               </ToolbarButton>
@@ -1758,18 +1758,18 @@ export function MediaViewer({
                 title={shuffleActive
                   ? 'Shuffle on — click to restore order'
                   : 'Shuffle — reshuffle the coming-up order from this item'}
-                className={shuffleActive ? 'ring-1 ring-emerald-500/60 text-emerald-300' : ''}
+                active={shuffleActive}
               >
                 <ShuffleIcon />
               </ToolbarButton>
             )}
-            {/* Reshuffle — only while shuffle is on. Mints a fresh order, keeping
-                the item you're viewing pinned to the top. */}
+            {/* Reshuffle — only while shuffle is on. An action (not a toggle), so
+                it stays a normal button; mints a fresh order, keeping the item
+                you're viewing pinned to the top. */}
             {shuffleActive && onReshuffle && (
               <ToolbarButton
                 onClick={onReshuffle}
                 title="Reshuffle — new random order from this item"
-                className="ring-1 ring-emerald-500/60 text-emerald-300"
               >
                 <ReshuffleIcon />
               </ToolbarButton>
@@ -2098,20 +2098,30 @@ function ToolbarButton({
   children,
   className = '',
   disabled = false,
+  active,
 }: {
   onClick: () => void;
   title: string;
   children: React.ReactNode;
   className?: string;
   disabled?: boolean;
+  /** For TOGGLE buttons: pass the on/off state. `true` inverts the button to a
+   *  filled emerald with a white icon + an inset bevel (reads as "pushed in /
+   *  on") instead of the easy-to-miss thin outline; `false` is the normal dark
+   *  button. Omit entirely for plain action buttons (no aria-pressed emitted). */
+  active?: boolean;
 }) {
+  const stateClass = active
+    ? 'bg-emerald-600 hover:bg-emerald-500 text-white ring-1 ring-emerald-400/50 shadow-[inset_0_2px_5px_#00000099]'
+    : 'bg-black/80 hover:bg-black/95 text-zinc-100';
   return (
     <button
       onClick={onClick}
       title={title}
       aria-label={title}
+      aria-pressed={active}
       disabled={disabled}
-      className={`bg-black/80 hover:bg-black/95 text-zinc-100
+      className={`${stateClass}
                   rounded-md w-9 h-9 flex items-center justify-center transition
                   disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-black/60
                   ${className}`}
