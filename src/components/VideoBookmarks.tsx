@@ -64,7 +64,14 @@ export function VideoBookmarks({
   return (
     <div
       data-kn-chrome=""
-      className="max-h-[60vh] overflow-y-auto text-sm flex flex-col gap-2"
+      // `shrink-0` is load-bearing: this box has `overflow-y-auto`, which per the
+      // flexbox spec gives a flex item an automatic minimum size of 0 — so inside
+      // the info panel's `flex flex-col` it becomes collapsible. On a short
+      // viewport with tall (non-shrinkable) AI-metadata below, the flex algorithm
+      // would shrink THIS box toward zero instead of letting the panel scroll,
+      // hiding the bookmark add field until you zoomed out. `shrink-0` keeps it at
+      // its natural height (capped at 60vh) and the panel scrolls for the rest.
+      className="shrink-0 max-h-[60vh] overflow-y-auto text-sm flex flex-col gap-2"
     >
       {addAtMs != null && (
         <form onSubmit={submit} className="flex flex-col gap-2 border-b border-zinc-800 pb-3">

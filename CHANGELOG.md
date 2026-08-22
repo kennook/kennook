@@ -12,6 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Bookmark field no longer vanishes in the info panel on short screens.** In
+  the full-screen info (i) panel, on a small/zoomed-in viewport with a lot of AI
+  metadata, the bookmark add field could collapse to nothing (the panel appeared
+  to overlap itself) until you zoomed out. The bookmarks box was flex-shrinking
+  to zero instead of letting the panel scroll; it now keeps its height and the
+  panel scrolls.
+
 - **Slideshow keeps playing after an auto-update reload.** When a slideshow was
   running and the app silently reloaded onto a new version (e.g. an update while
   the screensaver was up), it could come back stopped. `?view=slideshow` and the
