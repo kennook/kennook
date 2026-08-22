@@ -682,6 +682,24 @@ function HomeContent() {
     }
   }, [showingStale, active.isLoading, items, selectedUuid, setSelectedUuid]);
 
+  // Re-anchor a stale slideshow item after a reload. `?view=slideshow&item=X`
+  // survives window.location.reload() (notably the SILENT auto-update while the
+  // screensaver is up), but `items` refetches from the first page — if X isn't
+  // in it (deep in the list, or a fresh shuffle order) the viewer can't resolve
+  // an item, and the auto-advance timer no-ops, so the slideshow looks stopped.
+  // Jump to the head of the loaded list so playback continues — the same guard
+  // `startSlideshow` applies on the manual path. Scoped to slideshow on purpose:
+  // a plain `?view=full` deep link must keep pointing at its exact item, not
+  // silently jump to item 0. Self-correcting (no ref/arm needed): once selected
+  // is a loaded item the condition is false, so it can't loop.
+  useEffect(() => {
+    if (!slideshow || !selectedUuid) return;
+    if (showingStale || active.isLoading) return; // wait for the real result set
+    if (items.length === 0) return;
+    if (items.some((i) => i.uuid === selectedUuid)) return; // resolvable → leave it
+    setSelectedUuid(items[0].uuid);
+  }, [slideshow, selectedUuid, showingStale, active.isLoading, items, setSelectedUuid]);
+
   // ── Handlers ──────────────────────────────────────────────────────────
 
   const handleOpen = (item: MediaItemDto, match?: { tStartMs: number | null }) => {

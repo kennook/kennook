@@ -12,6 +12,15 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Slideshow keeps playing after an auto-update reload.** When a slideshow was
+  running and the app silently reloaded onto a new version (e.g. an update while
+  the screensaver was up), it could come back stopped. `?view=slideshow` and the
+  current `item` do survive the reload, but the item list reloads from its first
+  page — if the current image was deeper in the list (or the order reshuffled),
+  the viewer could no longer resolve it and had nothing to advance. It now
+  re-anchors to the first loaded item and keeps playing (the same guard the
+  manual start already used).
+
 ## [0.7.0] - 2026-08-21
 
 - **Fixed a video that would sometimes spin forever on open.** Opening a video
