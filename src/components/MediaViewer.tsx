@@ -1331,6 +1331,9 @@ export function MediaViewer({
               // maxed mode (alongside the bookmark button).
               climaxMs={climaxMs}
               onSetClimax={maxed ? (ms) => { setClimaxMutation.mutate({ uuid: item.uuid, librarySlug: item.librarySlug, timestampMs: ms }); pulseChrome(); } : undefined}
+              // After repeated failed retries the error panel offers to exclude
+              // the likely-corrupt video — routes through the standard confirm.
+              onExclude={onExclude ? () => onExclude(item) : undefined}
               onApi={(api) => { playerApiRef.current = api; }}
               // Autoplay trim: shaded on the scrubber always; enforced (start/
               // stop) only during the slideshow.

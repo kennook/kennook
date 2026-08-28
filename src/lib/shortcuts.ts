@@ -63,6 +63,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'video.setClimax',       label: 'Set climax here',       category: 'video', defaultKeys: ['x', 'X'], description: 'Video · marks the current moment as your climax (also the ★ button)' },
   { id: 'video.jumpClimax',      label: 'Jump to climax',        category: 'video', defaultKeys: ['g'], description: 'Video · seeks THIS screen to your climax mark and plays' },
   { id: 'video.broadcastClimax', label: 'Broadcast: all jump to climax', category: 'video', defaultKeys: ['Shift+G'], description: 'Video · every open viewer on your devices jumps to its own climax' },
+  { id: 'video.retry',           label: 'Retry playback',        category: 'video', defaultKeys: ['Enter'], description: 'When a video fails to play — reload and try the same source again' },
 
   // Global
   { id: 'global.help', label: 'Show keyboard shortcuts', category: 'global', defaultKeys: ['?'] },

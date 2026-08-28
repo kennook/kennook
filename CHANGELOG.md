@@ -20,6 +20,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   an always-on multi-screen wall). The climax is personal to your account
   (each account remembers its own, per video).
 
+- **Retry a failed video with a keypress — and bail out on a corrupt one.** When
+  a video won't play, press **Enter** to retry (alongside the Retry button). After
+  3 failed retries the panel flags it as likely corrupted and offers to **exclude
+  it from results** — routed through the usual confirm, and recoverable (the file
+  stays on disk).
+
 - **Bookmark field no longer vanishes in the info panel on short screens.** In
   the full-screen info (i) panel, on a small/zoomed-in viewport with a lot of AI
   metadata, the bookmark add field could collapse to nothing (the panel appeared

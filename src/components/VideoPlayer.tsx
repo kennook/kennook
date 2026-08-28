@@ -70,6 +70,10 @@ interface Props {
   /** When provided, the controls bar shows a "set climax" (★) button; it fires
    *  with the current playback position in ms. */
   onSetClimax?: (timeMs: number) => void;
+  /** When provided, the "couldn't play" error panel offers to exclude the video
+   *  from results after repeated failed retries (a likely-corrupt file). Fires
+   *  with no args — the parent knows which item is open. */
+  onExclude?: () => void;
   /** Called once on mount with an imperative handle, so an outside panel (the
    *  bookmark list / trim editor) or a climax-jump can seek, read the position,
    *  or resume play without a ref. */
@@ -125,6 +129,7 @@ export function VideoPlayer({
   onAddBookmark,
   climaxMs,
   onSetClimax,
+  onExclude,
   onApi,
   trimStartMs,
   trimEndMs,
@@ -149,12 +154,19 @@ export function VideoPlayer({
   // The <video> fired an error event — the source failed to load/decode, i.e.
   // it's likely damaged or an unsupported codec. Reset on item swap.
   const [damaged, setDamaged] = useState(false);
+  // How many times the user has retried THIS source without it playing. After a
+  // few failed retries the error panel offers to exclude the (likely corrupt)
+  // video. Reset on item swap and on a successful play (onPlaying).
+  const [retryCount, setRetryCount] = useState(0);
+  const RETRIES_BEFORE_EXCLUDE = 3;
   // A new src is loading until it can play — reset immediately on item swap.
-  useEffect(() => { setBuffering(true); setDamaged(false); }, [src]);
+  useEffect(() => { setBuffering(true); setDamaged(false); setRetryCount(0); }, [src]);
   // Retry after an error — re-fetch the same source. The `error` event fires on
   // transient issues too (a drive spinning up, a momentary stall), so a reload
-  // often succeeds; if it genuinely can't decode, onError just flips back.
+  // often succeeds; if it genuinely can't decode, onError just flips back (and
+  // the retry counter climbs toward the exclude prompt).
   const retry = () => {
+    setRetryCount((c) => c + 1);
     setDamaged(false);
     setBuffering(true);
     const el = videoRef.current;
@@ -550,6 +562,14 @@ export function VideoPlayer({
     showControls();
   });
   useShortcut('video.undoSeek', (e) => { e.preventDefault(); undoSeek(); showControls(); });
+  // Retry the failed source. Only armed while the error panel is up. Skip when a
+  // modal is open (e.g. the exclude confirm) so Enter confirms THAT, not both.
+  useShortcut('video.retry', (e) => {
+    if (typeof document !== 'undefined' &&
+        document.querySelector('[role="alertdialog"], [role="dialog"]')) return;
+    e.preventDefault();
+    retry();
+  }, { enabled: damaged });
 
   // ── Drag-to-seek on the progress bar. ─────────────────────────────────────
   const dragRef = useRef<{ active: boolean; rect: DOMRect | null }>({ active: false, rect: null });
@@ -626,7 +646,7 @@ export function VideoPlayer({
         onWaiting={() => setBuffering(true)}
         onStalled={() => setBuffering(true)}
         onCanPlay={() => setBuffering(false)}
-        onPlaying={() => setBuffering(false)}
+        onPlaying={() => { setBuffering(false); setRetryCount(0); }}
         // Belt-and-suspenders: if enough data landed but canplay/playing were
         // missed (the silent-stall case), clear the spinner as soon as we have
         // future data rather than waiting on the watchdog poll.
@@ -706,18 +726,42 @@ export function VideoPlayer({
                 <path d="M8 1.5l7 12.5H1L8 1.5z" /><path d="M8 6v4M8 12v0.5" />
               </svg>
             </span>
-            <div className="text-sm font-medium text-zinc-200">This video couldn&apos;t be played</div>
-            <div className="text-xs text-zinc-400 max-w-xs">It may be damaged or in an unsupported format — or the drive was just waking up.</div>
-            <button
-              onClick={retry}
-              className="pointer-events-auto mt-1 inline-flex items-center gap-1.5 rounded-md
-                         bg-zinc-100 text-zinc-900 text-sm font-medium px-3 py-1.5 hover:bg-white transition"
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2v3h-3" />
-              </svg>
-              Retry
-            </button>
+            {retryCount >= RETRIES_BEFORE_EXCLUDE ? (
+              <>
+                <div className="text-sm font-medium text-zinc-200">This video keeps failing</div>
+                <div className="text-xs text-zinc-400 max-w-xs">
+                  It didn&apos;t play after {retryCount} tries — the file may be corrupted.
+                  Keep trying, or exclude it from results (the file stays on disk; it&apos;s recoverable).
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-medium text-zinc-200">This video couldn&apos;t be played</div>
+                <div className="text-xs text-zinc-400 max-w-xs">It may be damaged or in an unsupported format — or the drive was just waking up.</div>
+              </>
+            )}
+            <div className="pointer-events-auto mt-1 flex items-center gap-2">
+              <button
+                onClick={retry}
+                className="inline-flex items-center gap-1.5 rounded-md
+                           bg-zinc-100 text-zinc-900 text-sm font-medium px-3 py-1.5 hover:bg-white transition"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2v3h-3" />
+                </svg>
+                Retry
+                <span className="text-[10px] font-normal text-zinc-500 ml-0.5">Enter</span>
+              </button>
+              {retryCount >= RETRIES_BEFORE_EXCLUDE && onExclude && (
+                <button
+                  onClick={onExclude}
+                  className="inline-flex items-center gap-1.5 rounded-md text-sm font-medium px-3 py-1.5 transition
+                             bg-rose-950/80 text-rose-200 ring-1 ring-rose-800/70 hover:bg-rose-900/80"
+                >
+                  Exclude from search
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
