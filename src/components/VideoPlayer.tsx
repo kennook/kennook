@@ -791,6 +791,23 @@ export function VideoPlayer({
           className="group/scrub relative h-1.5 cursor-pointer mb-6
                      before:content-[''] before:absolute before:-inset-y-[20px] before:inset-x-0"
         >
+          {/* Climax marker — a decorative dark-green starburst that sits BEHIND
+              the bar (first child → painted first) as a faint "shadow." Fully
+              non-interactive (pointer-events-none, no tooltip/seek), so it never
+              conflicts with the bookmark ticks' hover/click. A quiet easter-egg
+              cue at the climax; peeks around the thin bar since it's taller. */}
+          {duration != null && climaxMs != null && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2
+                         w-5 h-5 text-emerald-600 opacity-70 blur-[0.5px]"
+              style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
+                <path d="M12 0 L13.8 10.2 L24 12 L13.8 13.8 L12 24 L10.2 13.8 L0 12 L10.2 10.2 Z" />
+              </svg>
+            </div>
+          )}
           <div className="absolute inset-0 rounded-full bg-zinc-700/60 origin-center
                           transition-transform group-hover/scrub:scale-y-150">
             <div
@@ -834,25 +851,6 @@ export function VideoPlayer({
               style={{ left: `${Math.max(0, Math.min(100, (b.timestampMs / 1000 / duration) * 100))}%` }}
             />
           ))}
-
-          {/* Climax marker — a single dark-green diamond (a darker shade of the
-              emerald progress bar), quietly informational rather than loud, at
-              this user's climax mark. Distinct from the white bookmark ticks.
-              Click seeks to it. */}
-          {duration != null && climaxMs != null && (
-            <div
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                const v = videoRef.current;
-                if (v) { recordSeekPoint(); v.currentTime = climaxMs / 1000; }
-              }}
-              title={`Climax — ${formatTime(climaxMs / 1000)}`}
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45
-                         bg-emerald-700 hover:bg-emerald-600 cursor-pointer shadow ring-1 ring-black/40
-                         before:content-[''] before:absolute before:-inset-x-[5px] before:-inset-y-1.5"
-              style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
-            />
-          )}
 
           {/* Drag-to-trim, ON the bar. Trimmed-out spans are dimmed; the green
               (in) / red (out) grips straddle the bar. Grips stopPropagation so
