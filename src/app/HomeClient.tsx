@@ -18,6 +18,7 @@ import { AddToPlaylistDialog } from '@/components/AddToPlaylistDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
+import { HotCornerIndicator } from '@/components/HotCornerIndicator';
 import { MobileApp } from '@/components/mobile/MobileApp';
 import { SidebarRail, type RailSection } from '@/components/sidebar/SidebarRail';
 import { ExternalTree } from '@/components/sidebar/ExternalTree';
@@ -1535,6 +1536,9 @@ function HomeContent() {
       )}
 
       <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+
+      {/* Corner glow + label when the cursor enters an active hot corner. */}
+      <HotCornerIndicator />
 
       <Screensaver
         open={screensaverOpen}

@@ -22,6 +22,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   the jump falls back to its first bookmark, then its cropped (trim) start; with
   none of those, it leaves the video where it is.
 
+- **Hot corners now light up when you enter them.** Moving the cursor into a
+  corner that's assigned an action (fade the controls, or start the screensaver)
+  glows that corner and shows a small label — so the active zones are visible and
+  discoverable instead of invisible. Purely a cue; it doesn't intercept the mouse.
+
 - **Retry a failed video with a keypress — and bail out on a corrupt one.** When
   a video won't play, press **Enter** to retry (alongside the Retry button). After
   3 failed retries the panel flags it as likely corrupted and offers to **exclude
