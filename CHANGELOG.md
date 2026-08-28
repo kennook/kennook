@@ -18,7 +18,9 @@ Anything under **Upgrade notes** requires action on the operator's part
   screen straight to it and play. Press `Shift+G` to **broadcast** — every open
   viewer on all your devices jumps to *its own* video's climax at once (great for
   an always-on multi-screen wall). The climax is personal to your account
-  (each account remembers its own, per video).
+  (each account remembers its own, per video). If a video has no climax set yet,
+  the jump falls back to its first bookmark, then its cropped (trim) start; with
+  none of those, it leaves the video where it is.
 
 - **Retry a failed video with a keypress — and bail out on a corrupt one.** When
   a video won't play, press **Enter** to retry (alongside the Retry button). After

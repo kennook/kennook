@@ -395,13 +395,19 @@ export function MediaViewer({
       timestampMs: playerApiRef.current?.currentMs() ?? 0,
     });
   }, [item, setClimaxMutation]);
-  // Seek this viewer's video to its climax and resume play. Used by the local
-  // jump shortcut AND the broadcast handler (which runs on every viewer).
+  // Seek this viewer's video to its "highlight" and resume play. Used by the
+  // local jump shortcut AND the broadcast handler (which runs on every viewer).
+  // Fallback chain when the climax isn't set: earliest bookmark → the cropped
+  // (trim) start → leave playback untouched. `?? ` (not `||`) so a legitimate
+  // 0 ms target still wins.
   const jumpToClimaxLocal = useCallback(() => {
-    if (climaxMs == null) return;
-    playerApiRef.current?.seek(climaxMs);
+    const firstBookmarkMs = bookmarksQuery.data?.bookmarks?.[0]?.timestampMs ?? null;
+    const trimStartMsVal = trimQuery.data?.startMs ?? null;
+    const target = climaxMs ?? firstBookmarkMs ?? trimStartMsVal;
+    if (target == null) return; // nothing marked → don't touch the playback time
+    playerApiRef.current?.seek(target);
     playerApiRef.current?.play();
-  }, [climaxMs]);
+  }, [climaxMs, bookmarksQuery.data, trimQuery.data]);
   // A viewer receives the broadcast → jumps its own video. The initiator never
   // gets its own event, so its shortcut handler jumps locally in addition.
   useSyncEvent('climax.jump', () => {
