@@ -32,7 +32,7 @@ export const DEFAULT_HOT_CORNERS: HotCornerMap = {
 };
 
 /** Side length (px) of each corner's active square. */
-export const CORNER_PX = 100;
+export const CORNER_PX = 130;
 /** Back-compat alias for callers that referenced the old dead-corner size. */
 export const HIDE_CORNER_PX = CORNER_PX;
 
