@@ -799,7 +799,7 @@ export function VideoPlayer({
           {duration != null && climaxMs != null && (
             <div
               aria-hidden
-              className="pointer-events-none absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-[7.5rem] h-[7.5rem] opacity-80"
+              className="pointer-events-none absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-[11.25rem] h-[11.25rem] opacity-[0.64]"
               style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
             >
               {/* Radiating rays — a dense sunburst (repeating-conic-gradient),
