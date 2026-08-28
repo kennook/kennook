@@ -835,8 +835,10 @@ export function VideoPlayer({
             />
           ))}
 
-          {/* Climax marker — a single amber diamond, distinct from the white
-              bookmark ticks, at this user's climax mark. Click seeks to it. */}
+          {/* Climax marker — a single dark-green diamond (a darker shade of the
+              emerald progress bar), quietly informational rather than loud, at
+              this user's climax mark. Distinct from the white bookmark ticks.
+              Click seeks to it. */}
           {duration != null && climaxMs != null && (
             <div
               onMouseDown={(e) => {
@@ -846,7 +848,7 @@ export function VideoPlayer({
               }}
               title={`Climax — ${formatTime(climaxMs / 1000)}`}
               className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45
-                         bg-amber-400 hover:bg-amber-300 cursor-pointer shadow ring-1 ring-black/40
+                         bg-emerald-700 hover:bg-emerald-600 cursor-pointer shadow ring-1 ring-black/40
                          before:content-[''] before:absolute before:-inset-x-[5px] before:-inset-y-1.5"
               style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
             />

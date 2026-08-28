@@ -14,7 +14,7 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 - **Mark a video's "climax" and jump to it — one screen or all at once.** Set a
   per-video climax at the current moment (the ★ button in the video controls, or
-  the `X` key); an amber marker appears on the scrubber. Press `G` to send *this*
+  the `X` key); a subtle dark-green marker appears on the scrubber. Press `G` to send *this*
   screen straight to it and play. Press `Shift+G` to **broadcast** — every open
   viewer on all your devices jumps to *its own* video's climax at once (great for
   an always-on multi-screen wall). The climax is personal to your account
