@@ -799,19 +799,33 @@ export function VideoPlayer({
           {duration != null && climaxMs != null && (
             <div
               aria-hidden
-              className="pointer-events-none absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-8 h-8"
+              className="pointer-events-none absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-10 h-10 opacity-80"
               style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
             >
-              {/* Soft green bloom — blooms around the thin bar so the marker
-                  reads even where the bar covers its center. */}
+              {/* Radiating rays — a dense sunburst (repeating-conic-gradient),
+                  hollowed at the centre and faded out with a radial mask. */}
               <div
-                className="absolute inset-0 rounded-full blur-[2px]"
-                style={{ background: 'radial-gradient(circle, rgba(5,150,105,0.85) 0%, rgba(5,150,105,0.35) 42%, transparent 70%)' }}
+                className="absolute inset-0"
+                style={{
+                  background: 'repeating-conic-gradient(from 0deg, rgba(110,231,183,0.5) 0deg 0.5deg, transparent 0.5deg 15deg)',
+                  WebkitMaskImage: 'radial-gradient(circle, transparent 9%, #000 18%, transparent 62%)',
+                  maskImage: 'radial-gradient(circle, transparent 9%, #000 18%, transparent 62%)',
+                  filter: 'blur(0.4px)',
+                }}
               />
-              {/* Starburst rays on top of the bloom. */}
-              <svg viewBox="0 0 24 24" fill="currentColor" className="absolute inset-0 w-full h-full text-emerald-500">
-                <path d="M12 1 L13.5 10.5 L23 12 L13.5 13.5 L12 23 L10.5 13.5 L1 12 L10.5 10.5 Z" />
-              </svg>
+              {/* Horizontal anamorphic streak. */}
+              <div
+                className="absolute left-1/2 top-1/2 h-px w-[240%] -translate-x-1/2 -translate-y-1/2"
+                style={{
+                  background: 'linear-gradient(90deg, transparent, rgba(110,231,183,0.45) 40%, rgba(224,255,244,0.85) 50%, rgba(110,231,183,0.45) 60%, transparent)',
+                  filter: 'blur(0.5px)',
+                }}
+              />
+              {/* Hot core — soft white fading to emerald. */}
+              <div
+                className="absolute inset-0"
+                style={{ background: 'radial-gradient(circle, rgba(236,255,247,0.95) 0%, rgba(52,211,153,0.65) 15%, rgba(16,185,129,0.3) 34%, transparent 56%)' }}
+              />
             </div>
           )}
           <div className="absolute inset-0 rounded-full bg-zinc-700/60 origin-center
