@@ -12,6 +12,14 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Mark a video's "climax" and jump to it — one screen or all at once.** Set a
+  per-video climax at the current moment (the ★ button in the video controls, or
+  the `X` key); an amber marker appears on the scrubber. Press `G` to send *this*
+  screen straight to it and play. Press `Shift+G` to **broadcast** — every open
+  viewer on all your devices jumps to *its own* video's climax at once (great for
+  an always-on multi-screen wall). The climax is personal to your account
+  (each account remembers its own, per video).
+
 - **Bookmark field no longer vanishes in the info panel on short screens.** In
   the full-screen info (i) panel, on a small/zoomed-in viewport with a lot of AI
   metadata, the bookmark add field could collapse to nothing (the panel appeared
@@ -27,6 +35,11 @@ Anything under **Upgrade notes** requires action on the operator's part
   the viewer could no longer resolve it and had nothing to advance. It now
   re-anchors to the first loaded item and keeps playing (the same guard the
   manual start already used).
+
+### Upgrade notes
+- This release adds a **database migration** (a new per-user `media_climax`
+  table). It applies automatically on the next server start — rebuild and restart
+  as usual (`pnpm build:prod && pnpm start:prod`). No media reprocessing.
 
 ## [0.7.0] - 2026-08-21
 

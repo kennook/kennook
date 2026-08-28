@@ -18,7 +18,7 @@ import { FEATURES } from '@/lib/feature-flags';
 import { usePreference } from '@/lib/preferences';
 import { useSessionFlag } from '@/lib/use-session-flag';
 import { ViewportMinimap } from './ViewportMinimap';
-import { useSyncEvent } from '@/lib/sync';
+import { useSync, useSyncEvent } from '@/lib/sync';
 import { useIsAdmin } from '@/lib/current-user';
 import { VideoBookmarks } from './VideoBookmarks';
 import { VideoTags } from './VideoTags';
@@ -304,7 +304,7 @@ export function MediaViewer({
   // Non-null → the add form is open, pre-set to this timestamp (ms).
   const [addBookmarkAtMs, setAddBookmarkAtMs] = useState<number | null>(null);
   // Imperative handle from VideoPlayer — jump to a bookmark / read the position.
-  const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number } | null>(null);
+  const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number; play: () => void } | null>(null);
   // Cancelling a bookmark add (Esc / Cancel / after save) closes the info
   // sidebar too — the add form lives inside it, and it opened for the add.
   const closeBookmarkAdd = useCallback(() => {
@@ -367,6 +367,45 @@ export function MediaViewer({
   // Shared with the I/O shortcuts (VideoTrimControls has its own copy).
   const setTrimMutation = trpc.media.setTrim.useMutation({
     onSuccess: (_d, vars) => viewUtils.media.getTrim.invalidate({ uuid: vars.uuid, librarySlug: vars.librarySlug }),
+  });
+
+  // ── Climax marker (videos, per-user) ─────────────────────────────────────
+  // One remembered timestamp per (video, this user): a scrubber marker + Set
+  // button, a local jump shortcut (G), and a broadcast (Shift+G) that makes
+  // every open viewer on the user's devices jump to ITS OWN climax and play.
+  const sync = useSync();
+  const climaxQuery = trpc.media.getClimax.useQuery(
+    { uuid: item?.uuid ?? '', librarySlug: item?.librarySlug ?? '' },
+    { enabled: !!item && item.kind === 'video' },
+  );
+  const climaxMs = climaxQuery.data?.timestampMs ?? null;
+  useSyncEvent('item.climax.changed', (e) => {
+    if (item && e.uuid === item.uuid) {
+      void viewUtils.media.getClimax.invalidate({ uuid: item.uuid, librarySlug: item.librarySlug });
+    }
+  });
+  const setClimaxMutation = trpc.media.setClimax.useMutation({
+    onSuccess: (_d, vars) => viewUtils.media.getClimax.invalidate({ uuid: vars.uuid, librarySlug: vars.librarySlug }),
+  });
+  const setClimaxHere = useCallback(() => {
+    if (!item || item.kind !== 'video') return;
+    setClimaxMutation.mutate({
+      uuid: item.uuid,
+      librarySlug: item.librarySlug,
+      timestampMs: playerApiRef.current?.currentMs() ?? 0,
+    });
+  }, [item, setClimaxMutation]);
+  // Seek this viewer's video to its climax and resume play. Used by the local
+  // jump shortcut AND the broadcast handler (which runs on every viewer).
+  const jumpToClimaxLocal = useCallback(() => {
+    if (climaxMs == null) return;
+    playerApiRef.current?.seek(climaxMs);
+    playerApiRef.current?.play();
+  }, [climaxMs]);
+  // A viewer receives the broadcast → jumps its own video. The initiator never
+  // gets its own event, so its shortcut handler jumps locally in addition.
+  useSyncEvent('climax.jump', () => {
+    if (item?.kind === 'video') jumpToClimaxLocal();
   });
 
   // OCC version (ETag) the next write is based on. Seeded from the restore
@@ -932,6 +971,24 @@ export function MediaViewer({
     });
     pulseChrome();
   }, { enabled: videoToolsEnabled });
+  // Climax: X marks the current moment; G jumps THIS screen to it; Shift+G
+  // broadcasts so every open viewer on the user's devices jumps to its own.
+  useShortcut('video.setClimax', (e) => {
+    e.preventDefault(); // don't type 'x' into a field
+    setClimaxHere();
+    pulseChrome();
+  }, { enabled: videoToolsEnabled });
+  useShortcut('video.jumpClimax', (e) => {
+    e.preventDefault();
+    jumpToClimaxLocal();
+    pulseChrome();
+  }, { enabled: videoToolsEnabled });
+  useShortcut('video.broadcastClimax', (e) => {
+    e.preventDefault();
+    jumpToClimaxLocal();                 // no self-echo → jump locally too
+    sync.publish({ type: 'climax.jump' });
+    pulseChrome();
+  }, { enabled: videoToolsEnabled });
 
   // Up/Down navigates between items regardless of kind. Left/Right are
   // now reserved for video seek (handled inside VideoPlayer); for a
@@ -1270,6 +1327,10 @@ export function MediaViewer({
               // in maxed mode (where the panel is rendered).
               bookmarks={bookmarksQuery.data?.bookmarks}
               onAddBookmark={maxed ? (ms) => { setAddBookmarkAtMs(ms); setInfoOpen(true); pulseChrome(); } : undefined}
+              // Climax: amber scrubber marker always; the ★ set button only in
+              // maxed mode (alongside the bookmark button).
+              climaxMs={climaxMs}
+              onSetClimax={maxed ? (ms) => { setClimaxMutation.mutate({ uuid: item.uuid, librarySlug: item.librarySlug, timestampMs: ms }); pulseChrome(); } : undefined}
               onApi={(api) => { playerApiRef.current = api; }}
               // Autoplay trim: shaded on the scrubber always; enforced (start/
               // stop) only during the slideshow.

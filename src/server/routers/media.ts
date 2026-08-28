@@ -1642,6 +1642,70 @@ export const mediaRouter = router({
       return { startMs: start, endMs: end };
     }),
 
+  // ── Per-user "climax" marker — one remembered timestamp per (video, user).
+  // A shortcut jumps to it; a broadcast jumps every one of the user's open
+  // viewers to their own. Per-user (carries user_id), unlike the shared trim. ──
+
+  /** This user's climax timestamp (ms) for one video; null when unset. */
+  getClimax: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .query(({ input, ctx }) => {
+      const sqlite = getRawSqlite(input.librarySlug ?? ctx.library.slug);
+      const row = sqlite.prepare(`
+        SELECT c.timestamp_ms AS timestampMs
+        FROM media_climax c
+        JOIN media_items m ON m.id = c.media_item_id
+        WHERE m.uuid = ? AND c.user_id = ?
+      `).get(input.uuid, ctx.userId) as { timestampMs: number } | undefined;
+      return { timestampMs: row?.timestampMs ?? null };
+    }),
+
+  /** Set this user's climax for a video at the given ms (UPSERT). Broadcasts to
+   *  this user's OTHER sessions only — the marker is per-user. */
+  setClimax: publicProcedure
+    .input(z.object({
+      uuid: z.string(),
+      timestampMs: z.number().int().nonnegative(),
+      librarySlug: z.string().optional(),
+    }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const item = sqlite.prepare(
+        'SELECT id FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
+      ).get(input.uuid) as { id: number } | undefined;
+      if (!item) throw new Error('Item not found');
+      sqlite.prepare(`
+        INSERT INTO media_climax (media_item_id, user_id, timestamp_ms)
+        VALUES (?, ?, ?)
+        ON CONFLICT(media_item_id, user_id)
+        DO UPDATE SET timestamp_ms = excluded.timestamp_ms, updated_at = unixepoch() * 1000
+      `).run(item.id, ctx.userId, input.timestampMs);
+      publishToUser(ctx.userId, {
+        sessionId: ctx.sessionId,
+        event: { type: 'item.climax.changed', librarySlug: slug, uuid: input.uuid },
+      });
+      return { timestampMs: input.timestampMs as number | null };
+    }),
+
+  /** Clear this user's climax for a video. */
+  clearClimax: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .mutation(({ input, ctx }) => {
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      sqlite.prepare(`
+        DELETE FROM media_climax
+        WHERE user_id = ?
+          AND media_item_id = (SELECT id FROM media_items WHERE uuid = ?)
+      `).run(ctx.userId, input.uuid);
+      publishToUser(ctx.userId, {
+        sessionId: ctx.sessionId,
+        event: { type: 'item.climax.changed', librarySlug: slug, uuid: input.uuid },
+      });
+      return { timestampMs: null as number | null };
+    }),
+
   /** Scrub-preview sprite for a video: the montage URL + grid manifest (maps a
    *  hover time → tile), or null when it hasn't been generated. */
   scrubSprite: publicProcedure

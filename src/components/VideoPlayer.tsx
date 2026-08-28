@@ -64,9 +64,16 @@ interface Props {
   /** When provided, the controls bar shows an "add bookmark" button; it fires
    *  with the current playback position in ms. */
   onAddBookmark?: (timeMs: number) => void;
+  /** This user's "climax" mark (ms) for the video, shown as a distinct amber
+   *  marker on the scrubber (click to seek). Null when unset. */
+  climaxMs?: number | null;
+  /** When provided, the controls bar shows a "set climax" (★) button; it fires
+   *  with the current playback position in ms. */
+  onSetClimax?: (timeMs: number) => void;
   /** Called once on mount with an imperative handle, so an outside panel (the
-   *  bookmark list / trim editor) can seek or read the position without a ref. */
-  onApi?: (api: { seek: (ms: number) => void; currentMs: () => number }) => void;
+   *  bookmark list / trim editor) or a climax-jump can seek, read the position,
+   *  or resume play without a ref. */
+  onApi?: (api: { seek: (ms: number) => void; currentMs: () => number; play: () => void }) => void;
   /** Autoplay trim window (ms). Applied ONLY when `enforceTrim` is true (the
    *  slideshow): playback starts at `trimStartMs` and stops/advances at
    *  `trimEndMs`. Both nullable. Shown as a shaded region on the scrubber
@@ -116,6 +123,8 @@ export function VideoPlayer({
   forcePaused = false,
   bookmarks,
   onAddBookmark,
+  climaxMs,
+  onSetClimax,
   onApi,
   trimStartMs,
   trimEndMs,
@@ -395,6 +404,7 @@ export function VideoPlayer({
         if (v) v.currentTime = Math.max(0, ms / 1000);
       },
       currentMs: () => Math.round((videoRef.current?.currentTime ?? 0) * 1000),
+      play: () => { videoRef.current?.play().catch(() => {}); },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -788,6 +798,23 @@ export function VideoPlayer({
             />
           ))}
 
+          {/* Climax marker — a single amber diamond, distinct from the white
+              bookmark ticks, at this user's climax mark. Click seeks to it. */}
+          {duration != null && climaxMs != null && (
+            <div
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                const v = videoRef.current;
+                if (v) { recordSeekPoint(); v.currentTime = climaxMs / 1000; }
+              }}
+              title={`Climax — ${formatTime(climaxMs / 1000)}`}
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45
+                         bg-amber-400 hover:bg-amber-300 cursor-pointer shadow ring-1 ring-black/40
+                         before:content-[''] before:absolute before:-inset-x-[5px] before:-inset-y-1.5"
+              style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
+            />
+          )}
+
           {/* Drag-to-trim, ON the bar. Trimmed-out spans are dimmed; the green
               (in) / red (out) grips straddle the bar. Grips stopPropagation so
               grabbing one doesn't seek; drop a grip at the far edge to clear it.
@@ -872,6 +899,18 @@ export function VideoPlayer({
               title="Add a bookmark at the current moment (B)"
             >
               <BookmarkIcon />
+            </ControlButton>
+          )}
+
+          {onSetClimax && (
+            <ControlButton
+              onClick={() => onSetClimax(Math.round((videoRef.current?.currentTime ?? 0) * 1000))}
+              active={climaxMs != null}
+              title={climaxMs != null
+                ? `Climax set at ${formatTime(climaxMs / 1000)} — click to move it here (X). G jumps to it.`
+                : 'Set the climax at the current moment (X). G jumps to it.'}
+            >
+              <ClimaxIcon />
             </ControlButton>
           )}
 
@@ -975,6 +1014,18 @@ function ControlButton({ onClick, title, children, active = false }: { onClick: 
     >
       {children}
     </button>
+  );
+}
+
+function ClimaxIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"
+         stroke="currentColor" strokeWidth="1.4"
+         strokeLinecap="round" strokeLinejoin="round">
+      {/* A star — marks the peak / climax. Filled follows currentColor. */}
+      <path d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .8 4.3L8 11.3 4.2 13.3l.8-4.3-3.1-3 4.3-.6L8 1.5z"
+            fill="currentColor" fillOpacity="0.25" />
+    </svg>
   );
 }
 

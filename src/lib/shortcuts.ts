@@ -60,6 +60,9 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'video.mute',          label: 'Mute / unmute',         category: 'video', defaultKeys: ['m', 'M'] },
   { id: 'video.jumpToPercent', label: 'Jump to 0–90%',         category: 'video', defaultKeys: ['0','1','2','3','4','5','6','7','8','9'] },
   { id: 'video.undoSeek',      label: 'Undo last seek',        category: 'video', defaultKeys: ['u', 'U'], description: 'Jumps back to the position before your last seek (up to 5 steps)' },
+  { id: 'video.setClimax',       label: 'Set climax here',       category: 'video', defaultKeys: ['x', 'X'], description: 'Video · marks the current moment as your climax (also the ★ button)' },
+  { id: 'video.jumpClimax',      label: 'Jump to climax',        category: 'video', defaultKeys: ['g'], description: 'Video · seeks THIS screen to your climax mark and plays' },
+  { id: 'video.broadcastClimax', label: 'Broadcast: all jump to climax', category: 'video', defaultKeys: ['Shift+G'], description: 'Video · every open viewer on your devices jumps to its own climax' },
 
   // Global
   { id: 'global.help', label: 'Show keyboard shortcuts', category: 'global', defaultKeys: ['?'] },

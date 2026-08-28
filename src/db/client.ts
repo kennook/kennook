@@ -74,7 +74,7 @@ export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userI
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 30;
+const LATEST_SCHEMA_VERSION = 31;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -671,6 +671,24 @@ function applyMigrations(sqlite: DatabaseSync) {
       `);
     }
     version = 30;
+  }
+
+  // ── v31: per-user video "climax" marker — one remembered timestamp per (video,
+  // user) that a shortcut jumps to, and a broadcast jumps every open viewer to.
+  // Per-user (unlike the shared trim columns), so it carries user_id, like
+  // media_bookmarks.created_by. One row per pair (UPSERT on set). FK cascade
+  // drops it when the item is purged.
+  if (version < 31) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS media_climax (
+        media_item_id INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+        user_id       INTEGER NOT NULL,
+        timestamp_ms  INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        PRIMARY KEY (media_item_id, user_id)
+      );
+    `);
+    version = 31;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

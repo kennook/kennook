@@ -34,6 +34,13 @@ export type SyncEvent =
   | { type: 'item.bookmark.changed'; librarySlug: string; uuid: string }
   /** A video's autoplay trim (start/stop) changed; open viewers refresh it. */
   | { type: 'item.trim.changed'; librarySlug: string; uuid: string }
+  /** This user's per-video "climax" marker changed; their open viewers of that
+   *  item refresh it (per-user, so routed via publishToUser). */
+  | { type: 'item.climax.changed'; librarySlug: string; uuid: string }
+  /** Broadcast "jump to climax": every open viewer seeks ITS OWN video to that
+   *  user's climax for it (and resumes play). No payload — each viewer reads its
+   *  own item's climax. The initiator skips its own echo, so it seeks locally. */
+  | { type: 'climax.jump' }
   | { type: 'item.rotation'; librarySlug: string; uuid: string; rotation: number }
   /** Manual sensitivity override changed (1 sensitive / 0 safe / null auto). */
   | { type: 'item.sensitive'; librarySlug: string; uuid: string; override: number | null }
