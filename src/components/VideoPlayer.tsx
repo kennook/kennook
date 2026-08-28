@@ -274,13 +274,9 @@ export function VideoPlayer({
   mutedRef.current = muted;
   const [volume, setVolume] = usePreference('videoVolume');
   const [duration, setDuration] = useState<number | null>(null);
-  // Hovered bookmark → a tooltip portaled to <body> (escapes the controls
-  // bar's stacking context so it can't hide behind the reel/chrome). Null when
-  // nothing is hovered. Reset on src change so a stale tip can't linger.
-  const [hoverBm, setHoverBm] = useState<{ label: string; timeMs: number; x: number; y: number } | null>(null);
   // Scrubber hover → the sprite-sheet frame preview (portaled). Viewport coords.
   const [scrubHover, setScrubHover] = useState<{ x: number; y: number; timeMs: number } | null>(null);
-  useEffect(() => { setHoverBm(null); setScrubHover(null); }, [src]);
+  useEffect(() => { setScrubHover(null); }, [src]);
 
   // Solo-audio coordination over the sync layer (same-browser via
   // BroadcastChannel + cross-device via SSE): unmuting THIS window broadcasts
@@ -818,10 +814,11 @@ export function VideoPlayer({
 
 
           {/* Bookmark strips — white marker per tagged moment. Hover shows the
-              tags (tooltip is portaled to <body>, see below, so it can't get
-              trapped under the reel/chrome by a stacking context); click jumps
-              there. The ::before widens the hover/click target beyond the thin
-              strip. stopPropagation so the click seeks rather than scrub-drags. */}
+              time + tags via the app-wide TooltipLayer (the same styled tooltip
+              the climax marker uses) — driven by `title`, so it's consistent and
+              can't get trapped under the reel/chrome. Click jumps there; the
+              ::before widens the hover/click target beyond the thin strip.
+              stopPropagation so the click seeks rather than scrub-drags. */}
           {duration != null && bookmarks?.map((b) => (
             <div
               key={b.id}
@@ -830,11 +827,7 @@ export function VideoPlayer({
                 const v = videoRef.current;
                 if (v) { recordSeekPoint(); v.currentTime = b.timestampMs / 1000; }
               }}
-              onMouseEnter={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                setHoverBm({ label: b.label, timeMs: b.timestampMs, x: r.left + r.width / 2, y: r.top });
-              }}
-              onMouseLeave={() => setHoverBm(null)}
+              title={`${formatTime(b.timestampMs / 1000)} — ${b.label || '(no tags)'}`}
               className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[3px] h-3.5 rounded-sm
                          bg-white/90 hover:bg-white cursor-pointer shadow ring-1 ring-black/30
                          before:content-[''] before:absolute before:-inset-x-[5px] before:-inset-y-1.5"
@@ -991,21 +984,6 @@ export function VideoPlayer({
           </div>
         </div>
       </div>
-
-      {/* Bookmark tooltip — portaled to <body> so no ancestor stacking context
-          (the controls bar's will-change, the strip's transform) can trap it
-          under the reel/chrome. Positioned over the hovered strip. */}
-      {hoverBm && typeof document !== 'undefined' && createPortal(
-        <div
-          className="pointer-events-none fixed z-[200] whitespace-nowrap max-w-[260px] overflow-hidden text-ellipsis
-                     bg-zinc-950/95 text-zinc-100 text-[11px] leading-none rounded px-2 py-1.5 ring-1 ring-zinc-700 shadow-lg"
-          style={{ left: hoverBm.x, top: hoverBm.y - 8, transform: 'translate(-50%, -100%)' }}
-        >
-          <span className="text-amber-300 tabular-nums mr-1.5">{formatTime(hoverBm.timeMs / 1000)}</span>
-          {hoverBm.label || <span className="text-zinc-500">(no tags)</span>}
-        </div>,
-        document.body,
-      )}
 
       {/* Scrub preview — the sprite-sheet frame at the hovered time, portaled to
           <body> so it floats above everything. One tile clipped from the grid. */}
