@@ -799,12 +799,18 @@ export function VideoPlayer({
           {duration != null && climaxMs != null && (
             <div
               aria-hidden
-              className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2
-                         w-5 h-5 text-emerald-600 opacity-70 blur-[0.5px]"
+              className="pointer-events-none absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-8 h-8"
               style={{ left: `${Math.max(0, Math.min(100, (climaxMs / 1000 / duration) * 100))}%` }}
             >
-              <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
-                <path d="M12 0 L13.8 10.2 L24 12 L13.8 13.8 L12 24 L10.2 13.8 L0 12 L10.2 10.2 Z" />
+              {/* Soft green bloom — blooms around the thin bar so the marker
+                  reads even where the bar covers its center. */}
+              <div
+                className="absolute inset-0 rounded-full blur-[2px]"
+                style={{ background: 'radial-gradient(circle, rgba(5,150,105,0.85) 0%, rgba(5,150,105,0.35) 42%, transparent 70%)' }}
+              />
+              {/* Starburst rays on top of the bloom. */}
+              <svg viewBox="0 0 24 24" fill="currentColor" className="absolute inset-0 w-full h-full text-emerald-500">
+                <path d="M12 1 L13.5 10.5 L23 12 L13.5 13.5 L12 23 L10.5 13.5 L1 12 L10.5 10.5 Z" />
               </svg>
             </div>
           )}
