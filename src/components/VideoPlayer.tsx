@@ -77,7 +77,7 @@ interface Props {
   /** Called once on mount with an imperative handle, so an outside panel (the
    *  bookmark list / trim editor) or a climax-jump can seek, read the position,
    *  or resume play without a ref. */
-  onApi?: (api: { seek: (ms: number) => void; currentMs: () => number; play: () => void }) => void;
+  onApi?: (api: { seek: (ms: number) => void; currentMs: () => number; play: () => void; showControls: () => void }) => void;
   /** Autoplay trim window (ms). Applied ONLY when `enforceTrim` is true (the
    *  slideshow): playback starts at `trimStartMs` and stops/advances at
    *  `trimEndMs`. Both nullable. Shown as a shaded region on the scrubber
@@ -413,6 +413,7 @@ export function VideoPlayer({
       },
       currentMs: () => Math.round((videoRef.current?.currentTime ?? 0) * 1000),
       play: () => { videoRef.current?.play().catch(() => {}); },
+      showControls: () => showControls(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

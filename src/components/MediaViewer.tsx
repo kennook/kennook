@@ -310,7 +310,7 @@ export function MediaViewer({
   const bmFlashSeq = useRef(0);
   const bmFlashTimer = useRef<number | null>(null);
   // Imperative handle from VideoPlayer — jump to a bookmark / read the position.
-  const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number; play: () => void } | null>(null);
+  const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number; play: () => void; showControls: () => void } | null>(null);
   // Cancelling a bookmark add (Esc / Cancel / after save) closes the info
   // sidebar too — the add form lives inside it, and it opened for the add.
   const closeBookmarkAdd = useCallback(() => {
@@ -1011,6 +1011,7 @@ export function MediaViewer({
   useEffect(() => () => { if (bmFlashTimer.current) window.clearTimeout(bmFlashTimer.current); }, []);
   const jumpBookmark = useCallback((dir: 1 | -1) => {
     pulseChrome();
+    playerApiRef.current?.showControls(); // reveal the scrubber so the jump is visible
     const list = bookmarksQuery.data?.bookmarks;
     if (!list || list.length === 0) return;
     const cur = playerApiRef.current?.currentMs() ?? 0;
