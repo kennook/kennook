@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-29
+
 - **Mark a video's "climax" and jump to it — one screen or all at once.** Set a
   per-video climax at the current moment (the ★ button in the video controls, or
   the `X` key); a subtle dark-green marker appears on the scrubber. Press `G` to send *this*
