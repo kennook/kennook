@@ -22,6 +22,12 @@ Anything under **Upgrade notes** requires action on the operator's part
   the jump falls back to its first bookmark, then its cropped (trim) start; with
   none of those, it leaves the video where it is.
 
+- **Screensaver appears instantly, and `s` won't dismiss it.** Pressing `s` now
+  covers the screen the moment you hit it (the footage fades in once it's loaded)
+  instead of waiting on a background fetch. And `s` no longer dismisses the
+  screensaver — so a quick double-tap can't launch it and immediately pop the
+  unlock prompt. Use Escape, a click, or a tap to dismiss.
+
 - **Hot corners now light up when you enter them.** Moving the cursor into a
   corner that's assigned an action (fade the controls, or start the screensaver)
   glows that corner and shows a small label — so the active zones are visible and

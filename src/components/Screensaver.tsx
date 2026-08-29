@@ -238,7 +238,10 @@ export function Screensaver({ open, onExit }: Props) {
   }, [open]);
 
   // Exit semantics — calibrated against the OS-screensaver mental model:
-  //   • Escape / S / click / tap → instant exit (deliberate gestures)
+  //   • Escape / click / tap     → instant exit (deliberate gestures)
+  //   • S                        → ignored: it's the launch shortcut, so a quick
+  //                                double-tap of 's' shouldn't pop the unlock
+  //                                prompt the instant the screensaver appears.
   //   • Mouse movement / scroll  → ignored. A sustained-motion exit
   //                                used to live here but felt too
   //                                twitchy in practice; deliberate
@@ -268,7 +271,9 @@ export function Screensaver({ open, onExit }: Props) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
-      if (e.key === 'Escape' || e.key === 's' || e.key === 'S') {
+      // Only Escape dismisses via the keyboard — 's'/'S' is intentionally NOT a
+      // dismiss key (see the note above). Click / tap still dismiss.
+      if (e.key === 'Escape') {
         e.stopPropagation();
         dismiss();
       }
@@ -300,18 +305,21 @@ export function Screensaver({ open, onExit }: Props) {
     };
   }, [open, prompting, onExit]);
 
-  // Publish the true "the screensaver is covering the screen" state (only once a
-  // video has resolved and we actually render). Two readers depend on it: the
-  // app-content shroud hides everything else as a fallback, and the reload
-  // watcher updates silently while it's up. Cleanup forces it false on unmount so
-  // a torn-down screensaver can never leave the app stuck hidden.
+  // Publish the "screensaver is covering the screen" state. Gated on `src` (not
+  // just `open`): the opaque black overlay already hides the app the instant we
+  // open, so the app-content shroud (a fallback) and the silent-reload watcher
+  // only need to engage once the footage is actually up. Cleanup forces it false
+  // on unmount so a torn-down screensaver can never leave the app stuck hidden.
   const covering = open && src != null;
   useEffect(() => {
     setScreensaverActive(covering);
     return () => setScreensaverActive(false);
   }, [covering]);
 
-  if (!open || !src) return null;
+  // Render the (opaque black) overlay the instant `open` flips — optimistic, so
+  // pressing 's' covers the screen immediately instead of waiting on the
+  // manifest fetch that resolves `src`. The footage fades in once it's ready.
+  if (!open) return null;
 
   return (
     // `visibility: visible` re-asserts against the shroud's inherited
@@ -321,17 +329,19 @@ export function Screensaver({ open, onExit }: Props) {
       className={`fixed inset-0 z-[100] bg-black ${prompting ? '' : 'cursor-none'}`}
       style={{ visibility: 'visible' }}
     >
-      <video
-        src={src}
-        autoPlay
-        muted
-        loop
-        playsInline
-        // scale-105 pushes the soft blurred edge off-screen so the filter
-        // doesn't feather a faint black margin at the viewport bounds.
-        className="absolute inset-0 w-full h-full object-cover scale-105"
-        style={{ filter: SCREENSAVER_FILTER }}
-      />
+      {src && (
+        <video
+          src={src}
+          autoPlay
+          muted
+          loop
+          playsInline
+          // scale-105 pushes the soft blurred edge off-screen so the filter
+          // doesn't feather a faint black margin at the viewport bounds.
+          className="absolute inset-0 w-full h-full object-cover scale-105"
+          style={{ filter: SCREENSAVER_FILTER }}
+        />
+      )}
 
       {prompting && (
         <div

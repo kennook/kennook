@@ -252,6 +252,7 @@ function HomeContent() {
 
   const triggerScreensaver = () => {
     if (!screensaverEnabled) return; // disabled in admin Configuration
+    if (screensaverOpen) return;     // already up — ignore a repeat 's' press
     setScreensaverOpen(true);
     sync.publish({ type: 'screensaver', open: true });
   };
