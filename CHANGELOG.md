@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Hot-corner glow now fades out after a couple of seconds.** The corner cue
+  added in 0.8.0 stayed lit as long as the cursor sat in the corner — which
+  defeated the point of a parked/hidden hot corner (e.g. the mouse-jiggler spot).
+  It now appears on entry, auto-fades, and only re-shows when you re-enter.
+
 ## [0.8.0] - 2026-08-29
 
 - **Mark a video's "climax" and jump to it — one screen or all at once.** Set a

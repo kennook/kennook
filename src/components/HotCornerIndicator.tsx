@@ -49,24 +49,54 @@ const LABEL: Partial<Record<HotCornerAction, string>> = {
   screensaver: 'Start screensaver',
 };
 
+// Show on entry, then auto-hide after this even if the cursor stays parked — an
+// always-on glow would defeat the "invisible corner" the hot corner is for.
+const SHOW_MS = 2500;
+const FADE_MS = 500;
+
 export function HotCornerIndicator() {
   const map = trpc.hotCorners.get.useQuery(undefined, { staleTime: 60_000 }).data ?? DEFAULT_HOT_CORNERS;
   const mapRef = useRef(map);
   mapRef.current = map;
+  // `active` = which corner is mounted; `visible` = its opacity (drives fade).
   const [active, setActive] = useState<Corner | null>(null);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    // The corner the cursor currently occupies (or null). We fire on a CHANGE, so
+    // a parked/jiggling mouse in the same corner never re-shows the cue.
+    let inCorner: Corner | null = null;
     let raf = 0;
+    let hideTimer = 0;
+    let unmountTimer = 0;
+
+    const beginHide = () => {
+      window.clearTimeout(unmountTimer);
+      setVisible(false);                                   // fade out
+      unmountTimer = window.setTimeout(() => setActive(null), FADE_MS);
+    };
+
     const onMove = (e: PointerEvent) => {
       if (raf) return; // one check per frame
       raf = requestAnimationFrame(() => {
         raf = 0;
         const c = cornerAt(e.clientX, e.clientY);
         const next = c != null && mapRef.current[c] !== 'off' ? c : null;
-        setActive((prev) => (prev === next ? prev : next));
+        if (next === inCorner) return; // unchanged (incl. parked in the same corner)
+        inCorner = next;
+        window.clearTimeout(hideTimer);
+        window.clearTimeout(unmountTimer);
+        if (next) {
+          setActive(next);
+          setVisible(true);
+          hideTimer = window.setTimeout(beginHide, SHOW_MS); // auto-hide while parked
+        } else {
+          beginHide(); // left the corner
+        }
       });
     };
-    const clear = () => setActive(null);
+    const clear = () => { inCorner = null; window.clearTimeout(hideTimer); beginHide(); };
+
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('blur', clear);
     document.addEventListener('mouseleave', clear);
@@ -74,6 +104,8 @@ export function HotCornerIndicator() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('blur', clear);
       document.removeEventListener('mouseleave', clear);
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(unmountTimer);
       if (raf) cancelAnimationFrame(raf);
     };
   }, []);
@@ -84,7 +116,10 @@ export function HotCornerIndicator() {
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[90]">
-      <div className={`absolute ${POS[active]}`} style={{ width: CORNER_PX, height: CORNER_PX }}>
+      <div
+        className={`absolute ${POS[active]} transition-opacity ease-out ${visible ? 'opacity-100' : 'opacity-0'}`}
+        style={{ width: CORNER_PX, height: CORNER_PX, transitionDuration: `${FADE_MS}ms` }}
+      >
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
           <defs>
             <radialGradient id="hc-grad" gradientUnits="userSpaceOnUse" cx={t.cx} cy={t.cy} r={100}>
