@@ -1015,10 +1015,26 @@ export function MediaViewer({
     const list = bookmarksQuery.data?.bookmarks;
     if (!list || list.length === 0) return;
     const cur = playerApiRef.current?.currentMs() ?? 0;
-    const EPS = 400;
-    const target = dir === 1
-      ? list.find((b) => b.timestampMs > cur + EPS)
-      : [...list].reverse().find((b) => b.timestampMs < cur - EPS);
+
+    // NEXT: nearest mark strictly ahead of the playhead (skip the one we're on).
+    // PREV: index-based "smart previous" (like a music player's ⏮). Find the mark
+    //   whose chapter we're in (nearest at/just-before the playhead), then step to
+    //   the one BEFORE it when we're within PREV_GRACE of it, else restart it.
+    //   Index-based (not a time subtraction) so it never skips closely-spaced
+    //   marks; the grace window means a playhead drifting forward during playback
+    //   doesn't strand you re-landing on the mark you just left.
+    let target: (typeof list)[number] | undefined;
+    if (dir === 1) {
+      target = list.find((b) => b.timestampMs > cur + 400);
+    } else {
+      const PREV_GRACE = 2000;
+      let ci = -1; // index of the chapter mark at/just-before the playhead
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].timestampMs <= cur + 250) ci = i; else break;
+      }
+      if (ci < 0) return; // before the first mark — nothing behind
+      target = (cur - list[ci].timestampMs) <= PREV_GRACE && ci > 0 ? list[ci - 1] : list[ci];
+    }
     if (!target) return; // clamp at the ends
     playerApiRef.current?.seek(target.timestampMs);
     bmFlashSeq.current += 1;
