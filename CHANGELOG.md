@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-29
+
 - **Hot-corner glow now fades out after a couple of seconds.** The corner cue
   added in 0.8.0 stayed lit as long as the cursor sat in the corner — which
   defeated the point of a parked/hidden hot corner (e.g. the mouse-jiggler spot).
