@@ -12,6 +12,13 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Step through a video's bookmarks with `<` and `>`.** `>` (Shift+.) jumps to
+  the next bookmark after the current spot, `<` (Shift+,) to the previous — and
+  the mark's time and tags flash briefly so you know which one you landed on. It
+  clamps at the ends (no wrap) and keeps your play/pause state, so a
+  densely-bookmarked video is easy to walk through from the keyboard. (`Shift+←/→`
+  stays reserved for previous/next item.)
+
 ## [0.8.1] - 2026-08-29
 
 - **Hot-corner glow now fades out after a couple of seconds.** The corner cue

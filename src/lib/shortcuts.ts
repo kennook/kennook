@@ -50,6 +50,8 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'viewer.addToPlaylist', label: 'Add to playlist', category: 'viewer', defaultKeys: ['p', 'P'], description: 'Opens the playlist picker — ↑/↓ to choose, Enter to add' },
   { id: 'viewer.addTag', label: 'Add tag', category: 'viewer', defaultKeys: ['t', 'T'], description: 'Opens the tag input; stays open as you add tags — Escape to finish' },
   { id: 'viewer.addBookmark', label: 'Add bookmark (tags)', category: 'viewer', defaultKeys: ['b', 'B'], description: 'Video · opens the tag input at the current moment' },
+  { id: 'viewer.prevBookmark', label: 'Previous bookmark', category: 'viewer', defaultKeys: ['<'], description: 'Video · jump to the bookmark before the current spot (Shift+,)' },
+  { id: 'viewer.nextBookmark', label: 'Next bookmark',     category: 'viewer', defaultKeys: ['>'], description: 'Video · jump to the bookmark after the current spot (Shift+.)' },
   { id: 'viewer.trimStart', label: 'Set trim start (in)', category: 'viewer', defaultKeys: ['['], description: 'Video · autoplay starts here' },
   { id: 'viewer.trimEnd', label: 'Set trim stop (out)', category: 'viewer', defaultKeys: [']'], description: 'Video · autoplay stops here' },
 

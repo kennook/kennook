@@ -303,6 +303,12 @@ export function MediaViewer({
   );
   // Non-null → the add form is open, pre-set to this timestamp (ms).
   const [addBookmarkAtMs, setAddBookmarkAtMs] = useState<number | null>(null);
+  // Transient label flash when stepping through bookmarks with < / > — so you
+  // know which mark you landed on among many. `seq` bumps per jump to remount
+  // the toast and replay its fade animation.
+  const [bmFlash, setBmFlash] = useState<{ label: string; timeMs: number; seq: number } | null>(null);
+  const bmFlashSeq = useRef(0);
+  const bmFlashTimer = useRef<number | null>(null);
   // Imperative handle from VideoPlayer — jump to a bookmark / read the position.
   const playerApiRef = useRef<{ seek: (ms: number) => void; currentMs: () => number; play: () => void } | null>(null);
   // Cancelling a bookmark add (Esc / Cancel / after save) closes the info
@@ -996,6 +1002,33 @@ export function MediaViewer({
     pulseChrome();
   }, { enabled: videoToolsEnabled });
 
+  // Bookmark step-through — < / > seek to the nearest mark before / after the
+  // current spot (bookmarks are ordered by time), clamped at the ends (no wrap).
+  // Doesn't force play, so it preserves your play/pause state; EPS ignores the
+  // mark you're basically already on so a repeat press advances. Flashes the
+  // landed-on label so a dense set of marks stays navigable.
+  useEffect(() => { setBmFlash(null); }, [item?.uuid]); // clear on item change
+  useEffect(() => () => { if (bmFlashTimer.current) window.clearTimeout(bmFlashTimer.current); }, []);
+  const jumpBookmark = useCallback((dir: 1 | -1) => {
+    pulseChrome();
+    const list = bookmarksQuery.data?.bookmarks;
+    if (!list || list.length === 0) return;
+    const cur = playerApiRef.current?.currentMs() ?? 0;
+    const EPS = 400;
+    const target = dir === 1
+      ? list.find((b) => b.timestampMs > cur + EPS)
+      : [...list].reverse().find((b) => b.timestampMs < cur - EPS);
+    if (!target) return; // clamp at the ends
+    playerApiRef.current?.seek(target.timestampMs);
+    bmFlashSeq.current += 1;
+    setBmFlash({ label: target.label, timeMs: target.timestampMs, seq: bmFlashSeq.current });
+    if (bmFlashTimer.current) window.clearTimeout(bmFlashTimer.current);
+    bmFlashTimer.current = window.setTimeout(() => setBmFlash(null), 1600);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookmarksQuery.data, pulseChrome]);
+  useShortcut('viewer.prevBookmark', (e) => { e.preventDefault(); jumpBookmark(-1); }, { enabled: videoToolsEnabled });
+  useShortcut('viewer.nextBookmark', (e) => { e.preventDefault(); jumpBookmark(1); }, { enabled: videoToolsEnabled });
+
   // Up/Down navigates between items regardless of kind. Left/Right are
   // now reserved for video seek (handled inside VideoPlayer); for a
   // photo, those keys do nothing.
@@ -1400,6 +1433,24 @@ export function MediaViewer({
                          rounded-full px-4 py-2 ring-1 ring-zinc-700 kn-speed-notice"
             >
               Slideshow: {(speedNotice.ms / 1000).toFixed(0)} s / photo
+            </div>
+          )}
+
+          {/* Bookmark step-through flash — the mark you just jumped to with
+              < / >. Positioned below the item counter; the key remounts it so
+              the fade replays on each jump. */}
+          {bmFlash && (
+            <div
+              key={bmFlash.seq}
+              className="absolute top-28 left-1/2 z-30 pointer-events-none
+                         inline-flex items-center gap-2 max-w-[60vw]
+                         bg-black/90 text-zinc-100 text-sm
+                         rounded-full px-4 py-2 ring-1 ring-zinc-700 kn-speed-notice"
+            >
+              <span className="text-amber-300 tabular-nums shrink-0">{formatDuration(bmFlash.timeMs)}</span>
+              <span className="truncate">
+                {bmFlash.label || <span className="text-zinc-500">(no tags)</span>}
+              </span>
             </div>
           )}
 
