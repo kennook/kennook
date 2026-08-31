@@ -12,6 +12,7 @@ import { mediaViewRouter } from './mediaView';
 import { configRouter } from './config';
 import { externalSourceRouter } from './externalSource';
 import { hotCornersRouter } from './hotCorners';
+import { shortcutsRouter } from './shortcuts';
 
 export const appRouter = router({
   media: mediaRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   mediaView: mediaViewRouter,
   config: configRouter,
   hotCorners: hotCornersRouter,
+  shortcuts: shortcutsRouter,
 });
 
 export type AppRouter = typeof appRouter;

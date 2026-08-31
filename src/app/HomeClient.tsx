@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FilterStatusBar, type ActiveFilter } from '@/components/FilterStatusBar';
 import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import { HotCornerIndicator } from '@/components/HotCornerIndicator';
+import { useShortcutOverridesSync } from '@/lib/shortcut-overrides-client';
 import { MobileApp } from '@/components/mobile/MobileApp';
 import { SidebarRail, type RailSection } from '@/components/sidebar/SidebarRail';
 import { ExternalTree } from '@/components/sidebar/ExternalTree';
@@ -263,6 +264,10 @@ function HomeContent() {
   };
 
   useShortcut('global.screensaver', triggerScreensaver);
+
+  // Feed the tenant + user shortcut-override tiers into the resolver (device tier
+  // is localStorage) so bindings reflect all levels and update live.
+  useShortcutOverridesSync();
 
   // Hot corners: flinging the cursor into a corner mapped to a trigger action
   // fires it. `hideControls` corners are handled by the viewer's predicate, not

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 // ─── Registry ──────────────────────────────────────────────────────────────
 
@@ -76,40 +76,127 @@ const SHORTCUT_BY_ID: Record<string, ShortcutDef> = Object.fromEntries(
   SHORTCUTS.map((s) => [s.id, s]),
 );
 
-// ─── Persistence (forward-compatible with a future settings UI) ────────────
+// ─── Layered overrides: tenant → user → device → default ────────────────────
+//
+// Bindings resolve through three override tiers, most-specific-wins, with
+// lock-down: the narrowest tier that isn't locked from above wins, and any tier
+// can LOCK a shortcut to block every tier below it (a locked/any entry may be a
+// rebind or "disabled" = empty keys).
+//   - tenant / user: maps pushed in from the server (see shortcut-overrides-
+//     client.ts), each `{ keys?, locked? }`.
+//   - device: this browser's localStorage (`kennook.shortcuts.v1`), keys only —
+//     the lowest tier, so it can't lock anything below it.
+
+export interface ShortcutOverride { keys?: string[]; locked?: boolean }
+export type ShortcutOverrideMap = Record<string, ShortcutOverride>;
+export type OverrideTier = 'tenant' | 'user';
 
 const STORAGE_KEY = 'kennook.shortcuts.v1';
-type BindingMap = Record<string, string[]>;
+type DeviceBindingMap = Record<string, string[]>;
 
-function loadUserBindings(): BindingMap {
+// Server-fed tiers (populated by the sync provider) + a version + listeners so
+// consumers re-resolve live. Device tier is read straight from localStorage.
+let tenantOverrides: ShortcutOverrideMap = {};
+let userOverrides: ShortcutOverrideMap = {};
+let bindingsVersion = 0;
+const bindingListeners = new Set<() => void>();
+
+function bumpBindings() {
+  bindingsVersion += 1;
+  for (const cb of bindingListeners) cb();
+}
+
+/** Push the tenant / user override maps in from the server queries. */
+export function setTenantOverrides(map: ShortcutOverrideMap) { tenantOverrides = map ?? {}; bumpBindings(); }
+export function setUserOverrides(map: ShortcutOverrideMap) { userOverrides = map ?? {}; bumpBindings(); }
+export function getTenantOverridesMap(): ShortcutOverrideMap { return tenantOverrides; }
+export function getUserOverridesMap(): ShortcutOverrideMap { return userOverrides; }
+
+export function subscribeBindings(cb: () => void): () => void {
+  bindingListeners.add(cb);
+  return () => { bindingListeners.delete(cb); };
+}
+export function getBindingsVersion(): number { return bindingsVersion; }
+
+function loadDeviceBindings(): DeviceBindingMap {
   if (typeof window === 'undefined') return {};
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as BindingMap;
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as DeviceBindingMap;
   } catch {
     return {};
   }
 }
+/** This browser's device-tier overrides (id → keys). For the device editor. */
+export function getDeviceBindings(): DeviceBindingMap { return loadDeviceBindings(); }
 
-function saveUserBindings(b: BindingMap) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(b));
+/** Resolve a shortcut through all tiers. `lockedBy` is the highest tier that
+ *  locked it (so editors can grey out rows a higher tier controls). */
+export function resolveBinding(id: string): { keys: string[]; lockedBy: OverrideTier | null } {
+  let keys = SHORTCUT_BY_ID[id]?.defaultKeys ?? [];
+  let lockedBy: OverrideTier | null = null;
+
+  const t = tenantOverrides[id];
+  if (t) {
+    if (t.keys !== undefined) keys = t.keys;
+    if (t.locked) lockedBy = 'tenant';
+  }
+  if (!lockedBy) {
+    const u = userOverrides[id];
+    if (u) {
+      if (u.keys !== undefined) keys = u.keys;
+      if (u.locked) lockedBy = 'user';
+    }
+  }
+  if (!lockedBy) {
+    const d = loadDeviceBindings()[id];
+    if (d !== undefined) keys = d;
+  }
+  return { keys, lockedBy };
 }
 
 export function getBindings(id: string): string[] {
-  const user = loadUserBindings();
-  if (user[id]?.length) return user[id];
-  return SHORTCUT_BY_ID[id]?.defaultKeys ?? [];
+  return resolveBinding(id).keys;
 }
 
-export function setBinding(id: string, keys: string[]) {
-  const user = loadUserBindings();
-  user[id] = keys;
-  saveUserBindings(user);
+/** Set (or, with `null`, clear) this browser's device-tier override. */
+export function setBinding(id: string, keys: string[] | null) {
+  if (typeof window === 'undefined') return;
+  const device = loadDeviceBindings();
+  if (keys === null) delete device[id];
+  else device[id] = keys;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(device));
+  bumpBindings();
 }
 
 export function resetAllBindings() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(STORAGE_KEY);
+  bumpBindings();
+}
+
+/** Turn a keydown into a binding string ("Shift+ArrowLeft", "<", "g"). Returns
+ *  null for a modifier-only press. Mirrors the registry's convention: a printable
+ *  single char already encodes Shift, so Shift is only added for named keys. */
+export function eventToBinding(e: KeyboardEvent): string | null {
+  const k = e.key;
+  if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta') return null;
+  const parts: string[] = [];
+  if (e.metaKey) parts.push('Meta');
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.shiftKey && k.length > 1) parts.push('Shift');
+  if (e.altKey) parts.push('Alt');
+  parts.push(k);
+  return parts.join('+');
+}
+
+// Cross-tab device edits (localStorage written in another tab) re-resolve here.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => { if (e.key === STORAGE_KEY) bumpBindings(); });
+}
+
+/** Re-render on any override change (tenant/user push, device edit, cross-tab). */
+export function useBindingsVersion(): number {
+  return useSyncExternalStore(subscribeBindings, getBindingsVersion, () => 0);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -223,6 +310,7 @@ export function useShortcut(
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
   const enabled = options.enabled !== false;
+  const version = useBindingsVersion(); // re-bind when any override tier changes
 
   useEffect(() => {
     if (!enabled) return;
@@ -245,7 +333,7 @@ export function useShortcut(
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [id, enabled]);
+  }, [id, enabled, version]);
 }
 
 // ─── Hook: tap-vs-hold ─────────────────────────────────────────────────────
@@ -273,6 +361,7 @@ export function useTapOrHold(id: string, opts: TapOrHoldOptions) {
   optsRef.current = opts;
   const enabled = opts.enabled !== false;
   const holdMs = opts.holdThresholdMs ?? 250;
+  const version = useBindingsVersion(); // re-bind when any override tier changes
 
   useEffect(() => {
     if (!enabled) return;
@@ -349,5 +438,5 @@ export function useTapOrHold(id: string, opts: TapOrHoldOptions) {
       window.removeEventListener('blur', onBlur);
       stopHoldLoop();
     };
-  }, [id, enabled, holdMs]);
+  }, [id, enabled, holdMs, version]);
 }

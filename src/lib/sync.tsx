@@ -61,6 +61,9 @@ export type SyncEvent =
   | { type: 'mediaView.changed'; librarySlug: string; uuid: string; orientation: 'portrait' | 'landscape' }
   /** An admin changed instance configuration; clients refetch the config. */
   | { type: 'config.changed' }
+  /** A shortcut-override tier (tenant or user) changed; clients refetch the
+   *  override maps and re-resolve their bindings live. */
+  | { type: 'shortcuts.changed' }
   /** Solo-audio rule: a window broadcasts this when the user unmutes it, and
    *  every OTHER window/device mutes itself in response. Muting broadcasts
    *  nothing (everyone just stays muted). No payload — the sender is identified

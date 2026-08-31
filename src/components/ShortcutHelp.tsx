@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { SHORTCUTS, formatKey, getBindings, type ShortcutCategory } from '@/lib/shortcuts';
+import { ShortcutEditor } from '@/components/ShortcutEditor';
 
 const CATEGORY_ORDER: ShortcutCategory[] = ['navigation', 'viewer', 'video', 'global'];
 const CATEGORY_LABEL: Record<ShortcutCategory, string> = {
@@ -16,15 +17,20 @@ interface Props {
   onClose: () => void;
 }
 
+type Tab = 'list' | 'user' | 'device';
+
 export function ShortcutHelp({ open, onClose }: Props) {
+  const [tab, setTab] = useState<Tab>('list');
   useEffect(() => {
     if (!open) return;
+    // While editing, `?`/Esc are captured by the editor's key-capture / inputs,
+    // so only close on Esc from the plain list view.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === '?') onClose();
+      if (tab === 'list' && (e.key === 'Escape' || e.key === '?')) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, tab]);
 
   if (!open) return null;
 
@@ -38,19 +44,51 @@ export function ShortcutHelp({ open, onClose }: Props) {
                    max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-100">Keyboard shortcuts</h2>
+        <div className="sticky top-0 z-10 bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-1">
+            {([['list', 'Shortcuts'], ['user', 'My account'], ['device', 'This device']] as const).map(([t, label]) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`text-sm px-2.5 py-1 rounded-md transition ${
+                  tab === t ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={onClose}
             className="text-zinc-400 hover:text-zinc-100 text-xl leading-none w-8 h-8
-                       flex items-center justify-center rounded hover:bg-zinc-800"
+                       flex items-center justify-center rounded hover:bg-zinc-800 shrink-0"
             aria-label="Close"
           >
             ×
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-6">
+        {tab === 'user' && (
+          <div className="px-6 py-5">
+            <p className="text-xs text-zinc-500 mb-4">
+              Rebind or disable a shortcut for <strong>your account</strong> (synced to all your
+              devices). Lock one to keep your own devices from overriding it. Shortcuts your admin
+              locked show as read-only.
+            </p>
+            <ShortcutEditor scope="user" />
+          </div>
+        )}
+        {tab === 'device' && (
+          <div className="px-6 py-5">
+            <p className="text-xs text-zinc-500 mb-4">
+              Overrides for <strong>this browser only</strong> — the most specific level, so these
+              win unless your account or admin locked the shortcut.
+            </p>
+            <ShortcutEditor scope="device" />
+          </div>
+        )}
+
+        <div className={tab === 'list' ? 'px-6 py-5 space-y-6' : 'hidden'}>
           {CATEGORY_ORDER.map((cat) => {
             const inCat = SHORTCUTS.filter((s) => s.category === cat);
             if (!inCat.length) return null;
@@ -84,8 +122,9 @@ export function ShortcutHelp({ open, onClose }: Props) {
           })}
 
           <div className="text-xs text-zinc-500 pt-4 border-t border-zinc-800">
-            Customizing shortcuts will land in a future settings panel.
-            Defaults are listed above.
+            Keys shown are what actually fires (after any admin, account, or device
+            overrides). Customize them under <strong>My account</strong> or{' '}
+            <strong>This device</strong> above.
           </div>
         </div>
       </div>

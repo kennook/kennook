@@ -12,6 +12,16 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Customizable keyboard shortcuts, with tenant / account / device layers.** You
+  can now rebind, disable, or lock any shortcut at three levels: an admin sets
+  instance-wide defaults (Admin → Shortcuts), each account overrides its own
+  (synced across your devices), and each browser can override just for that
+  device. The most specific level wins — but any level can **lock** a shortcut so
+  levels below it can't change it (a locked value can be a rebind or fully
+  disabled). Edit yours from the shortcuts panel (`?` → **My account** /
+  **This device**); the keys shown are always what actually fires. The start of
+  configuration management.
+
 - **Step through a video's bookmarks with `<` and `>`.** `>` (Shift+.) jumps to
   the next bookmark after the current spot, `<` (Shift+,) to the previous — the
   scrubber surfaces and the mark's time and tags flash briefly so you can see
