@@ -12,7 +12,6 @@ import { likeFillColor } from '@/lib/like-colors';
 import { trpc } from '@/lib/trpc-client';
 import { ViewerReel } from './ViewerReel';
 import { SparkleBurst } from './SparkleBurst';
-import { RatingFlash } from './RatingFlash';
 import { useVoiceTagger, VoiceTagStatusLine, MicIcon } from './VoiceTagButton';
 import { FEATURES } from '@/lib/feature-flags';
 import { usePreference } from '@/lib/preferences';
@@ -1148,6 +1147,14 @@ export function MediaViewer({
 
   useShortcut('viewer.like', bumpLikes, { enabled: !!item && !!onSetLikes });
 
+  // On each new item, flash its rating as center hearts (the same HUD the like
+  // action uses) — replaces the old top rating chip. Rated items only, so
+  // unrated ones don't flash on every load.
+  useEffect(() => {
+    if (item && item.likeCount > 0) flashHud('like', String(item.likeCount));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.uuid]);
+
   // ── Mark viewed on viewer open ───────────────────────────────────────
   //
   // Opening an item in the viewer counts as an interaction (per the
@@ -1450,18 +1457,6 @@ export function MediaViewer({
               <MaximizeIcon />
             </ToolbarButton>
           )}
-
-          {/* Brief rating chip that appears each time a new asset loads.
-              `key={item.uuid}` makes it re-mount (and the CSS animation
-              re-fire) on item change. Renders for unrated items too, in
-              a dimmed/zinc variant — hints "this is rateable" without
-              shouting like the full-color rose version. */}
-          <div
-            key={`rating-flash-${item.uuid}`}
-            className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none"
-          >
-            <RatingFlash count={displayLikes} />
-          </div>
 
           {/* Slideshow speed feedback. Pops in for ~1.5s after the
               user adjusts via , / . — the key changes with each
