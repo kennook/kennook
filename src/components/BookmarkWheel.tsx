@@ -19,6 +19,7 @@ const TRIGGER_BAND_PX = 96;   // bottom band of the video where a wheel opens it
 const KEEP_REGION_PX = 280;   // leaving this bottom region dismisses (incl. the wheel)
 const DWELL_MS = 3000;        // settle this long on an item to commit it
 const COMMIT_ANIM_MS = 550;   // "saved" flourish before it closes
+const MOVE_COOLDOWN_MS = 200; // throttle wheel → one step per interval so it's easy to land on one
 const SLOTS = [-2, -1, 0, 1, 2] as const;
 
 interface WheelItem { dismiss: boolean; label: string }
@@ -48,6 +49,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   const onOpenRef = useRef(onOpen); onOpenRef.current = onOpen;
   const msRef = useRef(0);
   const dwellRef = useRef<number | null>(null);
+  const lastMoveRef = useRef(0);
 
   useEffect(() => {
     const set = (v: { index: number; committing: string | null } | null) => { wheelRef.current = v; setWheel(v); };
@@ -75,6 +77,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
         if (!inBand || items.length <= 2) return; // outside band or no tags → let it scroll
         e.preventDefault();
         msRef.current = getMsRef.current();
+        lastMoveRef.current = performance.now(); // grace before the first step
         onOpenRef.current?.();
         set({ index: 1, committing: null }); // start on the first (most-used) tag
         arm(1);
@@ -82,10 +85,20 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       }
       e.preventDefault();
       if (active.committing) return; // frozen during the save flourish
-      const dir = e.deltaY > 0 ? 1 : -1;
-      const next = Math.min(items.length - 1, Math.max(0, active.index + dir));
-      set({ index: next, committing: null });
-      arm(next);
+      // Throttle: advance at most one item per MOVE_COOLDOWN_MS regardless of how
+      // fast the wheel fires (trackpads/hi-res wheels emit many events), so it's
+      // easy to land on one. Any scroll still re-arms the dwell so it won't commit
+      // mid-scroll.
+      const now = performance.now();
+      if (now - lastMoveRef.current >= MOVE_COOLDOWN_MS) {
+        lastMoveRef.current = now;
+        const dir = e.deltaY > 0 ? 1 : -1;
+        const next = Math.min(items.length - 1, Math.max(0, active.index + dir));
+        if (next !== active.index) set({ index: next, committing: null });
+        arm(next);
+      } else {
+        arm(active.index);
+      }
     };
 
     const onMove = (e: MouseEvent) => {
@@ -115,23 +128,25 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   if (!wheel) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-16 z-40 flex flex-col items-center gap-1">
+    // Centered over the video, large + translucent so it reads as an ambient
+    // "hidden" overlay you can still see the video through.
+    <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2">
       {SLOTS.map((off) => {
         const item = items[wheel.index + off];
-        if (!item) return <div key={off} className="h-7" />; // empty slot past the ends
+        if (!item) return <div key={off} className="h-12" />; // empty slot past the ends
         const dist = Math.abs(off);
-        const scale = dist === 0 ? 1 : dist === 1 ? 0.86 : 0.72;
-        const opacity = dist === 0 ? 1 : dist === 1 ? 0.6 : 0.3;
+        const scale = dist === 0 ? 1 : dist === 1 ? 0.66 : 0.44;
+        const opacity = dist === 0 ? 0.92 : dist === 1 ? 0.45 : 0.2;
         const center = off === 0;
         const committing = center && wheel.committing;
-        const base = 'px-4 py-1.5 rounded-full text-sm whitespace-nowrap transition-all duration-150 shadow';
+        const base = 'px-8 py-3 rounded-2xl text-4xl font-semibold whitespace-nowrap transition-all duration-150 drop-shadow-lg';
         const tone = !center
-          ? (item.dismiss ? 'text-zinc-500' : 'bg-black/70 text-zinc-200')
+          ? (item.dismiss ? 'text-zinc-200' : 'text-white')
           : committing
-            ? 'bg-emerald-500 text-white font-semibold ring-1 ring-emerald-300/60'
+            ? 'bg-emerald-400/45 text-white ring-2 ring-emerald-200/50 backdrop-blur-sm'
             : item.dismiss
-              ? 'bg-zinc-800/90 text-zinc-300 ring-1 ring-zinc-600'
-              : 'bg-emerald-600 text-white font-medium ring-1 ring-emerald-400/50';
+              ? 'bg-zinc-700/40 text-zinc-100 ring-1 ring-zinc-300/25 backdrop-blur-sm'
+              : 'bg-emerald-500/40 text-white ring-1 ring-emerald-200/45 backdrop-blur-sm';
         return (
           <div key={off} style={{ transform: `scale(${scale})`, opacity }}
                className={`${base} ${tone} ${committing ? 'kn-bm-pop' : ''}`}>
