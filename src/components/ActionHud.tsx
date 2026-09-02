@@ -28,7 +28,7 @@ export function ActionHud() {
         onAnimationEnd={() => setFlash((f) => (f?.id === flash.id ? null : f))}
       >
         {isLike ? (
-          <div className="flex items-center gap-2 text-red-500 drop-shadow-lg">
+          <div className="flex items-center gap-2 xl:gap-4 text-red-500 drop-shadow-lg">
             {likeCount === 0
               ? <Heart filled={false} />
               : Array.from({ length: likeCount }, (_, i) => <Heart key={i} filled />)}
@@ -53,7 +53,8 @@ export function ActionHud() {
 function Heart({ filled }: { filled: boolean }) {
   return (
     <svg
-      width={56} height={56} viewBox="0 0 24 24"
+      viewBox="0 0 24 24"
+      className="w-14 h-14 xl:w-36 xl:h-36"
       fill={filled ? 'currentColor' : 'none'}
       stroke="currentColor" strokeWidth={filled ? 0 : 1.8}
       strokeLinecap="round" strokeLinejoin="round"
