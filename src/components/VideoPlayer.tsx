@@ -9,6 +9,7 @@ import { restoreAudioOwner, writeAudioOwner } from '@/lib/audio-owner';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
 import { flashHud } from '@/lib/action-hud';
+import { BookmarkWheel } from '@/components/BookmarkWheel';
 import {
   clearVideoProgress,
   getVideoProgress,
@@ -74,6 +75,10 @@ interface Props {
    *  from results after repeated failed retries (a likely-corrupt file). Fires
    *  with no args — the parent knows which item is open. */
   onExclude?: () => void;
+  /** Your most-used bookmark labels + a commit handler → enables the quick
+   *  scroll-wheel bookmark picker over the bottom controls (see BookmarkWheel). */
+  topBookmarkLabels?: string[];
+  onQuickBookmark?: (timeMs: number, label: string) => void;
   /** Called once on mount with an imperative handle, so an outside panel (the
    *  bookmark list / trim editor) or a climax-jump can seek, read the position,
    *  or resume play without a ref. */
@@ -130,6 +135,8 @@ export function VideoPlayer({
   climaxMs,
   onSetClimax,
   onExclude,
+  topBookmarkLabels,
+  onQuickBookmark,
   onApi,
   trimStartMs,
   trimEndMs,
@@ -140,6 +147,7 @@ export function VideoPlayer({
   onToggleLoop,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const playedRef = useRef<HTMLDivElement>(null);
   const bufferedRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
@@ -616,6 +624,7 @@ export function VideoPlayer({
 
   return (
     <div
+      ref={rootRef}
       className={`relative group ${className}`}
       // Ignore movement in a "hide controls" hot corner so a parked mouse jiggler
       // can't keep the controls bar pinned open (matches the viewer chrome).
@@ -1034,6 +1043,19 @@ export function VideoPlayer({
           document.body,
         );
       })()}
+
+      {/* Quick scroll-wheel bookmark picker (opt-in via props). Listens on window,
+          gated to this container's bottom controls band, so it never blocks the
+          real controls. */}
+      {onQuickBookmark && (
+        <BookmarkWheel
+          containerRef={rootRef}
+          labels={topBookmarkLabels ?? []}
+          getCurrentMs={() => Math.round((videoRef.current?.currentTime ?? 0) * 1000)}
+          onCommit={onQuickBookmark}
+          onOpen={showControls}
+        />
+      )}
     </div>
   );
 }

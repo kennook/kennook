@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **A no-typing way to bookmark, hidden in the video controls.** An easter egg —
+  give the mouse wheel a spin down near the scrubber while a video plays and see
+  what happens. (Picks from your most-used bookmark tags; dwell to save, or land
+  on either end / mouse away / Esc to back out.)
+
 - **Customizable keyboard shortcuts, with tenant / account / device layers.** You
   can now rebind, disable, or lock any shortcut at three levels: an admin sets
   instance-wide defaults (Admin → Shortcuts), each account overrides its own

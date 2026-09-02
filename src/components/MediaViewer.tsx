@@ -301,6 +301,18 @@ export function MediaViewer({
     { uuid: item?.uuid ?? '', librarySlug: item?.librarySlug ?? '' },
     { enabled: !!item && item.kind === 'video' },
   );
+  // Most-used bookmark labels + a quick-add mutation for the scroll-wheel picker.
+  const topBookmarkLabelsQuery = trpc.media.topBookmarkLabels.useQuery(
+    { librarySlug: item?.librarySlug ?? '' },
+    { enabled: !!item && item.kind === 'video', staleTime: 5 * 60 * 1000 },
+  );
+  const quickBookmark = trpc.media.addBookmark.useMutation({
+    onSuccess: () => {
+      if (!item) return;
+      void viewUtils.media.listBookmarks.invalidate({ uuid: item.uuid, librarySlug: item.librarySlug });
+      void viewUtils.media.topBookmarkLabels.invalidate({ librarySlug: item.librarySlug });
+    },
+  });
   // Non-null → the add form is open, pre-set to this timestamp (ms).
   const [addBookmarkAtMs, setAddBookmarkAtMs] = useState<number | null>(null);
   // Transient label flash when stepping through bookmarks with < / > — so you
@@ -1383,6 +1395,12 @@ export function MediaViewer({
               // in maxed mode (where the panel is rendered).
               bookmarks={bookmarksQuery.data?.bookmarks}
               onAddBookmark={maxed ? (ms) => { setAddBookmarkAtMs(ms); setInfoOpen(true); pulseChrome(); } : undefined}
+              // Quick scroll-wheel bookmark picker (maxed only) — pick a common
+              // tag with the mouse wheel over the controls, no typing.
+              topBookmarkLabels={topBookmarkLabelsQuery.data}
+              onQuickBookmark={maxed ? (ms, label) => {
+                quickBookmark.mutate({ uuid: item.uuid, librarySlug: item.librarySlug, timestampMs: ms, label });
+              } : undefined}
               // Climax: amber scrubber marker always; the ★ set button only in
               // maxed mode (alongside the bookmark button).
               climaxMs={climaxMs}

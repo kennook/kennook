@@ -266,6 +266,18 @@ body {
   will-change: transform, opacity;
 }
 
+/* Quick-bookmark "saved" flourish — the center wheel item pops on commit.
+   The wheel applies scale(1) inline, so animate a bump on top of it. */
+@keyframes kn-bm-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+.kn-bm-pop {
+  animation: kn-bm-pop 400ms ease-out;
+  will-change: transform;
+}
+
 /* Slideshow speed-change indicator — pops in fast, holds, fades out. */
 @keyframes kn-speed-notice {
   0%   { opacity: 0; transform: translate(-50%, -4px); }

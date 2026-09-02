@@ -1511,6 +1511,23 @@ export const mediaRouter = router({
       };
     }),
 
+  /** This user's most-used bookmark labels in the library — powers the quick
+   *  scroll-wheel bookmark picker (add a common tag without typing). */
+  topBookmarkLabels: publicProcedure
+    .input(z.object({ librarySlug: z.string().optional(), limit: z.number().int().positive().max(12).default(6) }))
+    .query(({ input, ctx }) => {
+      const sqlite = getRawSqlite(input.librarySlug ?? ctx.library.slug);
+      const rows = sqlite.prepare(`
+        SELECT label, COUNT(*) AS n
+        FROM media_bookmarks
+        WHERE created_by = ? AND TRIM(label) <> ''
+        GROUP BY label
+        ORDER BY n DESC, label ASC
+        LIMIT ?
+      `).all(ctx.userId, input.limit) as Array<{ label: string; n: number }>;
+      return rows.map((r) => r.label);
+    }),
+
   /** Add a bookmark at a timestamp with a free-text label (the searchable
    *  "tags"). Visibility defaults to the admin setting unless overridden. */
   addBookmark: publicProcedure
