@@ -23,6 +23,7 @@ import { useIsAdmin } from '@/lib/current-user';
 import { VideoBookmarks } from './VideoBookmarks';
 import { VideoTags } from './VideoTags';
 import { ActionHud } from './ActionHud';
+import { flashHud } from '@/lib/action-hud';
 
 const CHROME_IDLE_MS = 2500;
 
@@ -1073,6 +1074,11 @@ export function MediaViewer({
   // get one request, not four — and also fixes a latent bug where each tap
   // recomputed `next` from the stale `item.likeCount` and stuck at +1.
   const [pendingLikes, setPendingLikes] = useState<number | null>(null);
+  // Mirror of pendingLikes so bumpLikes can compute the next count in the event
+  // handler (and flash the HUD) without a render-phase-side-effect updater; kept
+  // fresh here and advanced immediately on each bump for rapid presses.
+  const pendingLikesRef = useRef(pendingLikes);
+  pendingLikesRef.current = pendingLikes;
   const likeTimerRef = useRef<number | null>(null);
   // Captured so the timer/flush-on-leave fires against the right item even
   // if `item` changes (or goes null) before the debounce window elapses.
@@ -1090,17 +1096,18 @@ export function MediaViewer({
   const bumpLikes = useCallback(() => {
     if (!item || !onSetLikes) return;
     const target = item;
-    setPendingLikes((curr) => {
-      const base = curr ?? target.likeCount;
-      const next = base >= MAX_LIKES ? 0 : base + 1;
-      pendingItemRef.current = target;
-      if (likeTimerRef.current) window.clearTimeout(likeTimerRef.current);
-      likeTimerRef.current = window.setTimeout(() => {
-        likeTimerRef.current = null;
-        void onSetLikes(target, next);
-      }, LIKE_DEBOUNCE_MS);
-      return next;
-    });
+    const base = pendingLikesRef.current ?? target.likeCount;
+    const next = base >= MAX_LIKES ? 0 : base + 1;
+    pendingLikesRef.current = next; // advance immediately so rapid presses chain
+    setPendingLikes(next);
+    pendingItemRef.current = target;
+    if (likeTimerRef.current) window.clearTimeout(likeTimerRef.current);
+    likeTimerRef.current = window.setTimeout(() => {
+      likeTimerRef.current = null;
+      void onSetLikes(target, next);
+    }, LIKE_DEBOUNCE_MS);
+    // Flash the like in the middle of the viewer, like a shortcut action.
+    flashHud('like', String(next));
     const now = Date.now();
     if (now - lastSparkleAtRef.current > LIKE_DEBOUNCE_MS) {
       lastSparkleAtRef.current = now;
