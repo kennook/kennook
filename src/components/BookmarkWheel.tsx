@@ -158,12 +158,11 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
         const center = off === 0;
         const committing = center && wheel.committing;
         // ~2x bigger on larger screens (xl+).
-        const base = 'px-8 py-3 xl:px-16 xl:py-6 rounded-2xl text-4xl xl:text-7xl font-semibold whitespace-nowrap transition-all duration-150 drop-shadow-lg';
-        const tone = !center
-          ? (item.dismiss ? 'text-zinc-200' : 'text-white')
-          : item.dismiss
-            ? 'bg-zinc-700/40 text-zinc-100 ring-1 ring-zinc-300/25 backdrop-blur-sm'
-            : 'bg-emerald-500/40 text-white ring-1 ring-emerald-200/45 backdrop-blur-sm';
+        const base = 'px-8 py-3 xl:px-16 xl:py-6 rounded-2xl text-4xl xl:text-7xl font-semibold whitespace-nowrap transition-all duration-150 drop-shadow-lg backdrop-blur-sm';
+        // Options are dark black (20% transparent); the one being committed turns green.
+        const tone = committing
+          ? 'bg-emerald-500/50 text-white ring-1 ring-emerald-300/50'
+          : 'bg-black/80 text-white ring-1 ring-white/10';
         return (
           // On commit the selected tag keeps its label and just pulses (kn-bm-pop).
           <div key={off} style={{ transform: `scale(${scale})`, opacity }}
