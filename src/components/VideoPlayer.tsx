@@ -455,10 +455,14 @@ export function VideoPlayer({
     setTrimDrag((d) => d && (d.which === 'start'
       ? { ...d, startMs: Math.min(ms, d.endMs - GAP) }
       : { ...d, endMs: Math.max(ms, d.startMs + GAP) }));
+    // Show the scrub-preview frame at the dragged handle so you can see where
+    // you're clipping (the grip owns this pointermove, so no event conflict).
+    if (scrubSprite) setScrubHover({ x: e.clientX, y: rect.top, timeMs: ms });
   };
   const trimUp = (e: React.PointerEvent) => {
     if (!trimDrag) return;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    setScrubHover(null); // clear the drag preview (normal hover takes over)
     // A bound dragged to the very edge clears it (untrimmed on that side).
     const startMs = trimDrag.startMs <= 0 ? null : trimDrag.startMs;
     const endMs = durMs > 0 && trimDrag.endMs >= durMs ? null : trimDrag.endMs;
