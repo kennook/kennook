@@ -15,8 +15,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-const TRIGGER_BAND_PX = 96;   // bottom band of the video where a wheel opens it
-const KEEP_REGION_PX = 280;   // leaving this bottom region dismisses (incl. the wheel)
+const TRIGGER_BAND_PX = 300;  // bottom band that opens the wheel — covers the controls + thumbnail reel
+const KEEP_REGION_PX = 380;   // leaving this bottom region dismisses (a margin above the trigger band)
 const DWELL_MS = 3000;        // settle this long on an item to commit it
 const COMMIT_ANIM_MS = 550;   // "saved" flourish before it closes
 const MOVE_COOLDOWN_MS = 120; // throttle wheel → one step per interval so it's easy to land on one
