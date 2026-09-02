@@ -12,6 +12,11 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Looping a clipped video now restarts at the clip, not the start.** In the
+  slideshow, a video with a trim-in but no trim-out was using the browser's native
+  loop, which always jumped back to 0 — so each repeat replayed the intro you'd
+  trimmed off. It now loops back to the trimmed start.
+
 - **A no-typing way to bookmark, hidden in the video controls.** An easter egg —
   give the mouse wheel a spin down near the scrubber while a video plays and see
   what happens. (Picks from your most-used bookmark tags; dwell to save, or land

@@ -635,9 +635,11 @@ export function VideoPlayer({
         ref={videoRef}
         src={src}
         autoPlay={autoPlay}
-        // Native loop only when there's no enforced trim-end; with a trim-end
-        // we loop manually within [start, end] via onTimeUpdate instead.
-        loop={loop && trimEndS == null}
+        // Native loop only when there's NO trim at all — the browser's loop
+        // restarts at 0 and can't be redirected, so with a trim-in (or a
+        // trim-end) we loop manually and restart at the clipped start instead
+        // (onTimeUpdate at the trim-end; onEnded at the natural end).
+        loop={loop && trimStartS == null && trimEndS == null}
         playsInline
         // Mute starts on for every new element (fresh load / item swap / maxed
         // remount); the user unmutes deliberately.
@@ -703,6 +705,13 @@ export function VideoPlayer({
           }
         }}
         onEnded={() => {
+          // Looping a clip that has a trim-in: native loop is off (see above), so
+          // restart at the clipped start ourselves instead of letting it fall to 0.
+          if (loop && trimStartS != null) {
+            const v = videoRef.current;
+            if (v) { v.currentTime = trimStartS ?? 0; void v.play().catch(() => {}); }
+            return;
+          }
           // Finished naturally — clear so the next time the user opens it
           // they start from the beginning rather than 2s before the end.
           if (progressKey) clearVideoProgress(progressKey);
