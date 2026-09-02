@@ -266,15 +266,18 @@ body {
   will-change: transform, opacity;
 }
 
-/* Quick-bookmark "saved" flourish — the center wheel item pops on commit.
-   The wheel applies scale(1) inline, so animate a bump on top of it. */
+/* Quick-bookmark "saved" flourish — the center wheel item double-pulses on
+   commit. The wheel applies scale(1) inline, so animate a bump on top of it. */
 @keyframes kn-bm-pop {
   0%   { transform: scale(1); }
-  35%  { transform: scale(1.18); }
+  15%  { transform: scale(1.18); }
+  30%  { transform: scale(1); }
+  45%  { transform: scale(1.18); }
+  60%  { transform: scale(1); }
   100% { transform: scale(1); }
 }
 .kn-bm-pop {
-  animation: kn-bm-pop 400ms ease-out;
+  animation: kn-bm-pop 500ms ease-out;
   will-change: transform;
 }
 
