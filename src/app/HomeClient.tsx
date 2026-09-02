@@ -426,7 +426,10 @@ function HomeContent() {
     sensitive: url.sensitive ?? undefined,
     sort: url.sort ?? undefined,
     shuffleSeed: url.shuffle ?? undefined,
-    shuffleAnchor: url.shuffle != null ? (url.shuffleAnchor ?? undefined) : undefined,
+    // Only pin the current item to the top while the fullscreen viewer is open —
+    // so reshuffling doesn't yank the video you're watching. With the viewer
+    // closed (just browsing results) shuffle everything, first item included.
+    shuffleAnchor: url.shuffle != null && viewerMaxed ? (url.shuffleAnchor ?? undefined) : undefined,
   };
 
   const facetsQuery = trpc.media.facets.useQuery({

@@ -12,6 +12,12 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+- **Shuffle now scatters the first result too when you're just browsing.** Keeping
+  the current item pinned to the top on reshuffle (so it doesn't yank the video
+  you're watching) now only applies while the fullscreen viewer is open. With the
+  viewer closed and results on screen, shuffling reorders everything, first item
+  included.
+
 - **Looping a clipped video now restarts at the clip, not the start.** In the
   slideshow, a video with a trim-in but no trim-out was using the browser's native
   loop, which always jumped back to 0 — so each repeat replayed the intro you'd
