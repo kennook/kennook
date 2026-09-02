@@ -130,16 +130,17 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   return (
     // Centered over the video, large + translucent so it reads as an ambient
     // "hidden" overlay you can still see the video through.
-    <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2">
+    <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 xl:gap-4">
       {SLOTS.map((off) => {
         const item = items[wheel.index + off];
-        if (!item) return <div key={off} className="h-12" />; // empty slot past the ends
+        if (!item) return <div key={off} className="h-12 xl:h-24" />; // empty slot past the ends
         const dist = Math.abs(off);
         const scale = dist === 0 ? 1 : dist === 1 ? 0.66 : 0.44;
         const opacity = dist === 0 ? 0.92 : dist === 1 ? 0.45 : 0.2;
         const center = off === 0;
         const committing = center && wheel.committing;
-        const base = 'px-8 py-3 rounded-2xl text-4xl font-semibold whitespace-nowrap transition-all duration-150 drop-shadow-lg';
+        // ~2x bigger on larger screens (xl+).
+        const base = 'px-8 py-3 xl:px-16 xl:py-6 rounded-2xl text-4xl xl:text-7xl font-semibold whitespace-nowrap transition-all duration-150 drop-shadow-lg';
         const tone = !center
           ? (item.dismiss ? 'text-zinc-200' : 'text-white')
           : committing
