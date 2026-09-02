@@ -15,6 +15,11 @@ export function ActionHud() {
 
   if (!flash) return null;
 
+  // Likes render as N red hearts (one per like, 1–5), no background — the count
+  // comes through the label. Everything else is the ghosted glyph in a dark disc.
+  const isLike = flash.icon === 'like';
+  const likeCount = isLike ? Math.max(0, Math.min(5, parseInt(flash.label ?? '0', 10) || 0)) : 0;
+
   return (
     <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
       <div
@@ -22,16 +27,39 @@ export function ActionHud() {
         className="kn-hud flex flex-col items-center gap-3"
         onAnimationEnd={() => setFlash((f) => (f?.id === flash.id ? null : f))}
       >
-        <div className="rounded-full bg-black/45 backdrop-blur-sm p-7 text-white/85">
-          <HudGlyph icon={flash.icon} />
-        </div>
-        {flash.label && (
-          <div className="text-white/90 text-2xl font-semibold tabular-nums drop-shadow">
-            {flash.label}
+        {isLike ? (
+          <div className="flex items-center gap-2 text-red-500 drop-shadow-lg">
+            {likeCount === 0
+              ? <Heart filled={false} />
+              : Array.from({ length: likeCount }, (_, i) => <Heart key={i} filled />)}
           </div>
+        ) : (
+          <>
+            <div className="rounded-full bg-black/45 backdrop-blur-sm p-7 text-white/85">
+              <HudGlyph icon={flash.icon} />
+            </div>
+            {flash.label && (
+              <div className="text-white/90 text-2xl font-semibold tabular-nums drop-shadow">
+                {flash.label}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+function Heart({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      width={56} height={56} viewBox="0 0 24 24"
+      fill={filled ? 'currentColor' : 'none'}
+      stroke="currentColor" strokeWidth={filled ? 0 : 1.8}
+      strokeLinecap="round" strokeLinejoin="round"
+    >
+      <path d="M12 21s-7-4.6-9.3-9C1.2 9 2.6 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.4 0 4.8 3.5 3.3 6.5C19 16.4 12 21 12 21z" />
+    </svg>
   );
 }
 

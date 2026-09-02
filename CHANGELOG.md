@@ -12,9 +12,10 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
-- **Liking flashes a heart in the center of the viewer.** Bumping a photo or
-  video's rating (the heart control or the `L` key) now flashes the heart + the
-  new count over the middle of the screen, like the play/mute/etc. action HUD.
+- **Liking flashes red hearts in the center of the viewer.** Bumping a photo or
+  video's rating (the heart control or the `L` key) now flashes one red heart per
+  like — up to five — over the middle of the screen, like the play/mute/etc.
+  action HUD.
 
 - **Shuffle now scatters the first result too when you're just browsing.** Keeping
   the current item pinned to the top on reshuffle (so it doesn't yank the video
