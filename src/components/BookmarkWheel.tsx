@@ -143,15 +143,14 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
         const base = 'px-8 py-3 xl:px-16 xl:py-6 rounded-2xl text-4xl xl:text-7xl font-semibold whitespace-nowrap transition-all duration-150 drop-shadow-lg';
         const tone = !center
           ? (item.dismiss ? 'text-zinc-200' : 'text-white')
-          : committing
-            ? 'bg-emerald-400/45 text-white ring-2 ring-emerald-200/50 backdrop-blur-sm'
-            : item.dismiss
-              ? 'bg-zinc-700/40 text-zinc-100 ring-1 ring-zinc-300/25 backdrop-blur-sm'
-              : 'bg-emerald-500/40 text-white ring-1 ring-emerald-200/45 backdrop-blur-sm';
+          : item.dismiss
+            ? 'bg-zinc-700/40 text-zinc-100 ring-1 ring-zinc-300/25 backdrop-blur-sm'
+            : 'bg-emerald-500/40 text-white ring-1 ring-emerald-200/45 backdrop-blur-sm';
         return (
+          // On commit the selected tag keeps its label and just pulses (kn-bm-pop).
           <div key={off} style={{ transform: `scale(${scale})`, opacity }}
                className={`${base} ${tone} ${committing ? 'kn-bm-pop' : ''}`}>
-            {item.dismiss ? '✕ Cancel' : committing ? '✓ Saved' : item.label}
+            {item.dismiss ? '✕ Cancel' : item.label}
           </div>
         );
       })}
