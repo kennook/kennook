@@ -1063,6 +1063,7 @@ export function VideoPlayer({
           getCurrentMs={() => Math.round((videoRef.current?.currentTime ?? 0) * 1000)}
           onCommit={onQuickBookmark}
           onOpen={showControls}
+          videoKey={src}
         />
       )}
     </div>

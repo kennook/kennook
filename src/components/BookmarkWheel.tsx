@@ -30,9 +30,12 @@ interface Props {
   onCommit: (timeMs: number, label: string) => void;
   /** Called when the wheel opens (used to pin the controls visible). */
   onOpen?: () => void;
+  /** Identifies the current video; when it changes (slideshow advance, prev/next)
+   *  an open wheel is cancelled so it can't commit onto the wrong clip. */
+  videoKey?: string;
 }
 
-export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, onOpen }: Props) {
+export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, onOpen, videoKey }: Props) {
   const [wheel, setWheel] = useState<{ index: number; committing: string | null } | null>(null);
 
   const items = useMemo<WheelItem[]>(() => [
@@ -49,7 +52,17 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   const onOpenRef = useRef(onOpen); onOpenRef.current = onOpen;
   const msRef = useRef(0);
   const dwellRef = useRef<number | null>(null);
+  const commitTimerRef = useRef<number | null>(null);
   const lastMoveRef = useRef(0);
+
+  // Video changed under an open wheel → cancel it, so a dwell (or an in-flight
+  // commit flourish) can't bookmark the wrong clip at a stale timestamp.
+  useEffect(() => {
+    wheelRef.current = null;
+    setWheel(null);
+    if (dwellRef.current) { window.clearTimeout(dwellRef.current); dwellRef.current = null; }
+    if (commitTimerRef.current) { window.clearTimeout(commitTimerRef.current); commitTimerRef.current = null; }
+  }, [videoKey]);
 
   useEffect(() => {
     const set = (v: { index: number; committing: string | null } | null) => { wheelRef.current = v; setWheel(v); };
@@ -60,7 +73,11 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       if (!item || item.dismiss) { dismiss(); return; }
       set({ index, committing: item.label }); // play the "saved" flourish, then commit
       clearDwell();
-      window.setTimeout(() => { onCommitRef.current(msRef.current, item.label); set(null); }, COMMIT_ANIM_MS);
+      commitTimerRef.current = window.setTimeout(() => {
+        commitTimerRef.current = null;
+        onCommitRef.current(msRef.current, item.label);
+        set(null);
+      }, COMMIT_ANIM_MS);
     };
     const arm = (index: number) => { clearDwell(); dwellRef.current = window.setTimeout(() => fire(index), DWELL_MS); };
 
@@ -122,6 +139,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('keydown', onKey, { capture: true });
       clearDwell();
+      if (commitTimerRef.current) { window.clearTimeout(commitTimerRef.current); commitTimerRef.current = null; }
     };
   }, [containerRef]);
 
