@@ -12,6 +12,8 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-02
+
 - **Ratings flash as big red hearts in the center of the viewer.** Bumping a photo
   or video's rating (the heart control or the `L` key) flashes one red heart per
   like — up to five — over the middle of the screen, like the play/mute/etc.
