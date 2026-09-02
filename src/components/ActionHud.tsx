@@ -59,7 +59,8 @@ function Heart({ filled }: { filled: boolean }) {
       stroke="currentColor" strokeWidth={filled ? 0 : 1.8}
       strokeLinecap="round" strokeLinejoin="round"
     >
-      <path d="M12 21s-7-4.6-9.3-9C1.2 9 2.6 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.4 0 4.8 3.5 3.3 6.5C19 16.4 12 21 12 21z" />
+      {/* Clean, symmetric heart (Material "favorite") — scales without kinking. */}
+      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
     </svg>
   );
 }
@@ -95,7 +96,7 @@ function HudGlyph({ icon }: { icon: HudIcon }) {
         </svg>
       );
     case 'like':
-      return <svg {...common} fill="currentColor" stroke="none"><path d="M12 21s-7-4.6-9.3-9C1.2 9 2.6 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.4 0 4.8 3.5 3.3 6.5C19 16.4 12 21 12 21z" /></svg>;
+      return <svg {...common} fill="currentColor" stroke="none"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>;
     case 'next':
       return <svg {...common} fill="currentColor" stroke="none"><path d="M5 5l9 7-9 7zM16 5h3v14h-3z" /></svg>;
     case 'prev':
