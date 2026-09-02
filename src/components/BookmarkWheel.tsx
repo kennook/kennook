@@ -15,8 +15,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-const TRIGGER_BAND_PX = 300;  // bottom band that opens the wheel — covers the controls + thumbnail reel
-const KEEP_REGION_PX = 380;   // leaving this bottom region dismisses (a margin above the trigger band)
 const DWELL_MS = 2000;        // settle this long on an item to commit it
 const COMMIT_ANIM_MS = 550;   // "saved" flourish before it closes
 const MOVE_COOLDOWN_MS = 85; // throttle wheel → one step per interval so it's easy to land on one
@@ -82,6 +80,10 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
     const arm = (index: number) => { clearDwell(); dwellRef.current = window.setTimeout(() => fire(index), DWELL_MS); };
 
     const bandRect = () => containerRef.current?.getBoundingClientRect() ?? null;
+    // Anywhere over the video (the whole element) — both to open and to keep open.
+    const overVideo = (e: { clientX: number; clientY: number }, rect: DOMRect) =>
+      e.clientX >= rect.left && e.clientX <= rect.right
+      && e.clientY >= rect.top && e.clientY <= rect.bottom;
 
     const onWheel = (e: WheelEvent) => {
       const rect = bandRect();
@@ -89,9 +91,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       const items = itemsRef.current;
       const active = wheelRef.current;
       if (!active) {
-        const inBand = e.clientX >= rect.left && e.clientX <= rect.right
-          && e.clientY >= rect.bottom - TRIGGER_BAND_PX && e.clientY <= rect.bottom;
-        if (!inBand || items.length <= 2) return; // outside band or no tags → let it scroll
+        if (!overVideo(e, rect) || items.length <= 2) return; // off the video or no tags → let it scroll
         e.preventDefault();
         msRef.current = getMsRef.current();
         lastMoveRef.current = performance.now(); // grace before the first step
@@ -122,9 +122,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       if (!wheelRef.current) return;
       const rect = bandRect();
       if (!rect) return;
-      const inKeep = e.clientX >= rect.left && e.clientX <= rect.right
-        && e.clientY >= rect.bottom - KEEP_REGION_PX && e.clientY <= rect.bottom;
-      if (!inKeep) dismiss(); // moused out of the controls section
+      if (!overVideo(e, rect)) dismiss(); // moused off the video
     };
 
     const onKey = (e: KeyboardEvent) => {
