@@ -128,7 +128,17 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
     };
 
     const onKey = (e: KeyboardEvent) => {
-      if (wheelRef.current && e.key === 'Escape') { e.stopPropagation(); dismiss(); }
+      const active = wheelRef.current;
+      if (!active) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        dismiss();
+      } else if (e.key === 'Enter') {
+        // Commit the centered option now instead of waiting out the dwell.
+        e.stopPropagation();
+        e.preventDefault();
+        if (!active.committing) fire(active.index);
+      }
     };
 
     window.addEventListener('wheel', onWheel, { passive: false });
