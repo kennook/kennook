@@ -8,6 +8,7 @@ import type { MediaItemDto } from '@/components/MediaGrid';
 import { LibrarySwitcher } from '@/components/LibrarySwitcher';
 import { KenNookLogo } from '@/components/KenNookLogo';
 import { MobileViewer } from './MobileViewer';
+import { MobileFilterSheet } from './MobileFilterSheet';
 
 const PAGE_SIZE = 60;
 
@@ -27,7 +28,7 @@ export function MobileApp() {
   const url = usePageState();
   const [tab, setTab] = useState<Tab>(url.playlist ? 'playlists' : 'library');
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
-  const [likesSheetOpen, setLikesSheetOpen] = useState(false);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   const inPlaylist = !!url.playlist;
   const inSearch = !inPlaylist && url.query !== '';
@@ -40,8 +41,15 @@ export function MobileApp() {
   // changing it changes the query key so useInfiniteQuery resets to
   // page 0 automatically.
   const filterArgs = {
+    kind: url.kind ?? undefined,
+    orientation: url.orientation ?? undefined,
+    quality: url.quality ?? undefined,
+    tags: url.tags.length ? url.tags : undefined,
+    mentioned: url.mentioned.length ? url.mentioned : undefined,
     minLikes: url.minLikes ?? undefined,
+    watched: url.watched ?? undefined,
     person: url.person ?? undefined,
+    sort: url.sort ?? undefined,
   };
   const recent = trpc.media.list.useInfiniteQuery(
     { limit: PAGE_SIZE, ...filterArgs },
@@ -79,6 +87,24 @@ export function MobileApp() {
     { uuid: url.person ?? '', limit: 1, offset: 0 },
     { enabled: !!url.person },
   );
+  // Facet counts for the filter sheet — same drill-down semantics as desktop
+  // (each option shows how many results it would yield). Search mode narrows
+  // the counts to matches for the current query.
+  const facetsQuery = trpc.media.facets.useQuery(
+    { ...filterArgs, query: inSearch ? url.query : undefined },
+    { enabled: tab === 'library' && !inPlaylist },
+  );
+
+  // Active filters shown in the sheet (sort excluded — it's an ordering, not a
+  // filter). Drives the Filters button badge + the sheet's "Clear all".
+  const activeFilterCount =
+    (url.kind !== null ? 1 : 0) +
+    (url.watched !== null ? 1 : 0) +
+    (url.quality !== null ? 1 : 0) +
+    (url.orientation !== null ? 1 : 0) +
+    (url.minLikes !== null ? 1 : 0) +
+    url.tags.length +
+    url.mentioned.length;
 
   // Pick the active infinite query so the sentinel + status flags all
   // route to the same source.
@@ -138,6 +164,7 @@ export function MobileApp() {
       trpcUtils.media.list.invalidate();
       trpcUtils.media.search.invalidate();
       trpcUtils.playlist.get.invalidate();
+      trpcUtils.media.facets.invalidate();
     },
   });
   const handleSetLikes = async (item: MediaItemDto, count: number) => {
@@ -157,6 +184,7 @@ export function MobileApp() {
       trpcUtils.media.list.invalidate();
       trpcUtils.media.search.invalidate();
       trpcUtils.playlist.get.invalidate();
+      trpcUtils.media.facets.invalidate();
     },
   });
   const handleRotate = (item: MediaItemDto, rotation: 0 | 90 | 180 | 270) => {
@@ -254,9 +282,9 @@ export function MobileApp() {
                            px-3 py-1.5 text-sm placeholder:text-zinc-500
                            focus:border-zinc-600 outline-none"
               />
-              <LikesChip
-                value={url.minLikes}
-                onOpen={() => setLikesSheetOpen(true)}
+              <FilterButton
+                count={activeFilterCount}
+                onOpen={() => setFilterSheetOpen(true)}
               />
             </>
           )}
@@ -353,11 +381,23 @@ export function MobileApp() {
         onRotate={handleRotate}
       />
 
-      {likesSheetOpen && (
-        <LikesSheet
-          value={url.minLikes}
-          onChange={(v) => url.set({ minLikes: v })}
-          onClose={() => setLikesSheetOpen(false)}
+      {filterSheetOpen && (
+        <MobileFilterSheet
+          facets={facetsQuery.data ?? null}
+          relevanceMode={inSearch}
+          activeCount={activeFilterCount}
+          values={{
+            sort: url.sort,
+            kind: url.kind,
+            watched: url.watched,
+            minLikes: url.minLikes,
+            quality: url.quality,
+            orientation: url.orientation,
+            tags: url.tags,
+            mentioned: url.mentioned,
+          }}
+          set={(patch) => url.set(patch)}
+          onClose={() => setFilterSheetOpen(false)}
         />
       )}
     </div>
@@ -595,109 +635,42 @@ function PersonStrip({
   );
 }
 
-function LikesChip({
-  value,
+function FilterButton({
+  count,
   onOpen,
 }: {
-  value: number | null;
+  count: number;
   onOpen: () => void;
 }) {
-  const active = value !== null;
+  const active = count > 0;
   return (
     <button
       onClick={onOpen}
-      aria-label="Filter by likes"
-      className={`h-9 px-2.5 rounded-full flex items-center gap-1 shrink-0 transition
+      aria-label="Filters"
+      className={`relative h-9 px-2.5 rounded-full flex items-center gap-1 shrink-0 transition
                   ${active
-                    ? 'bg-rose-950/60 text-rose-400'
+                    ? 'bg-emerald-950/60 text-emerald-400'
                     : 'text-zinc-400 active:bg-zinc-900'}`}
     >
-      <svg
-        width="16" height="16" viewBox="0 0 16 16"
-        fill={active ? '#f43f5e' : 'none'}
-        stroke={active ? '#f43f5e' : 'currentColor'}
-        strokeWidth="1.6" strokeLinejoin="round"
-      >
-        <path d="M8 14s-5-3.5-5-7a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 7-5 7z" />
-      </svg>
+      <FilterIcon />
       {active && (
-        <span className="text-xs font-semibold tabular-nums">{value}+</span>
+        <span className="min-w-[16px] h-4 px-1 rounded-full bg-emerald-500 text-zinc-950
+                         text-[10px] font-bold leading-4 text-center tabular-nums">
+          {count}
+        </span>
       )}
     </button>
   );
 }
 
-interface LikesOption { label: string; value: number | null; hearts: number; }
-const LIKES_OPTIONS: LikesOption[] = [
-  { label: 'Any',       value: null, hearts: 0 },
-  { label: '1+',        value: 1,    hearts: 1 },
-  { label: '2+',        value: 2,    hearts: 2 },
-  { label: '3+',        value: 3,    hearts: 3 },
-  { label: '4+',        value: 4,    hearts: 4 },
-  { label: 'Top picks', value: 5,    hearts: 5 },
-];
-
-function LikesSheet({
-  value,
-  onChange,
-  onClose,
-}: {
-  value: number | null;
-  onChange: (v: number | null) => void;
-  onClose: () => void;
-}) {
+function FilterIcon() {
   return (
-    <>
-      {/* Backdrop. Tap-to-dismiss; sits below the sheet but above all else. */}
-      <button
-        onClick={onClose}
-        aria-label="Close"
-        className="fixed inset-0 z-40 bg-black/70"
-      />
-      {/* Sheet pinned to bottom, respecting iOS home-indicator inset. */}
-      <div
-        className="fixed bottom-0 inset-x-0 z-50 bg-zinc-900 rounded-t-2xl
-                   border-t border-zinc-800
-                   pb-[max(env(safe-area-inset-bottom),0.5rem)]"
-      >
-        <div className="flex justify-center py-2">
-          <div className="w-9 h-1 rounded-full bg-zinc-700" />
-        </div>
-        <div className="px-4 pb-1">
-          <h3 className="text-sm font-medium text-zinc-100">Minimum likes</h3>
-        </div>
-        <ul>
-          {LIKES_OPTIONS.map((opt) => {
-            const active = opt.value === value;
-            return (
-              <li key={opt.label}>
-                <button
-                  onClick={() => { onChange(opt.value); onClose(); }}
-                  className={`w-full flex items-center justify-between px-4 py-3
-                              text-sm active:bg-zinc-800
-                              ${active ? 'text-emerald-400' : 'text-zinc-100'}`}
-                >
-                  <span>{opt.label}</span>
-                  <span className="flex items-center gap-0.5">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <svg
-                        key={i}
-                        width="12" height="12" viewBox="0 0 16 16"
-                        fill={i < opt.hearts ? '#f43f5e' : 'transparent'}
-                        stroke={i < opt.hearts ? '#f43f5e' : 'rgba(255,255,255,0.25)'}
-                        strokeWidth="1.4" strokeLinejoin="round"
-                      >
-                        <path d="M8 14s-5-3.5-5-7a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 7-5 7z" />
-                      </svg>
-                    ))}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </>
+    <svg
+      width="16" height="16" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+    >
+      <path d="M2 3h12l-4.5 5.5v4L6.5 14V8.5L2 3z" />
+    </svg>
   );
 }
 

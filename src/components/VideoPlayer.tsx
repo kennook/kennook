@@ -552,6 +552,11 @@ export function VideoPlayer({
     video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + seconds));
   }
 
+  // Adaptive skip step: ~10% of the clip so a short video isn't jumped in huge
+  // chunks (a 30s clip steps 3s, not 10s), clamped to 1–10s so anything ≥100s
+  // keeps the familiar 10s and very short clips still move by at least a second.
+  const seekStep = () => stepSeconds(videoRef.current?.duration ?? duration);
+
   function jumpToPercent(p: number) {
     const video = videoRef.current;
     if (!video || !video.duration) return;
@@ -562,8 +567,8 @@ export function VideoPlayer({
   // Every video shortcut also pulses the bottom controls so the user sees
   // the effect of their action when the bar would otherwise be idle-hidden.
   useShortcut('video.playPause',     (e) => { e.preventDefault(); togglePlay();        showControls(); });
-  useShortcut('video.seekBack10',    (e) => { e.preventDefault(); seekBy(-10);         showControls(); });
-  useShortcut('video.seekForward10', (e) => { e.preventDefault(); seekBy(10);          showControls(); });
+  useShortcut('video.seekBack10',    (e) => { e.preventDefault(); seekBy(-seekStep()); showControls(); });
+  useShortcut('video.seekForward10', (e) => { e.preventDefault(); seekBy(seekStep());  showControls(); });
   useShortcut('video.mute',          (e) => { e.preventDefault(); toggleMute();        showControls(); });
   useShortcut('video.jumpToPercent', (e) => {
     if (!/^[0-9]$/.test(e.key)) return;
@@ -960,10 +965,10 @@ export function VideoPlayer({
             {playing ? <PauseIcon /> : <PlayIcon />}
           </ControlButton>
 
-          <ControlButton onClick={() => seekBy(-10)} title="Back 10s (J)">
+          <ControlButton onClick={() => seekBy(-seekStep())} title={`Back ${stepSeconds(duration)}s (J)`}>
             <SkipBackIcon />
           </ControlButton>
-          <ControlButton onClick={() => seekBy(10)} title="Forward 10s (L)">
+          <ControlButton onClick={() => seekBy(seekStep())} title={`Forward ${stepSeconds(duration)}s (L)`}>
             <SkipForwardIcon />
           </ControlButton>
 
@@ -1130,6 +1135,14 @@ function BookmarkIcon() {
       <path d="M8 5v3M6.5 6.5h3" />
     </svg>
   );
+}
+
+/** Skip step in whole seconds: ~10% of the clip, clamped to 1–10s. Unknown
+ *  duration falls back to the classic 10s. Keeps short clips from jumping in
+ *  10s chunks while anything ≥100s behaves exactly as before. */
+function stepSeconds(dur: number | null | undefined): number {
+  if (!dur || !Number.isFinite(dur)) return 10;
+  return Math.max(1, Math.min(10, Math.round(dur * 0.1)));
 }
 
 function formatTime(seconds: number): string {

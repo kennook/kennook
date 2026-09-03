@@ -21,6 +21,7 @@ import { Screensaver, preloadScreensaverInBackground } from '@/components/Screen
 import { HotCornerIndicator } from '@/components/HotCornerIndicator';
 import { useShortcutOverridesSync } from '@/lib/shortcut-overrides-client';
 import { MobileApp } from '@/components/mobile/MobileApp';
+import { WindowFocusPulse } from '@/components/WindowFocusPulse';
 import { SidebarRail, type RailSection } from '@/components/sidebar/SidebarRail';
 import { ExternalTree } from '@/components/sidebar/ExternalTree';
 import { ProfilePanel } from '@/components/sidebar/ProfilePanel';
@@ -87,7 +88,13 @@ export default function HomeClient() {
  */
 function MobileOrDesktop() {
   const isMobile = useIsMobile();
-  return isMobile ? <MobileApp /> : <HomeContent />;
+  if (isMobile) return <MobileApp />;
+  return (
+    <>
+      <WindowFocusPulse />
+      <HomeContent />
+    </>
+  );
 }
 
 function HomeContent() {

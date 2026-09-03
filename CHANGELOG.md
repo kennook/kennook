@@ -12,6 +12,28 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-03
+
+- **Skip step scales to the video's length.** Jumping forward/back (J/L, or the
+  skip buttons) used to always move 10s, which overshoots on short clips. It now
+  steps ~10% of the clip — a 30s video skips 3s, a 60s video 6s — clamped to
+  1–10s, so anything roughly 100s or longer still moves the familiar 10s. The
+  skip-button tooltips show the actual amount.
+
+- **A focus pulse tells you which window is active.** When a KenNook window gains
+  focus — including when you cycle windows with cmd+\` — a white ring briefly
+  pulses around the edge of the screen, so with several windows open you can tell
+  at a glance which one just came forward. Only fires when more than one KenNook
+  window is open (a lone window has nothing to disambiguate). Desktop only.
+
+- **Filters on mobile.** The mobile view now has a real filter panel — tap the
+  funnel in the top bar to open a bottom sheet with Sort, Type, Watched, Likes,
+  Quality, Orientation, Tags, and Mentioned. Every option shows a live count of
+  how many results it would yield, impossible options hide themselves, and a
+  badge on the funnel plus a "Clear all" keep the active filters in view. (People
+  filtering stays in the People tab.) Previously mobile could only filter by
+  search text, likes, and person.
+
 ## [0.9.0] - 2026-09-02
 
 - **Ratings flash as big red hearts in the center of the viewer.** Bumping a photo
