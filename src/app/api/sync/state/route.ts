@@ -13,7 +13,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { getScreensaverState, getAudioSolo, getDataRev } from '@/server/sync-broker';
+import { getScreensaverState, getAudioSolo, getDataRev, getConfigRev } from '@/server/sync-broker';
 import { getSession } from '@/server/auth';
 import { KENNOOK_BUILD_ID } from '@/lib/version';
 
@@ -32,6 +32,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       screensaver: getScreensaverState(userId),
       audio: getAudioSolo(userId),
       rev: getDataRev(userId),
+      config: getConfigRev(),
       build: KENNOOK_BUILD_ID,
     },
     { headers: { 'Cache-Control': 'no-store' } },

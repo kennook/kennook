@@ -174,101 +174,116 @@ export function CustomScreensaversCard() {
       </div>
 
       {(pending.length > 0 || clips.length > 0) && (
-        <ul className="mt-4 space-y-1">
-          {pending.map((p) => (
-            <li
-              key={p.key}
-              className="flex items-center justify-between gap-3 text-xs px-3 py-2 rounded
-                         bg-zinc-900/50 ring-1 ring-zinc-800"
-            >
-              <span className="text-zinc-300 truncate">{p.name}</span>
-              {p.status === 'uploading'
-                ? <span className="text-zinc-500 shrink-0">uploading…</span>
-                : <span className="text-red-300 shrink-0" title={p.error}>failed</span>}
-            </li>
-          ))}
-
-          {clips.map((c) => {
-            const isReady = c.status === 'ready';
-            const on = c.enabled !== false;
-            return (
-              <li
-                key={c.id}
-                className="flex items-center gap-3 text-xs px-3 py-2 rounded
-                           bg-zinc-900/50 ring-1 ring-zinc-800"
-              >
-                <ClipPreview id={c.id} ready={isReady} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-zinc-200 truncate">{c.name}</div>
-                  <div className="mt-0.5">
-                    {c.status === 'processing' && <span className="text-amber-300">converting…</span>}
-                    {isReady && (
-                      <span className={on ? 'text-emerald-300' : 'text-zinc-500'}>
-                        {on ? (enabledReadyCount > 1 ? 'in rotation' : 'active') : 'disabled'}
-                      </span>
-                    )}
-                    {isReady && c.loopStatus === 'processing' && <span className="text-amber-300"> · preparing loop…</span>}
-                    {isReady && c.loop && c.loopStatus === 'ready' && <span className="text-zinc-500"> · loop</span>}
-                    {isReady && c.loopStatus === 'failed' && <span className="text-red-300"> · loop failed</span>}
-                    {c.status === 'failed' && <span className="text-red-300" title={c.error}>failed</span>}
-                  </div>
-                </div>
-                {isReady && readyCount > 1 && !(on && enabledReadyCount === 1) && (
-                  <button
-                    onClick={() => setOnly.mutate({ id: c.id })}
-                    disabled={setOnly.isPending}
-                    title="Play only this one — disable the others"
-                    className="text-[11px] text-zinc-500 hover:text-emerald-300 transition
-                               disabled:opacity-40 shrink-0"
-                  >
-                    Only
-                  </button>
-                )}
-                {isReady && (() => {
-                  const loopOn = c.loop === true && c.loopStatus === 'ready';
-                  const loopBusy = c.loopStatus === 'processing';
-                  return (
-                    <button
-                      onClick={() => setLoop.mutate({ id: c.id, loop: !loopOn })}
-                      disabled={setLoop.isPending || loopBusy}
-                      aria-pressed={loopOn}
-                      title={
-                        loopOn ? 'Seamless loop on — tap to turn off'
-                          : loopBusy ? 'Preparing seamless loop…'
-                          : c.loopStatus === 'failed' ? 'Loop build failed — tap to retry'
-                          : 'Loop seamlessly (plays forward then reversed, back to the first frame)'
-                      }
-                      className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition
-                                  disabled:opacity-40
-                                  ${loopOn ? 'text-emerald-300'
-                                    : loopBusy ? 'text-amber-300'
-                                    : 'text-zinc-500 hover:text-zinc-300'}`}
-                    >
-                      <LoopIcon />
-                    </button>
-                  );
-                })()}
-                {isReady && (
-                  <Toggle
-                    on={on}
-                    disabled={setEnabled.isPending}
-                    label={`${c.name} in rotation`}
-                    onChange={(v) => setEnabled.mutate({ id: c.id, enabled: v })}
-                  />
-                )}
-                <button
-                  onClick={() => remove.mutate({ id: c.id })}
-                  disabled={remove.isPending}
-                  title="Delete clip"
-                  aria-label="Delete clip"
-                  className="text-zinc-600 hover:text-red-300 transition disabled:opacity-40 shrink-0"
+        <div className="mt-4 space-y-3">
+          {pending.length > 0 && (
+            <ul className="space-y-1">
+              {pending.map((p) => (
+                <li
+                  key={p.key}
+                  className="flex items-center justify-between gap-3 text-xs px-3 py-2 rounded
+                             bg-zinc-900/50 ring-1 ring-zinc-800"
                 >
-                  ×
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                  <span className="text-zinc-300 truncate">{p.name}</span>
+                  {p.status === 'uploading'
+                    ? <span className="text-zinc-500 shrink-0">uploading…</span>
+                    : <span className="text-red-300 shrink-0" title={p.error}>failed</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {clips.length > 0 && (
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {clips.map((c) => {
+                const isReady = c.status === 'ready';
+                const on = c.enabled !== false;
+                const loopOn = c.loop === true && c.loopStatus === 'ready';
+                const loopBusy = c.loopStatus === 'processing';
+                return (
+                  <li
+                    key={c.id}
+                    className="rounded-lg ring-1 ring-zinc-800 bg-zinc-900/50 overflow-hidden"
+                  >
+                    {/* Big preview, with delete tucked into the corner. */}
+                    <div className="relative">
+                      <ClipPreview id={c.id} ready={isReady} />
+                      <button
+                        onClick={() => remove.mutate({ id: c.id })}
+                        disabled={remove.isPending}
+                        title="Delete clip"
+                        aria-label="Delete clip"
+                        className="absolute top-1.5 right-1.5 w-7 h-7 flex items-center justify-center
+                                   rounded-full bg-black/50 backdrop-blur text-zinc-300
+                                   hover:text-red-300 transition disabled:opacity-40"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    {/* Compact footer: name + status, then the controls. */}
+                    <div className="px-2.5 py-2 flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] text-zinc-200 truncate">{c.name}</div>
+                        <div className="text-[10px] leading-tight mt-0.5">
+                          {c.status === 'processing' && <span className="text-amber-300">converting…</span>}
+                          {isReady && (
+                            <span className={on ? 'text-emerald-300' : 'text-zinc-500'}>
+                              {on ? (enabledReadyCount > 1 ? 'in rotation' : 'active') : 'disabled'}
+                            </span>
+                          )}
+                          {isReady && loopBusy && <span className="text-amber-300"> · preparing loop…</span>}
+                          {isReady && loopOn && <span className="text-zinc-500"> · loop</span>}
+                          {isReady && c.loopStatus === 'failed' && <span className="text-red-300"> · loop failed</span>}
+                          {c.status === 'failed' && <span className="text-red-300" title={c.error}>failed</span>}
+                        </div>
+                      </div>
+
+                      {isReady && readyCount > 1 && !(on && enabledReadyCount === 1) && (
+                        <button
+                          onClick={() => setOnly.mutate({ id: c.id })}
+                          disabled={setOnly.isPending}
+                          title="Play only this one — disable the others"
+                          className="text-[11px] text-zinc-500 hover:text-emerald-300 transition
+                                     disabled:opacity-40 shrink-0"
+                        >
+                          Only
+                        </button>
+                      )}
+                      {isReady && (
+                        <button
+                          onClick={() => setLoop.mutate({ id: c.id, loop: !loopOn })}
+                          disabled={setLoop.isPending || loopBusy}
+                          aria-pressed={loopOn}
+                          title={
+                            loopOn ? 'Seamless loop on — tap to turn off'
+                              : loopBusy ? 'Preparing seamless loop…'
+                              : c.loopStatus === 'failed' ? 'Loop build failed — tap to retry'
+                              : 'Loop seamlessly (plays forward then reversed, back to the first frame)'
+                          }
+                          className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition
+                                      disabled:opacity-40
+                                      ${loopOn ? 'text-emerald-300'
+                                        : loopBusy ? 'text-amber-300'
+                                        : 'text-zinc-500 hover:text-zinc-300'}`}
+                        >
+                          <LoopIcon />
+                        </button>
+                      )}
+                      {isReady && (
+                        <Toggle
+                          on={on}
+                          disabled={setEnabled.isPending}
+                          label={`${c.name} in rotation`}
+                          onChange={(v) => setEnabled.mutate({ id: c.id, enabled: v })}
+                        />
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
@@ -278,7 +293,7 @@ export function CustomScreensaversCard() {
  *  looping); non-ready ones show a placeholder. Tap also toggles play (touch). */
 function ClipPreview({ id, ready }: { id: string; ready: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
-  if (!ready) return <div className="w-24 h-14 rounded bg-zinc-800 shrink-0" />;
+  if (!ready) return <div className="w-full aspect-video bg-zinc-800" />;
   return (
     <video
       ref={ref}
@@ -295,7 +310,7 @@ function ClipPreview({ id, ready }: { id: string; ready: boolean }) {
         if (!v) return;
         if (v.paused) void v.play().catch(() => {}); else v.pause();
       }}
-      className="w-24 h-14 rounded object-cover bg-black shrink-0 cursor-pointer"
+      className="w-full aspect-video object-cover bg-black cursor-pointer"
     />
   );
 }

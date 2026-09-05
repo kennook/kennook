@@ -12,6 +12,20 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-05
+
+- **Admin config changes now apply to every device without a reload.** Toggling
+  an instance setting (like the screensaver's soften effect, or the screensaver
+  on/off) reached open devices live only if they were on the same server process;
+  others needed a refresh. A shared config revision now rides the cross-device
+  poll, so every connected device — including ones on a different process — picks
+  up the change within a couple of seconds. No reload.
+
+- **The screensaver's soften effect is now optional.** The walk-away screensaver
+  dims and blurs its footage so it recedes into the background; a new toggle
+  (Admin → Screensaver → "Soften footage") turns that off to play your clips at
+  full brightness and sharpness. Instance-wide, and it updates live.
+
 ## [0.11.1] - 2026-09-05
 
 - **Seamless-loop toggle for custom screensavers.** Clips that aren't clean

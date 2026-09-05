@@ -108,6 +108,31 @@ export function getDataRev(userId: number): string | null {
   return row?.value ?? null;
 }
 
+// Instance config revision — bumped on any admin config change. Global (not
+// per-user), persisted so cross-process devices (which miss the in-memory SSE
+// `config.changed`) converge via the /api/sync/state poll: a poller emits
+// `config.changed` locally when the rev changes, and clients refetch config.
+const CONFIG_REV_KEY = 'config.rev';
+const CONFIG_REV_USER_ID = 1; // matches app-config's single-user global scope
+
+export function bumpConfigRev(): void {
+  const db = getUserSqlite();
+  db.prepare(`
+    INSERT INTO user_settings (user_id, key, value, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (user_id, key) DO UPDATE
+      SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(CONFIG_REV_USER_ID, CONFIG_REV_KEY, String(Date.now()), Date.now());
+}
+
+export function getConfigRev(): string | null {
+  const db = getUserSqlite();
+  const row = db.prepare(
+    'SELECT value FROM user_settings WHERE user_id = ? AND key = ?',
+  ).get(CONFIG_REV_USER_ID, CONFIG_REV_KEY) as { value: string | null } | undefined;
+  return row?.value ?? null;
+}
+
 export function addSubscriber(s: Subscriber): void {
   subscribers.add(s);
 }

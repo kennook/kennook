@@ -333,12 +333,14 @@ class SyncBroker {
         return;
       }
       const data = (await res.json()) as {
-        screensaver?: boolean; audio?: string | null; rev?: string | null; build?: string;
+        screensaver?: boolean; audio?: string | null; rev?: string | null;
+        config?: string | null; build?: string;
       };
       this.markReachable(data.build);
       this.handleScreensaverPoll(data.screensaver);
       this.handleAudioPoll(data.audio);
       this.handleDataRevPoll(data.rev);
+      this.handleConfigRevPoll(data.config);
     } catch {
       this.failCount++;
       if (this.failCount >= SyncBroker.FAILS_BEFORE_DOWN) this.markUnreachable();
@@ -465,12 +467,29 @@ class SyncBroker {
     this.bc?.postMessage({ sessionId: SESSION_ID, event });
   }
 
+  // Instance config revision (global). Same shape as the data rev above: on a
+  // change, emit `config.changed` so this device refetches instance config —
+  // this is what makes an admin toggle apply on OTHER devices (even ones on a
+  // different server process, which miss the in-memory SSE) without a reload.
+  private lastPolledConfigRev: string | null | undefined = undefined;
+  private handleConfigRevPoll(rev: string | null | undefined): void {
+    if (rev == null) { this.lastPolledConfigRev = rev ?? null; return; }
+    if (rev === this.lastPolledConfigRev) return;
+    const first = this.lastPolledConfigRev === undefined;
+    this.lastPolledConfigRev = rev;
+    if (first) return;
+    const event: SyncEvent = { type: 'config.changed' };
+    this.emitLocal(event);
+    this.bc?.postMessage({ sessionId: SESSION_ID, event });
+  }
+
   private stopStatePoll(): void {
     this.pollLoopRunning = false;
     if (this.pollScheduled != null) { clearTimeout(this.pollScheduled); this.pollScheduled = null; }
     this.failCount = 0;
     this.lastPolledScreensaver = null;
     this.lastPolledRev = undefined;
+    this.lastPolledConfigRev = undefined;
     this.lastPolledAudio = undefined;
     // Leave `connection`/`serverBuild` as last known: when this tab concedes
     // leadership another tab takes over the heartbeat, and the overlay state

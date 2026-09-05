@@ -18,6 +18,7 @@ export function ScreensaverAdmin() {
   const utils = trpc.useUtils();
   const config = trpc.config.list.useQuery();
   const enabled = config.data?.find((c) => c.key === 'screensaver.enabled')?.value ?? true;
+  const softenFilter = config.data?.find((c) => c.key === 'screensaver.filter')?.value ?? true;
 
   const set = trpc.config.set.useMutation({
     onMutate: async ({ key, value }) => {
@@ -58,6 +59,24 @@ export function ScreensaverAdmin() {
         className={enabled ? '' : 'opacity-40 pointer-events-none select-none'}
         aria-disabled={!enabled}
       >
+        {/* Appearance */}
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-2xl
+                        flex items-start justify-between gap-4 mb-6">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-zinc-100">Soften footage</div>
+            <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">
+              Dim and blur the footage so it recedes into the background. Turn off
+              to play it at full brightness and sharpness.
+            </p>
+          </div>
+          <Toggle
+            on={softenFilter}
+            disabled={set.isPending || config.isLoading}
+            label="Soften screensaver footage"
+            onChange={(value) => set.mutate({ key: 'screensaver.filter', value })}
+          />
+        </div>
+
         <ScreensaverLockSettings />
         <CustomScreensaversCard />
       </div>

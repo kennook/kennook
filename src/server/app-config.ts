@@ -9,6 +9,7 @@
  */
 
 import { getUserSqlite } from '@/db/user-client';
+import { bumpConfigRev } from '@/server/sync-broker';
 
 // App-global config under the single-user v0.1 id.
 const CONFIG_USER_ID = 1;
@@ -28,6 +29,14 @@ export const CONFIG_SCHEMA: ConfigItem[] = [
     description:
       'Allow the walk-away screensaver to be triggered on this instance. ' +
       'When off, the S shortcut and the screensaver are disabled everywhere.',
+    default: true,
+  },
+  {
+    key: 'screensaver.filter',
+    label: 'Soften screensaver footage',
+    description:
+      'Dim and blur the screensaver video so it recedes into the background. ' +
+      'Turn off to play your footage at full brightness and sharpness.',
     default: true,
   },
   {
@@ -97,4 +106,6 @@ export function setConfigValue(key: string, value: boolean): void {
     ON CONFLICT(user_id, key)
       DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(CONFIG_USER_ID, STORAGE_PREFIX + key, value ? '1' : '0');
+  // Bump the shared rev so cross-process devices pick the change up via the poll.
+  bumpConfigRev();
 }

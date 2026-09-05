@@ -121,6 +121,12 @@ export function Screensaver({ open, onExit }: Props) {
   const lockStatus = trpc.screensaverLock.status.useQuery(undefined, {
     staleTime: 10_000,
   });
+
+  // Instance config: whether to soften (dim + blur) the footage. Default true
+  // when unknown. Shares its query cache with the parents' config.list, which
+  // invalidate on `config.changed`, so toggling it in admin updates live.
+  const config = trpc.config.list.useQuery(undefined, { staleTime: 30_000 });
+  const softenFilter = config.data?.find((c) => c.key === 'screensaver.filter')?.value ?? true;
   // FAIL CLOSED: treat the screensaver as locked unless the server has
   // positively told us the mode is 'none'. While the status is loading or the
   // request errors (e.g. a stale build without the endpoint, or a dropped
@@ -399,7 +405,7 @@ export function Screensaver({ open, onExit }: Props) {
           // scale-105 pushes the soft blurred edge off-screen so the filter
           // doesn't feather a faint black margin at the viewport bounds.
           className="absolute inset-0 w-full h-full object-cover scale-105"
-          style={{ filter: SCREENSAVER_FILTER }}
+          style={softenFilter ? { filter: SCREENSAVER_FILTER } : undefined}
         />
       )}
 
