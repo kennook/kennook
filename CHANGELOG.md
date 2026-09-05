@@ -12,6 +12,16 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-05
+
+- **Upload several screensavers at once.** The custom-screensaver uploader now
+  takes a whole batch — pick or drop multiple videos and they upload together
+  (a few at a time) and convert in the background, each showing its own progress.
+
+- **"Only" this screensaver.** Each custom clip now has an *Only* button that
+  makes it the sole one in rotation in a single click — enabling it and disabling
+  every other — instead of toggling the rest off one by one.
+
 ## [0.10.0] - 2026-09-05
 
 - **Slideshows on mobile (photos).** The mobile viewer now has a play/pause

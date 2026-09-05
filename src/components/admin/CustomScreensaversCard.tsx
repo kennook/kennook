@@ -40,6 +40,8 @@ export function CustomScreensaversCard() {
       (q.state.data ?? []).some((c) => c.status === 'processing') ? 2000 : false,
   });
   const clips = list.data ?? [];
+  const readyCount = clips.filter((c) => c.status === 'ready').length;
+  const enabledReadyCount = clips.filter((c) => c.status === 'ready' && c.enabled !== false).length;
 
   const remove = trpc.screensaver.remove.useMutation({
     onSuccess: () => utils.screensaver.list.invalidate(),
@@ -57,28 +59,57 @@ export function CustomScreensaversCard() {
     onError: (_e, _v, ctx) => { if (ctx?.prev) utils.screensaver.list.setData(undefined, ctx.prev); },
     onSettled: () => utils.screensaver.list.invalidate(),
   });
+  const setOnly = trpc.screensaver.setOnly.useMutation({
+    // Optimistically flip everything: only this one on.
+    onMutate: async ({ id }) => {
+      await utils.screensaver.list.cancel();
+      const prev = utils.screensaver.list.getData();
+      utils.screensaver.list.setData(undefined, (old) =>
+        old?.map((c) => ({ ...c, enabled: c.id === id })),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) utils.screensaver.list.setData(undefined, ctx.prev); },
+    onSettled: () => utils.screensaver.list.invalidate(),
+  });
+
+  async function uploadOne(key: string, file: File) {
+    const form = new FormData();
+    form.set('file', file);
+    form.set('name', file.name.replace(/\.[^.]+$/, ''));
+    try {
+      const res = await fetch('/api/admin/screensaver/upload', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      // Registered server-side — drop the local row and let the list take over.
+      setPending((p) => p.filter((x) => x.key !== key));
+      await utils.screensaver.list.invalidate();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPending((p) => p.map((x) => (x.key === key ? { ...x, status: 'error', error: msg } : x)));
+    }
+  }
 
   async function uploadFiles(files: FileList | File[]) {
-    for (const file of Array.from(files)) {
-      const key = `p${counter++}`;
-      setPending((p) => [{ key, name: file.name, status: 'uploading' }, ...p]);
-
-      const form = new FormData();
-      form.set('file', file);
-      form.set('name', file.name.replace(/\.[^.]+$/, ''));
-
-      try {
-        const res = await fetch('/api/admin/screensaver/upload', { method: 'POST', body: form });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
-        // Registered server-side — drop the local row and let the list take over.
-        setPending((p) => p.filter((x) => x.key !== key));
-        await utils.screensaver.list.invalidate();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setPending((p) => p.map((x) => (x.key === key ? { ...x, status: 'error', error: msg } : x)));
+    const queued = Array.from(files).map((file) => ({ key: `p${counter++}`, file }));
+    if (queued.length === 0) return;
+    // Show every picked file as pending up front.
+    setPending((p) => [
+      ...queued.map((q) => ({ key: q.key, name: q.file.name, status: 'uploading' as const })),
+      ...p,
+    ]);
+    // Upload a few at a time: several stream together, but capped so a big batch
+    // doesn't open a flood of concurrent (up to 1 GB) transfers. Transcoding is
+    // serialized server-side regardless.
+    const CONCURRENCY = 3;
+    let next = 0;
+    const worker = async () => {
+      while (next < queued.length) {
+        const { key, file } = queued[next++];
+        await uploadOne(key, file);
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queued.length) }, worker));
   }
 
   return (
@@ -106,8 +137,10 @@ export function CustomScreensaversCard() {
             ? 'border-emerald-600 bg-emerald-950/20'
             : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/40'}`}
       >
-        <div className="text-sm text-zinc-300">Drop a video here, or click to choose</div>
-        <div className="text-[11px] text-zinc-500 mt-1">Converted in the background — up to 1 GB per file.</div>
+        <div className="text-sm text-zinc-300">Drop videos here, or click to choose</div>
+        <div className="text-[11px] text-zinc-500 mt-1">
+          Pick or drop several at once — converted in the background, up to 1 GB each.
+        </div>
         <input
           ref={inputRef}
           type="file"
@@ -152,12 +185,23 @@ export function CustomScreensaversCard() {
                     {c.status === 'processing' && <span className="text-amber-300">converting…</span>}
                     {isReady && (
                       <span className={on ? 'text-emerald-300' : 'text-zinc-500'}>
-                        {on ? 'in rotation' : 'disabled'}
+                        {on ? (enabledReadyCount > 1 ? 'in rotation' : 'active') : 'disabled'}
                       </span>
                     )}
                     {c.status === 'failed' && <span className="text-red-300" title={c.error}>failed</span>}
                   </div>
                 </div>
+                {isReady && readyCount > 1 && !(on && enabledReadyCount === 1) && (
+                  <button
+                    onClick={() => setOnly.mutate({ id: c.id })}
+                    disabled={setOnly.isPending}
+                    title="Play only this one — disable the others"
+                    className="text-[11px] text-zinc-500 hover:text-emerald-300 transition
+                               disabled:opacity-40 shrink-0"
+                  >
+                    Only
+                  </button>
+                )}
                 {isReady && (
                   <Toggle
                     on={on}

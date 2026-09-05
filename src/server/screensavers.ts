@@ -146,6 +146,22 @@ export function setScreensaverEnabled(id: string, enabled: boolean): void {
   notifyManifestChanged();
 }
 
+/** Make one clip the sole enabled one — enable it, disable every other — in a
+ *  single registry write. Notifies only if something actually changed. */
+export function setOnlyScreensaver(id: string): void {
+  const reg = readRegistry();
+  let changed = false;
+  for (const c of reg.clips) {
+    const target = c.id === id;
+    if ((c.enabled !== false) !== target) changed = true;
+    c.enabled = target;
+  }
+  if (changed) {
+    writeRegistry(reg);
+    notifyManifestChanged();
+  }
+}
+
 export function removeScreensaver(id: string): boolean {
   const reg = readRegistry();
   const before = reg.clips.length;

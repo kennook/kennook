@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { router, adminProcedure } from '@/server/trpc';
-import { listScreensavers, removeScreensaver, setScreensaverEnabled } from '@/server/screensavers';
+import {
+  listScreensavers,
+  removeScreensaver,
+  setScreensaverEnabled,
+  setOnlyScreensaver,
+} from '@/server/screensavers';
 
 /**
  * Admin management of custom screensaver clips. Uploading is a plain route
@@ -17,6 +22,11 @@ export const screensaverRouter = router({
   setEnabled: adminProcedure
     .input(z.object({ id: z.string(), enabled: z.boolean() }))
     .mutation(({ input }) => { setScreensaverEnabled(input.id, input.enabled); return { ok: true }; }),
+
+  /** Enable only this clip, disabling every other — a one-click "solo". */
+  setOnly: adminProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => { setOnlyScreensaver(input.id); return { ok: true }; }),
 
   /** Delete a clip (registry entry + its files). Idempotent. */
   remove: adminProcedure
