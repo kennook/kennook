@@ -57,7 +57,7 @@ export function ScreensaverLockSettings() {
   };
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-md">
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-2xl">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-medium text-zinc-200">Screensaver lock</h2>
         <span

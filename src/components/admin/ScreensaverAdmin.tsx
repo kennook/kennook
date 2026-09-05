@@ -35,7 +35,7 @@ export function ScreensaverAdmin() {
   return (
     <div>
       {/* Master switch */}
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-md
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-2xl
                       flex items-start justify-between gap-4 mb-6">
         <div className="min-w-0">
           <div className="text-sm font-medium text-zinc-100">Enable screensaver</div>

@@ -47,6 +47,12 @@ export interface CustomScreensaver {
   /** Whether this clip is in the rotation. Only enabled + ready clips play;
    *  enable several to rotate, one to pin it. Absent = enabled (back-compat). */
   enabled?: boolean;
+  /** Boomerang loop desired: play forward then reversed so it returns to the
+   *  first frame seamlessly (fixes clips that aren't clean loops). */
+  loop?: boolean;
+  /** Generation status of the reversed-tail variant. Serving uses the looped
+   *  file only when loop is desired AND this is 'ready'. */
+  loopStatus?: ScreensaverStatus;
   /** Populated on failure with a short reason (surfaced in the admin UI). */
   error?: string;
 }
@@ -93,18 +99,31 @@ export function screensaverVariantPath(id: string, height: number): string {
   return path.join(screensaverDir(id), `${height}.mp4`);
 }
 
+/** The boomerang (forward + reversed) variant for a height. Served when the
+ *  clip's loop is on and ready; otherwise the plain variant plays. */
+export function screensaverLoopVariantPath(id: string, height: number): string {
+  return path.join(screensaverDir(id), `${height}-loop.mp4`);
+}
+
 // ── Public queries ───────────────────────────────────────────────────────────
 
 export function listScreensavers(): CustomScreensaver[] {
   return readRegistry().clips.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Ids of clips that are ready AND enabled — the rotation the client plays.
- *  (A clip with no `enabled` field counts as enabled, for back-compat.) */
-export function readyScreensaverIds(): string[] {
+export interface ReadyScreensaver {
+  id: string;
+  /** True → the client should request the boomerang variant (`?loop=1`). */
+  loop: boolean;
+}
+
+/** Clips that are ready AND enabled — the rotation the client plays, each with
+ *  whether its seamless-loop variant is ready to use. (A clip with no `enabled`
+ *  field counts as enabled, for back-compat.) */
+export function readyScreensaverClips(): ReadyScreensaver[] {
   return readRegistry().clips
     .filter((c) => c.status === 'ready' && c.enabled !== false)
-    .map((c) => c.id);
+    .map((c) => ({ id: c.id, loop: c.loop === true && c.loopStatus === 'ready' }));
 }
 
 // ── Mutations ────────────────────────────────────────────────────────────────
@@ -144,6 +163,37 @@ function updateScreensaver(id: string, patch: Partial<CustomScreensaver>): void 
 export function setScreensaverEnabled(id: string, enabled: boolean): void {
   updateScreensaver(id, { enabled });
   notifyManifestChanged();
+}
+
+/**
+ * Turn the seamless (boomerang) loop on/off for a clip. Enabling generates a
+ * reversed-tail variant in the background the first time; once generated it's
+ * kept, so re-enabling later is instant. Disabling just flips the flag (the
+ * looped files stay for a quick re-enable).
+ */
+export function setScreensaverLoop(id: string, loop: boolean): void {
+  const reg = readRegistry();
+  const clip = reg.clips.find((c) => c.id === id);
+  if (!clip) return;
+
+  if (!loop) {
+    clip.loop = false;
+    writeRegistry(reg);
+    notifyManifestChanged();
+    return;
+  }
+
+  clip.loop = true;
+  if (clip.loopStatus === 'ready') {
+    // Boomerang files already exist — enable instantly.
+    writeRegistry(reg);
+    notifyManifestChanged();
+    return;
+  }
+  clip.loopStatus = 'processing';
+  writeRegistry(reg);
+  notifyManifestChanged(); // show "preparing loop…" in the admin list
+  enqueueLoopGeneration(id);
 }
 
 /** Make one clip the sole enabled one — enable it, disable every other — in a
@@ -213,6 +263,39 @@ async function transcodeClip(id: string, sourcePath: string): Promise<void> {
   }
 }
 
+// ── Seamless-loop (boomerang) generation ─────────────────────────────────────
+
+/** Queue a clip's reversed-tail variants; runs on the same serial chain as
+ *  transcodes so ffmpeg jobs don't pile up. */
+export function enqueueLoopGeneration(id: string): void {
+  transcodeChain = transcodeChain.then(() => generateLoopClip(id)).catch(() => {});
+}
+
+async function generateLoopClip(id: string): Promise<void> {
+  try {
+    for (const slot of SCREENSAVER_HEIGHTS) {
+      const plain = screensaverVariantPath(id, slot);
+      if (!fs.existsSync(plain)) continue; // variant missing — skip this slot
+      await encodeBoomerang(plain, screensaverLoopVariantPath(id, slot));
+    }
+    updateScreensaver(id, { loopStatus: 'ready' });
+  } catch {
+    updateScreensaver(id, { loopStatus: 'failed' });
+    for (const slot of SCREENSAVER_HEIGHTS) {
+      fs.rmSync(screensaverLoopVariantPath(id, slot), { force: true });
+    }
+  }
+  notifyManifestChanged();
+}
+
+// ffmpeg's real error is at the tail of stderr; the head is just its banner.
+function ffmpegErrorTail(chunks: Buffer[]): string {
+  return Buffer.concat(chunks).toString('utf8')
+    .split('\n').map((l) => l.trim())
+    .filter((l) => l && !/^(ffmpeg version|built with|configuration:|lib(av|sw))/.test(l))
+    .slice(-2).join(' — ');
+}
+
 function encodeVariant(src: string, dest: string, height: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const ff = spawn('ffmpeg', [
@@ -235,12 +318,40 @@ function encodeVariant(src: string, dest: string, height: number): Promise<void>
     ff.on('error', reject); // e.g. ffmpeg not on PATH
     ff.on('close', (code) => {
       if (code === 0) { resolve(); return; }
-      // ffmpeg's real error is at the tail of stderr; the head is just its banner.
-      const detail = Buffer.concat(errChunks).toString('utf8')
-        .split('\n').map((l) => l.trim())
-        .filter((l) => l && !/^(ffmpeg version|built with|configuration:|lib(av|sw))/.test(l))
-        .slice(-2).join(' — ');
-      reject(new Error(`transcode failed (code ${code}): ${detail || 'no output'}`));
+      reject(new Error(`transcode failed (code ${code}): ${ffmpegErrorTail(errChunks) || 'no output'}`));
+    });
+  });
+}
+
+/**
+ * Append a reversed copy so playback runs forward then backward, landing back on
+ * the first frame — a seamless boomerang loop. The `reverse` filter buffers the
+ * whole clip in memory, so this suits the short clips a screensaver uses (length
+ * is already capped at transcode); the output is roughly double the duration.
+ */
+function encodeBoomerang(src: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ff = spawn('ffmpeg', [
+      '-y',
+      '-i', src,
+      '-filter_complex', '[0:v]reverse[r];[0:v][r]concat=n=2:v=1[out]',
+      '-map', '[out]',
+      '-c:v', 'libx264',
+      '-profile:v', 'high',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'veryfast',
+      '-crf', '23',
+      '-movflags', '+faststart',
+      '-an',
+      dest,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    const errChunks: Buffer[] = [];
+    ff.stderr.on('data', (c) => errChunks.push(c));
+    ff.on('error', reject);
+    ff.on('close', (code) => {
+      if (code === 0) { resolve(); return; }
+      reject(new Error(`loop build failed (code ${code}): ${ffmpegErrorTail(errChunks) || 'no output'}`));
     });
   });
 }

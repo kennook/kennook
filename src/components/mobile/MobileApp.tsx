@@ -22,15 +22,16 @@ const SLIDESHOW_MAX_MS = 60000;
 type Tab = 'library' | 'playlists' | 'people';
 
 /**
- * Index of the next PHOTO after `from`, wrapping around, or -1 if the list has
- * no photos. The mobile slideshow is images-only — videos are skipped, since on
- * mobile a video hands off to the OS fullscreen player, which owns the screen
- * and would break the auto-advance flow.
+ * Index of the next/previous PHOTO from `from` in direction `dir` (+1 forward,
+ * -1 back), wrapping around, or -1 if the list has no photos. The mobile
+ * slideshow is images-only — videos are skipped, since on mobile a video hands
+ * off to the OS fullscreen player, which owns the screen and would break the
+ * auto-advance flow.
  */
-function nextPhotoIndex(items: MediaItemDto[], from: number): number {
+function stepPhotoIndex(items: MediaItemDto[], from: number, dir: 1 | -1): number {
   const n = items.length;
   for (let step = 1; step <= n; step++) {
-    const idx = (from + step) % n;
+    const idx = ((from + dir * step) % n + n) % n;
     if (items[idx]?.kind === 'photo') return idx;
   }
   return -1;
@@ -54,6 +55,10 @@ export function MobileApp() {
   const [tab, setTab] = useState<Tab>(url.playlist ? 'playlists' : 'library');
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  // Collapsible search: a magnifier by default; tapping expands it to a
+  // full-width field and hides the other header controls.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   // Walk-away screensaver. Mobile can't *start* it (no keyboard/hot-corners) —
   // it mirrors whatever a desktop `S`/hot-corner (or another device) triggers,
   // via the shared `screensaver` sync event. The overlay itself is touch-ready
@@ -64,6 +69,9 @@ export function MobileApp() {
   // Per-photo dwell — shared with the desktop slideshow preference, so a speed
   // set on either surface applies here too.
   const [slideshowPhotoMs, setSlideshowPhotoMs] = usePreference('slideshowPhotoMs');
+  // How media fills the viewer — shared with desktop's default-fit preference
+  // (per-device). Defaults to 'cover' (fills the screen); the viewer has a toggle.
+  const [fit, setFit] = usePreference('defaultFit');
   // Step to the next/previous whole second (dir: +1 slower, -1 faster), clamped.
   const stepSlideshowSpeed = (dir: 1 | -1) => {
     const sec = slideshowPhotoMs / 1000;
@@ -73,6 +81,13 @@ export function MobileApp() {
 
   const inPlaylist = !!url.playlist;
   const inSearch = !inPlaylist && url.query !== '';
+  // Expanded while the user opened it OR there's an active query to show/edit.
+  const searchExpanded = searchOpen || inSearch;
+  const collapseSearch = () => { setSearchOpen(false); url.set({ query: '' }); };
+
+  // Focus the field when the user opens search (not when it's expanded merely
+  // because a query arrived via a deep link).
+  useEffect(() => { if (searchOpen) searchInputRef.current?.focus(); }, [searchOpen]);
 
   // Infinite-scroll queries. Each `pages` entry is one server response;
   // the IntersectionObserver sentinel at the grid's tail triggers
@@ -91,6 +106,8 @@ export function MobileApp() {
     watched: url.watched ?? undefined,
     person: url.person ?? undefined,
     sort: url.sort ?? undefined,
+    // Seeded-random order when shuffle is on (overrides sort, server-side).
+    shuffleSeed: url.shuffle ?? undefined,
   };
   const recent = trpc.media.list.useInfiniteQuery(
     { limit: PAGE_SIZE, ...filterArgs },
@@ -146,6 +163,16 @@ export function MobileApp() {
     (url.minLikes !== null ? 1 : 0) +
     url.tags.length +
     url.mentioned.length;
+
+  // Shuffle: a random seed gives a stable scrambled order (server-side); null is
+  // the normal sorted order. Toggling on mints a fresh seed; off restores sort.
+  const isShuffled = url.shuffle != null;
+  const toggleShuffle = () =>
+    url.set(
+      isShuffled
+        ? { shuffle: null, shuffleAnchor: null }
+        : { shuffle: Math.floor(Math.random() * 2_000_000_000) },
+    );
 
   // ── Screensaver (mirror-only on mobile) ───────────────────────────────────
   const sync = useSync();
@@ -250,7 +277,7 @@ export function MobileApp() {
     const advance = () => {
       const from = items.findIndex((i) => i.uuid === selected.uuid);
       if (from < 0) return;
-      const next = nextPhotoIndex(items, from);
+      const next = stepPhotoIndex(items, from, 1);
       if (next < 0) { setSlideshow(false); return; }
       setSelectedUuid(items[next].uuid);
     };
@@ -266,13 +293,21 @@ export function MobileApp() {
     if (!slideshow || !selected) return;
     const from = items.findIndex((i) => i.uuid === selected.uuid);
     if (from < 0) return;
-    const next = nextPhotoIndex(items, from);
+    const next = stepPhotoIndex(items, from, 1);
     const url = next >= 0 ? items[next].previewUrl : null;
     if (url) { const img = new Image(); img.src = url; }
   }, [slideshow, selected, items]);
 
   // Leaving the viewer ends the slideshow.
   const closeViewer = () => { setSlideshow(false); setSelectedUuid(null); };
+
+  // Manual prev/next for the slideshow transport: photo-aware and wrapping.
+  // Changing the selection re-arms the dwell timer, so tapping through resets it.
+  const slideshowStep = (dir: 1 | -1) => {
+    if (selectedIndex < 0) return;
+    const idx = stepPhotoIndex(items, selectedIndex, dir);
+    if (idx >= 0) setSelectedUuid(items[idx].uuid);
+  };
 
   // Like flow shared between viewer and list-tap-to-like.
   const trpcUtils = trpc.useUtils();
@@ -385,23 +420,47 @@ export function MobileApp() {
           )}
 
           {tab === 'library' && !inPlaylist && (
-            <>
-              <input
-                type="search"
-                inputMode="search"
-                enterKeyHint="search"
-                placeholder="Search"
-                value={url.query}
-                onChange={(e) => url.set({ query: e.target.value })}
-                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md
-                           px-3 py-1.5 text-sm placeholder:text-zinc-500
-                           focus:border-zinc-600 outline-none"
-              />
-              <FilterButton
-                count={activeFilterCount}
-                onOpen={() => setFilterSheetOpen(true)}
-              />
-            </>
+            searchExpanded ? (
+              <>
+                <button
+                  onClick={collapseSearch}
+                  aria-label="Close search"
+                  className="w-11 h-11 -ml-1 flex items-center justify-center
+                             text-zinc-300 active:bg-zinc-800 rounded-full"
+                >
+                  <ChevronLeftIcon />
+                </button>
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  inputMode="search"
+                  enterKeyHint="search"
+                  placeholder="Search"
+                  value={url.query}
+                  onChange={(e) => url.set({ query: e.target.value })}
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md
+                             px-3 py-1.5 text-sm placeholder:text-zinc-500
+                             focus:border-zinc-600 outline-none"
+                />
+              </>
+            ) : (
+              <>
+                <div className="flex-1" />
+                <button
+                  onClick={() => setSearchOpen(true)}
+                  aria-label="Search"
+                  className="w-11 h-11 flex items-center justify-center
+                             text-zinc-400 active:bg-zinc-900 rounded-full"
+                >
+                  <SearchIcon />
+                </button>
+                <ShuffleButton active={isShuffled} onToggle={toggleShuffle} />
+                <FilterButton
+                  count={activeFilterCount}
+                  onOpen={() => setFilterSheetOpen(true)}
+                />
+              </>
+            )
           )}
 
           {inPlaylist && playlistQ.data && (
@@ -415,7 +474,10 @@ export function MobileApp() {
             </div>
           )}
 
-          <LibrarySwitcher hideWhenSingle />
+          {/* Hidden while search is expanded so the field gets the whole row. */}
+          {!(tab === 'library' && !inPlaylist && searchExpanded) && (
+            <LibrarySwitcher hideWhenSingle compact />
+          )}
         </div>
       </header>
 
@@ -498,6 +560,10 @@ export function MobileApp() {
         onFaster={() => stepSlideshowSpeed(-1)}
         atMinSpeed={slideshowPhotoMs <= SLIDESHOW_MIN_MS}
         atMaxSpeed={slideshowPhotoMs >= SLIDESHOW_MAX_MS}
+        fit={fit}
+        onToggleFit={() => setFit(fit === 'cover' ? 'contain' : 'cover')}
+        onSlideshowPrev={() => slideshowStep(-1)}
+        onSlideshowNext={() => slideshowStep(1)}
         onClose={closeViewer}
         onPrev={onPrev}
         onNext={onNext}
@@ -520,7 +586,11 @@ export function MobileApp() {
             tags: url.tags,
             mentioned: url.mentioned,
           }}
-          set={(patch) => url.set(patch)}
+          set={(patch) =>
+            // Choosing an explicit sort exits shuffle (otherwise the seed would
+            // silently override the sort the user just picked).
+            url.set('sort' in patch ? { ...patch, shuffle: null, shuffleAnchor: null } : patch)
+          }
           onClose={() => setFilterSheetOpen(false)}
         />
       )}
@@ -786,6 +856,45 @@ function FilterButton({
         </span>
       )}
     </button>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="20" height="20" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+    >
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M13.5 13.5 10.5 10.5" />
+    </svg>
+  );
+}
+
+function ShuffleButton({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-label="Shuffle results"
+      aria-pressed={active}
+      title={active ? 'Shuffle on — tap to turn off' : 'Shuffle'}
+      className={`h-11 w-11 rounded-full flex items-center justify-center shrink-0 transition
+                  ${active ? 'bg-emerald-950/60 text-emerald-400' : 'text-zinc-400 active:bg-zinc-900'}`}
+    >
+      <ShuffleIcon />
+    </button>
+  );
+}
+
+function ShuffleIcon() {
+  return (
+    <svg
+      width="20" height="20" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+    >
+      <path d="M2 4h2.5l7 8H14M2 12h2.5l7-8H14" />
+      <path d="M12 2.5 14 4l-2 1.5M12 10.5 14 12l-2 1.5" />
+    </svg>
   );
 }
 

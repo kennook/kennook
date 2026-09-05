@@ -4,6 +4,7 @@ import {
   listScreensavers,
   removeScreensaver,
   setScreensaverEnabled,
+  setScreensaverLoop,
   setOnlyScreensaver,
 } from '@/server/screensavers';
 
@@ -27,6 +28,11 @@ export const screensaverRouter = router({
   setOnly: adminProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => { setOnlyScreensaver(input.id); return { ok: true }; }),
+
+  /** Toggle the seamless (boomerang) loop — builds a reversed-tail variant. */
+  setLoop: adminProcedure
+    .input(z.object({ id: z.string(), loop: z.boolean() }))
+    .mutation(({ input }) => { setScreensaverLoop(input.id, input.loop); return { ok: true }; }),
 
   /** Delete a clip (registry entry + its files). Idempotent. */
   remove: adminProcedure

@@ -35,9 +35,11 @@ export function CustomScreensaversCard() {
   const [pending, setPending] = useState<PendingRow[]>([]);
 
   const list = trpc.screensaver.list.useQuery(undefined, {
-    // Poll while anything is still transcoding so `processing` clears on its own.
+    // Poll while anything is still transcoding OR building its loop, so the
+    // "processing" states clear on their own.
     refetchInterval: (q) =>
-      (q.state.data ?? []).some((c) => c.status === 'processing') ? 2000 : false,
+      (q.state.data ?? []).some((c) => c.status === 'processing' || c.loopStatus === 'processing')
+        ? 2000 : false,
   });
   const clips = list.data ?? [];
   const readyCount = clips.filter((c) => c.status === 'ready').length;
@@ -53,6 +55,23 @@ export function CustomScreensaversCard() {
       const prev = utils.screensaver.list.getData();
       utils.screensaver.list.setData(undefined, (old) =>
         old?.map((c) => (c.id === id ? { ...c, enabled } : c)),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) utils.screensaver.list.setData(undefined, ctx.prev); },
+    onSettled: () => utils.screensaver.list.invalidate(),
+  });
+  const setLoop = trpc.screensaver.setLoop.useMutation({
+    onMutate: async ({ id, loop }) => {
+      await utils.screensaver.list.cancel();
+      const prev = utils.screensaver.list.getData();
+      utils.screensaver.list.setData(undefined, (old) =>
+        old?.map((c) => {
+          if (c.id !== id) return c;
+          if (!loop) return { ...c, loop: false };
+          // Enabling: instant if already built, else show "preparing…".
+          return { ...c, loop: true, loopStatus: c.loopStatus === 'ready' ? 'ready' : 'processing' };
+        }),
       );
       return { prev };
     },
@@ -113,7 +132,7 @@ export function CustomScreensaversCard() {
   }
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-md mt-6">
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-2xl mt-6">
       <h2 className="text-sm font-medium text-zinc-200 mb-1">Custom screensaver</h2>
       <p className="text-xs text-zinc-500 mb-5 leading-relaxed">
         Upload your own clips to play as the walk-away screensaver. Any video
@@ -188,6 +207,9 @@ export function CustomScreensaversCard() {
                         {on ? (enabledReadyCount > 1 ? 'in rotation' : 'active') : 'disabled'}
                       </span>
                     )}
+                    {isReady && c.loopStatus === 'processing' && <span className="text-amber-300"> · preparing loop…</span>}
+                    {isReady && c.loop && c.loopStatus === 'ready' && <span className="text-zinc-500"> · loop</span>}
+                    {isReady && c.loopStatus === 'failed' && <span className="text-red-300"> · loop failed</span>}
                     {c.status === 'failed' && <span className="text-red-300" title={c.error}>failed</span>}
                   </div>
                 </div>
@@ -202,6 +224,30 @@ export function CustomScreensaversCard() {
                     Only
                   </button>
                 )}
+                {isReady && (() => {
+                  const loopOn = c.loop === true && c.loopStatus === 'ready';
+                  const loopBusy = c.loopStatus === 'processing';
+                  return (
+                    <button
+                      onClick={() => setLoop.mutate({ id: c.id, loop: !loopOn })}
+                      disabled={setLoop.isPending || loopBusy}
+                      aria-pressed={loopOn}
+                      title={
+                        loopOn ? 'Seamless loop on — tap to turn off'
+                          : loopBusy ? 'Preparing seamless loop…'
+                          : c.loopStatus === 'failed' ? 'Loop build failed — tap to retry'
+                          : 'Loop seamlessly (plays forward then reversed, back to the first frame)'
+                      }
+                      className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition
+                                  disabled:opacity-40
+                                  ${loopOn ? 'text-emerald-300'
+                                    : loopBusy ? 'text-amber-300'
+                                    : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                      <LoopIcon />
+                    </button>
+                  );
+                })()}
                 {isReady && (
                   <Toggle
                     on={on}
@@ -251,6 +297,18 @@ function ClipPreview({ id, ready }: { id: string; ready: boolean }) {
       }}
       className="w-24 h-14 rounded object-cover bg-black shrink-0 cursor-pointer"
     />
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 8a5 5 0 0 1 5-5h4" />
+      <path d="M9 1 11 3 9 5" />
+      <path d="M14 8a5 5 0 0 1-5 5H5" />
+      <path d="M7 15 5 13 7 11" />
+    </svg>
   );
 }
 

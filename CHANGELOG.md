@@ -12,6 +12,39 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-05
+
+- **Seamless-loop toggle for custom screensavers.** Clips that aren't clean
+  loops make the screensaver hitch when they restart. Each clip now has a loop
+  button that builds a "boomerang" version in the background — it plays forward
+  then reversed, returning to the first frame so the loop is smooth. Toggle it
+  off to go back to the original; the built version is kept, so turning it back
+  on is instant. Best for short clips (the reversed pass roughly doubles length).
+
+- **Fill-the-screen photos on mobile.** The mobile viewer now fills the screen
+  by default (no black bars), with a fit toggle in a photo's bottom bar to switch
+  between filling (cropping to the edges) and fitting the whole image. Your choice
+  sticks as the default for every item, and applies to videos too. Uses the same
+  fit preference as desktop.
+
+- **Collapsible mobile search.** The search box is now a compact magnifier icon
+  by default; tapping it expands to a full-width field (the shuffle, filter, and
+  library controls step aside to make room), with a back arrow to close. It stays
+  expanded whenever there's an active search so you can see and edit it.
+
+- **Compact library switcher on mobile.** The library picker is now a small icon
+  instead of the full library name — which could be long ("Amazon Photos" and
+  beyond) and crowd the top bar. Tap it for the same dropdown of named libraries.
+
+- **Shuffle on mobile.** A shuffle button in the top bar scrambles the results
+  into a random order (and reshuffles a fresh order each time you turn it on);
+  tap again to go back to normal sorting. Picking an explicit sort turns it off.
+
+- **Full transport controls in the mobile slideshow.** The slideshow control bar
+  now has previous/next buttons (photo-aware, wrapping) and the fill/fit toggle
+  alongside the speed control — so you can step through, reframe, and re-pace
+  without leaving the show. Stepping manually also resets the dwell timer.
+
 ## [0.11.0] - 2026-09-05
 
 - **Upload several screensavers at once.** The custom-screensaver uploader now

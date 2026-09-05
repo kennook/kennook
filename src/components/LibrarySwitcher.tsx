@@ -33,6 +33,9 @@ interface LibrarySwitcherProps {
   /** Hide the whole switcher when there's only one library (nothing to switch
    *  between). Used in the main app, where it's just clutter with a single lib. */
   hideWhenSingle?: boolean;
+  /** Icon-only trigger (no library name) — for tight bars like the mobile
+   *  header, where a long name ("Amazon Photos", or longer) eats the row. */
+  compact?: boolean;
 }
 
 export function LibrarySwitcher({
@@ -40,6 +43,7 @@ export function LibrarySwitcher({
   variant = 'header',
   allowCreate = false,
   hideWhenSingle = false,
+  compact = false,
 }: LibrarySwitcherProps = {}) {
   const url = usePageState();
   const libraries = trpc.library.list.useQuery();
@@ -143,20 +147,32 @@ export function LibrarySwitcher({
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className={variant === 'sidebar'
-          ? `flex w-full items-center gap-2 bg-zinc-900/80 border border-zinc-800
-             hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition`
-          : `flex items-center gap-2 bg-zinc-900/80 border border-zinc-800
-             hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition`}
-      >
-        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-        <span className="text-zinc-200 truncate flex-1 text-left">{current.data?.name ?? '…'}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-500 shrink-0">
-          <path d="M1 3 L5 7 L9 3" stroke="currentColor" strokeWidth="1.5" fill="none" />
-        </svg>
-      </button>
+      {compact ? (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-label={`Library: ${current.data?.name ?? ''} (switch)`}
+          title={current.data?.name ?? 'Library'}
+          className="w-11 h-11 flex items-center justify-center rounded-full
+                     text-zinc-300 active:bg-zinc-800 transition"
+        >
+          <LibraryIcon />
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className={variant === 'sidebar'
+            ? `flex w-full items-center gap-2 bg-zinc-900/80 border border-zinc-800
+               hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition`
+            : `flex items-center gap-2 bg-zinc-900/80 border border-zinc-800
+               hover:border-zinc-700 rounded-lg px-3 py-1.5 text-sm transition`}
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+          <span className="text-zinc-200 truncate flex-1 text-left">{current.data?.name ?? '…'}</span>
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-500 shrink-0">
+            <path d="M1 3 L5 7 L9 3" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          </svg>
+        </button>
+      )}
 
       {open && (
         <div className={`absolute ${align === 'left' ? 'left-0' : 'right-0'} top-full mt-2
@@ -203,5 +219,16 @@ export function LibrarySwitcher({
         />
       )}
     </div>
+  );
+}
+
+/** Stacked-layers glyph standing in for the library name in compact mode. */
+function LibraryIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 2 14 5 8 8 2 5 8 2Z" />
+      <path d="M2.5 8 8 10.75 13.5 8M2.5 11 8 13.75 13.5 11" />
+    </svg>
   );
 }

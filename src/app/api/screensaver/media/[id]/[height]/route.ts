@@ -7,7 +7,12 @@
 
 import { NextRequest } from 'next/server';
 import fs from 'node:fs';
-import { isValidScreensaverId, screensaverVariantPath, SCREENSAVER_HEIGHTS } from '@/server/screensavers';
+import {
+  isValidScreensaverId,
+  screensaverVariantPath,
+  screensaverLoopVariantPath,
+  SCREENSAVER_HEIGHTS,
+} from '@/server/screensavers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +29,11 @@ export async function GET(
     return new Response('Bad request', { status: 400 });
   }
 
-  const absPath = screensaverVariantPath(id, h);
+  // `?loop=1` → the seamless boomerang variant, falling back to the plain one if
+  // it isn't generated yet. The differing URL also cache-busts on a loop toggle.
+  const wantLoop = req.nextUrl.searchParams.get('loop') === '1';
+  const loopPath = screensaverLoopVariantPath(id, h);
+  const absPath = wantLoop && fs.existsSync(loopPath) ? loopPath : screensaverVariantPath(id, h);
   if (!fs.existsSync(absPath)) return new Response('Not found', { status: 404 });
 
   const stat = await fs.promises.stat(absPath);

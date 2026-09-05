@@ -42,6 +42,13 @@ interface Props {
   /** At the dwell bounds → disable the corresponding direction. */
   atMinSpeed?: boolean;
   atMaxSpeed?: boolean;
+  /** How media fills the screen: 'cover' fills (cropping), 'contain' letterboxes. */
+  fit?: 'cover' | 'contain';
+  /** Flip the fit — persisted as the default via the shared preference. */
+  onToggleFit?: () => void;
+  /** Photo-aware prev/next for the slideshow transport (wrap; skip videos). */
+  onSlideshowPrev?: () => void;
+  onSlideshowNext?: () => void;
 }
 
 /**
@@ -56,11 +63,15 @@ export function MobileViewer({
   item, onClose, onPrev, onNext, onSetLikes, onRotate, suspended = false,
   slideshow = false, canSlideshow = false, onToggleSlideshow,
   slideshowMs = 0, onSlower, onFaster, atMinSpeed = false, atMaxSpeed = false,
+  fit = 'cover', onToggleFit, onSlideshowPrev, onSlideshowNext,
 }: Props) {
   const [chromeVisible, setChromeVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
 
   const touchRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  // Set by a manual slideshow step (prev/next) so the item-change effect keeps
+  // the controls visible instead of hiding them the way it does on auto-advance.
+  const manualNavRef = useRef(false);
 
   // Optimistic like overlay — same model as the desktop viewer's pendingLikes
   // but with a simpler single-tap path (no shortcut, no debounce; if you tap
@@ -92,8 +103,13 @@ export function MobileViewer({
   useEffect(() => {
     if (!item) return;
     // During a running slideshow, keep the chrome out of the way so it doesn't
-    // flash on every auto-advance; a tap still reveals it (to hit Pause).
-    if (slideshow) { setChromeVisible(false); return; }
+    // flash on every AUTO-advance. But a MANUAL step (prev/next) should leave the
+    // controls up — its onClick already pulsed them — so honor that flag.
+    if (slideshow) {
+      if (manualNavRef.current) { manualNavRef.current = false; return; }
+      setChromeVisible(false);
+      return;
+    }
     pulseChrome();
     return () => {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
@@ -170,8 +186,8 @@ export function MobileViewer({
           src={item.previewUrl}
           alt={item.filename}
           draggable={false}
-          className="absolute inset-0 w-full h-full object-contain select-none
-                     transition-transform duration-200"
+          className={`absolute inset-0 w-full h-full select-none transition-transform duration-200
+                      ${fit === 'cover' ? 'object-cover' : 'object-contain'}`}
           style={item.rotation ? { transform: `rotate(${item.rotation}deg)` } : undefined}
         />
       ) : (
@@ -180,6 +196,7 @@ export function MobileViewer({
           progressKey={`${item.librarySlug}:${item.uuid}`}
           onFullscreenExit={onClose}
           suspended={suspended}
+          fit={fit}
         />
       )}
 
@@ -256,34 +273,63 @@ export function MobileViewer({
                       pb-[max(env(safe-area-inset-bottom),1rem)] pt-8
                       flex justify-center`}
         >
-          <div className="flex items-center gap-2 rounded-full bg-black/50 backdrop-blur px-2 py-1.5">
-            <SpeedButton
-              label="Faster"
-              disabled={atMinSpeed}
-              onClick={() => { onFaster(); pulseChrome(); }}
-            >
+          <div className="flex items-center gap-1 rounded-full bg-black/50 backdrop-blur px-1.5 py-1.5">
+            {onSlideshowPrev && (
+              <SpeedButton
+                label="Previous photo"
+                onClick={() => { manualNavRef.current = true; onSlideshowPrev(); pulseChrome(); }}
+              >
+                <PrevIcon />
+              </SpeedButton>
+            )}
+            <SpeedButton label="Faster" disabled={atMinSpeed} onClick={() => { onFaster(); pulseChrome(); }}>
               <MinusIcon />
             </SpeedButton>
-            <span className="w-14 text-center text-sm font-medium tabular-nums text-zinc-100">
+            <span className="w-12 text-center text-sm font-medium tabular-nums text-zinc-100">
               {formatInterval(slideshowMs)}
             </span>
-            <SpeedButton
-              label="Slower"
-              disabled={atMaxSpeed}
-              onClick={() => { onSlower(); pulseChrome(); }}
-            >
+            <SpeedButton label="Slower" disabled={atMaxSpeed} onClick={() => { onSlower(); pulseChrome(); }}>
               <PlusIcon />
             </SpeedButton>
+            {onSlideshowNext && (
+              <SpeedButton
+                label="Next photo"
+                onClick={() => { manualNavRef.current = true; onSlideshowNext(); pulseChrome(); }}
+              >
+                <NextIcon />
+              </SpeedButton>
+            )}
+            {onToggleFit && (
+              <SpeedButton
+                label={fit === 'cover' ? 'Fit to screen' : 'Fill screen'}
+                onClick={() => { onToggleFit(); pulseChrome(); }}
+              >
+                {fit === 'cover' ? <ContractIcon /> : <ExpandIcon />}
+              </SpeedButton>
+            )}
           </div>
         </div>
       ) : (!isVideo && (
         <div
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
           className={`absolute bottom-0 inset-x-0 z-10 ${chromeClass}
                       px-4 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-6
                       bg-gradient-to-t from-black/70 to-transparent
-                      text-zinc-300 text-xs truncate`}
+                      flex items-center gap-2`}
         >
-          {item.filename}
+          <span className="flex-1 min-w-0 truncate text-zinc-300 text-xs">{item.filename}</span>
+          {onToggleFit && (
+            <button
+              onClick={onToggleFit}
+              aria-label={fit === 'cover' ? 'Fit whole photo to screen' : 'Fill the screen'}
+              title={fit === 'cover' ? 'Fit to screen' : 'Fill screen'}
+              className="shrink-0 w-11 h-11 -mr-1 flex items-center justify-center rounded-full
+                         text-zinc-100 active:bg-white/10"
+            >
+              {fit === 'cover' ? <ContractIcon /> : <ExpandIcon />}
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -301,11 +347,13 @@ function NativeVideo({
   progressKey,
   onFullscreenExit,
   suspended = false,
+  fit = 'cover',
 }: {
   src: string;
   progressKey: string;
   onFullscreenExit: () => void;
   suspended?: boolean;
+  fit?: 'cover' | 'contain';
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const lastSaveRef = useRef(0);
@@ -408,7 +456,8 @@ function NativeVideo({
         clearVideoProgress(progressKey);
         lastSaveRef.current = 0;
       }}
-      className="absolute inset-0 w-full h-full bg-black"
+      className={`absolute inset-0 w-full h-full bg-black
+                  ${fit === 'cover' ? 'object-cover' : 'object-contain'}`}
     />
   );
 }
@@ -428,10 +477,10 @@ function formatInterval(ms: number): string {
 }
 
 function SpeedButton({
-  label, disabled, onClick, children,
+  label, disabled = false, onClick, children,
 }: {
   label: string;
-  disabled: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -460,6 +509,44 @@ function PlusIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PrevIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <rect x="4" y="3.5" width="1.8" height="9" rx="0.6" />
+      <path d="M12.5 4v8l-6-4z" />
+    </svg>
+  );
+}
+
+function NextIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M3.5 4v8l6-4z" />
+      <rect x="10.2" y="3.5" width="1.8" height="9" rx="0.6" />
+    </svg>
+  );
+}
+
+/** Corner brackets pointing outward — "fill the screen". */
+function ExpandIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" />
+    </svg>
+  );
+}
+
+/** Corner brackets pointing inward — "fit the whole photo". */
+function ContractIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" />
     </svg>
   );
 }

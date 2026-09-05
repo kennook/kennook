@@ -28,8 +28,9 @@ function pickHeight(): 720 | 1080 {
 
 /** A clip in the rotation: either an admin-uploaded ('custom') clip served from
  *  the data dir, or a built-in ('builtin') clip served statically from public/.
- *  Both expose `<720|1080>` variants; only the URL shape differs. */
-type ScreensaverClip = { kind: 'builtin' | 'custom'; id: string };
+ *  Both expose `<720|1080>` variants; only the URL shape differs. `loop` (custom
+ *  only) requests the seamless boomerang variant. */
+type ScreensaverClip = { kind: 'builtin' | 'custom'; id: string; loop?: boolean };
 
 /**
  * Lazy manifest cache. Fetched once per session. Admin-uploaded clips take
@@ -45,10 +46,16 @@ function loadManifest(): Promise<ScreensaverClip[]> {
 
 async function resolveManifest(): Promise<ScreensaverClip[]> {
   try {
+    // Newer server returns `{ id, loop }[]`; tolerate the older `string[]` too.
+    type CustomEntry = string | { id: string; loop?: boolean };
     const custom = await fetch('/api/screensaver/custom')
-      .then((r) => (r.ok ? (r.json() as Promise<string[]>) : []));
+      .then((r) => (r.ok ? (r.json() as Promise<CustomEntry[]>) : []));
     if (Array.isArray(custom) && custom.length > 0) {
-      return custom.map((id) => ({ kind: 'custom', id }));
+      return custom.map((c) =>
+        typeof c === 'string'
+          ? { kind: 'custom', id: c }
+          : { kind: 'custom', id: c.id, loop: c.loop },
+      );
     }
   } catch { /* fall through to the built-in set */ }
   try {
@@ -68,9 +75,10 @@ export function resetScreensaverManifest(): void {
 
 function pickVariantUrl(clip: ScreensaverClip): string {
   const h = pickHeight();
-  return clip.kind === 'custom'
-    ? `/api/screensaver/media/${clip.id}/${h}`
-    : `/screensaver/${clip.id}-${h}.mp4`;
+  if (clip.kind === 'custom') {
+    return `/api/screensaver/media/${clip.id}/${h}${clip.loop ? '?loop=1' : ''}`;
+  }
+  return `/screensaver/${clip.id}-${h}.mp4`;
 }
 
 // Deliberately understated grade so the footage recedes into the
