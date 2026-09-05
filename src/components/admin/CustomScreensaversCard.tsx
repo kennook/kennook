@@ -8,13 +8,18 @@
  * built-in stock footage in the screensaver rotation across every screen.
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 
 /** 720p variant URL for a ready clip — small enough to preview inline. */
 function previewUrl(id: string): string {
   return `/api/screensaver/media/${id}/720`;
 }
+
+// Playback speeds offered in the dropdown (same values as SCREENSAVER_SPEEDS on
+// the server), ascending.
+const SPEEDS = [0.25, 0.5, 0.75, 1, 2, 3] as const;
+const fmtSpeed = (s: number) => `${s}×`;
 
 type PendingStatus = 'uploading' | 'error';
 interface PendingRow {
@@ -72,6 +77,18 @@ export function CustomScreensaversCard() {
           // Enabling: instant if already built, else show "preparing…".
           return { ...c, loop: true, loopStatus: c.loopStatus === 'ready' ? 'ready' : 'processing' };
         }),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) utils.screensaver.list.setData(undefined, ctx.prev); },
+    onSettled: () => utils.screensaver.list.invalidate(),
+  });
+  const setSpeed = trpc.screensaver.setSpeed.useMutation({
+    onMutate: async ({ id, speed }) => {
+      await utils.screensaver.list.cancel();
+      const prev = utils.screensaver.list.getData();
+      utils.screensaver.list.setData(undefined, (old) =>
+        old?.map((c) => (c.id === id ? { ...c, speed } : c)),
       );
       return { prev };
     },
@@ -206,7 +223,7 @@ export function CustomScreensaversCard() {
                   >
                     {/* Big preview, with delete tucked into the corner. */}
                     <div className="relative">
-                      <ClipPreview id={c.id} ready={isReady} />
+                      <ClipPreview id={c.id} ready={isReady} speed={c.speed ?? 1} />
                       <button
                         onClick={() => remove.mutate({ id: c.id })}
                         disabled={remove.isPending}
@@ -249,6 +266,28 @@ export function CustomScreensaversCard() {
                           Only
                         </button>
                       )}
+                      {isReady && (() => {
+                        const speed = c.speed ?? 1;
+                        return (
+                          <select
+                            value={speed}
+                            onChange={(e) => setSpeed.mutate({ id: c.id, speed: Number(e.target.value) })}
+                            disabled={setSpeed.isPending}
+                            aria-label="Playback speed"
+                            title="Playback speed"
+                            className={`shrink-0 text-[11px] font-medium tabular-nums rounded bg-zinc-900
+                                        ring-1 ring-zinc-700 px-1 py-1 outline-none cursor-pointer
+                                        focus:ring-zinc-500 disabled:opacity-40
+                                        ${speed !== 1 ? 'text-emerald-300' : 'text-zinc-300'}`}
+                          >
+                            {SPEEDS.map((s) => (
+                              <option key={s} value={s} className="bg-zinc-900 text-zinc-200">
+                                {fmtSpeed(s)}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                       {isReady && (
                         <button
                           onClick={() => setLoop.mutate({ id: c.id, loop: !loopOn })}
@@ -291,8 +330,11 @@ export function CustomScreensaversCard() {
 
 /** Small inline preview. Ready clips play the 720p variant on hover (muted,
  *  looping); non-ready ones show a placeholder. Tap also toggles play (touch). */
-function ClipPreview({ id, ready }: { id: string; ready: boolean }) {
+function ClipPreview({ id, ready, speed }: { id: string; ready: boolean; speed: number }) {
   const ref = useRef<HTMLVideoElement>(null);
+  // Reflect the clip's playback speed in the preview so a change is visible.
+  // Applied live (this fires when `speed` changes) and again on load below.
+  useEffect(() => { if (ref.current) ref.current.playbackRate = speed; }, [speed]);
   if (!ready) return <div className="w-full aspect-video bg-zinc-800" />;
   return (
     <video
@@ -303,6 +345,7 @@ function ClipPreview({ id, ready }: { id: string; ready: boolean }) {
       playsInline
       preload="metadata"
       title="Hover to preview"
+      onLoadedMetadata={(e) => { e.currentTarget.playbackRate = speed; }}
       onMouseEnter={() => { void ref.current?.play().catch(() => {}); }}
       onMouseLeave={() => { const v = ref.current; if (v) { v.pause(); v.currentTime = 0; } }}
       onClick={() => {

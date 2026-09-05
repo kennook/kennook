@@ -1,10 +1,12 @@
 import { z } from 'zod';
-import { router, adminProcedure } from '@/server/trpc';
+import { router, publicProcedure, adminProcedure } from '@/server/trpc';
+import { getScreensaverRotateMs, setScreensaverRotateMs } from '@/server/app-config';
 import {
   listScreensavers,
   removeScreensaver,
   setScreensaverEnabled,
   setScreensaverLoop,
+  setScreensaverSpeed,
   setOnlyScreensaver,
 } from '@/server/screensavers';
 
@@ -33,6 +35,18 @@ export const screensaverRouter = router({
   setLoop: adminProcedure
     .input(z.object({ id: z.string(), loop: z.boolean() }))
     .mutation(({ input }) => { setScreensaverLoop(input.id, input.loop); return { ok: true }; }),
+
+  /** Set the playback speed (0.5/1/2/3×) — applied client-side, no re-encode. */
+  setSpeed: adminProcedure
+    .input(z.object({ id: z.string(), speed: z.number() }))
+    .mutation(({ input }) => { setScreensaverSpeed(input.id, input.speed); return { ok: true }; }),
+
+  /** Auto-rotate interval (ms; 0 = off) — how often the screensaver advances to
+   *  the next active clip. Public read (the screensaver needs it); admin write. */
+  rotate: publicProcedure.query(() => ({ ms: getScreensaverRotateMs() })),
+  setRotate: adminProcedure
+    .input(z.object({ ms: z.number().int().min(0) }))
+    .mutation(({ input }) => { setScreensaverRotateMs(input.ms); return { ok: true }; }),
 
   /** Delete a clip (registry entry + its files). Idempotent. */
   remove: adminProcedure

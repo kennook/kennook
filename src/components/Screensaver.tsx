@@ -30,7 +30,7 @@ function pickHeight(): 720 | 1080 {
  *  the data dir, or a built-in ('builtin') clip served statically from public/.
  *  Both expose `<720|1080>` variants; only the URL shape differs. `loop` (custom
  *  only) requests the seamless boomerang variant. */
-type ScreensaverClip = { kind: 'builtin' | 'custom'; id: string; loop?: boolean };
+type ScreensaverClip = { kind: 'builtin' | 'custom'; id: string; loop?: boolean; speed?: number };
 
 /**
  * Lazy manifest cache. Fetched once per session. Admin-uploaded clips take
@@ -46,15 +46,15 @@ function loadManifest(): Promise<ScreensaverClip[]> {
 
 async function resolveManifest(): Promise<ScreensaverClip[]> {
   try {
-    // Newer server returns `{ id, loop }[]`; tolerate the older `string[]` too.
-    type CustomEntry = string | { id: string; loop?: boolean };
+    // Newer server returns `{ id, loop, speed }[]`; tolerate older `string[]` too.
+    type CustomEntry = string | { id: string; loop?: boolean; speed?: number };
     const custom = await fetch('/api/screensaver/custom')
       .then((r) => (r.ok ? (r.json() as Promise<CustomEntry[]>) : []));
     if (Array.isArray(custom) && custom.length > 0) {
       return custom.map((c) =>
         typeof c === 'string'
           ? { kind: 'custom', id: c }
-          : { kind: 'custom', id: c.id, loop: c.loop },
+          : { kind: 'custom', id: c.id, loop: c.loop, speed: c.speed },
       );
     }
   } catch { /* fall through to the built-in set */ }
@@ -90,6 +90,10 @@ function pickVariantUrl(clip: ScreensaverClip): string {
 // the blur if it feels too faint.
 const SCREENSAVER_FILTER = 'brightness(0.2) contrast(1) saturate(0.8) blur(4px)';
 
+// Fade duration (ms) for the auto-rotate crossfade-to-black. Must match the
+// Tailwind `duration-*` on the video so the black hold lines up with the swap.
+const ROTATE_FADE_MS = 700;
+
 /**
  * Mount once at the page root. Triggered via the `global.screensaver`
  * shortcut from `page.tsx`. Covers everything (z-[100]) and exits on any
@@ -114,6 +118,18 @@ export function Screensaver({ open, onExit }: Props) {
   // The chosen video is then `manifest[assignedIndex % manifest.length]`
   // at the resolution appropriate for this device.
   const [src, setSrc] = useState<string | null>(null);
+  // Playback speed for the resolved clip (custom clips can set 0.5/1/2/3×);
+  // applied as the video's playbackRate when it loads.
+  const [speed, setSpeed] = useState(1);
+  // Rotation state: the loaded clip list, how many times we've advanced, and a
+  // visibility flag driving the crossfade-to-black between clips.
+  const [manifest, setManifest] = useState<ScreensaverClip[] | null>(null);
+  const [rotationStep, setRotationStep] = useState(0);
+  const [visible, setVisible] = useState(true);
+  // The window's base position in the rotation, snapshotted on the first resolve
+  // so a later assignment change (SSE reconnect re-issues one) can't jump the
+  // clip out from under an in-progress rotation.
+  const [baseIndex, setBaseIndex] = useState<number | null>(null);
   const assignedIndex = useScreensaverIndex();
 
   // Lock state. Fetched eagerly (not just while open) so the unlock
@@ -127,6 +143,13 @@ export function Screensaver({ open, onExit }: Props) {
   // invalidate on `config.changed`, so toggling it in admin updates live.
   const config = trpc.config.list.useQuery(undefined, { staleTime: 30_000 });
   const softenFilter = config.data?.find((c) => c.key === 'screensaver.filter')?.value ?? true;
+
+  // Auto-rotate interval (ms; 0 = off). Its own query (not part of config.list),
+  // so refetch it when config changes to pick up an admin change live.
+  const trpcUtils = trpc.useUtils();
+  const rotateQuery = trpc.screensaver.rotate.useQuery(undefined, { staleTime: 30_000 });
+  const rotateMs = rotateQuery.data?.ms ?? 0;
+  useSyncEvent('config.changed', () => { void trpcUtils.screensaver.rotate.invalidate(); });
   // FAIL CLOSED: treat the screensaver as locked unless the server has
   // positively told us the mode is 'none'. While the status is loading or the
   // request errors (e.g. a stale build without the endpoint, or a dropped
@@ -238,39 +261,70 @@ export function Screensaver({ open, onExit }: Props) {
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [open, prompting, cancelPrompt]);
 
-  useEffect(() => {
-    if (!open || src) return;
-    let cancelled = false;
-    void loadManifest().then((manifest) => {
-      if (cancelled || manifest.length === 0) return;
-      const clip = manifest[assignedIndex % manifest.length];
-      setSrc(pickVariantUrl(clip));
-    });
-    return () => { cancelled = true; };
-  }, [open, src, assignedIndex]);
-
-  // Re-resolve on EVERY open, not just the first. When the screensaver closes,
-  // drop the resolved clip and the cached list so the next open re-resolves
-  // against the current enabled set. Without this a window keeps whatever clip
-  // it resolved the first time for its whole life — so a clip uploaded/enabled/
-  // disabled after the window loaded would only appear after a full page reload.
-  // The refetch is a tiny JSON GET under the (already-black) overlay, so there's
-  // no perceptible delay; the first open is still instant off the warmed cache.
+  // Load the clip list into state on open; reset everything on close (so the
+  // next open re-fetches the current set — no reload needed to pick up an
+  // upload/enable/disable). The refetch is a tiny JSON GET under the already-
+  // black overlay; the first open is instant off the warmed cache.
   useEffect(() => {
     if (!open) {
+      setManifest(null);
       setSrc(null);
+      setRotationStep(0);
+      setBaseIndex(null);
+      setVisible(true);
       resetScreensaverManifest();
+      return;
     }
-  }, [open]);
+    if (manifest) return;
+    let cancelled = false;
+    void loadManifest().then((m) => { if (!cancelled) setManifest(m); });
+    return () => { cancelled = true; };
+  }, [open, manifest]);
 
-  // The admin's custom-screensaver set changed (upload finished, or one was
-  // removed): forget the cached manifest and clear the resolved clip so the
-  // effect above re-resolves against the new set — live, no reload. If the
-  // screensaver is open it swaps to the new footage; if closed, the next open
-  // uses it. (A window otherwise keeps the clip it resolved at load for life.)
+  // Resolve the clip to show: each window starts at its assigned index (variety
+  // across a wall) and steps forward by `rotationStep` on each auto-rotate. The
+  // base index is captured on the first resolve; after that, live assignedIndex
+  // changes are ignored (they'd resolve to the same clip anyway), so nothing
+  // jumps mid-rotation.
+  useEffect(() => {
+    if (!manifest || manifest.length === 0) return;
+    const base = baseIndex ?? assignedIndex;
+    if (baseIndex == null) setBaseIndex(assignedIndex);
+    const clip = manifest[(base + rotationStep) % manifest.length];
+    setSrc(pickVariantUrl(clip));
+    setSpeed(clip.speed ?? 1);
+  }, [manifest, rotationStep, baseIndex, assignedIndex]);
+
+  // Auto-rotate: after `rotateMs`, fade to black, then advance to the next
+  // active clip and fade back in. Only when enabled and there's more than one
+  // clip to rotate between. Re-arms after each advance (rotationStep dep).
+  useEffect(() => {
+    if (!open || !manifest || manifest.length <= 1 || rotateMs <= 0) return;
+    let advanceTimer: ReturnType<typeof setTimeout> | undefined;
+    const fadeTimer = setTimeout(() => {
+      setVisible(false); // crossfade to black
+      advanceTimer = setTimeout(() => {
+        setRotationStep((s) => s + 1); // load the next clip → re-resolves src
+        setVisible(true);              // fade the new clip in
+      }, ROTATE_FADE_MS);
+    }, rotateMs);
+    return () => { clearTimeout(fadeTimer); if (advanceTimer) clearTimeout(advanceTimer); };
+  }, [open, manifest, rotateMs, rotationStep]);
+
+  // Safety: a change to the source of truth (open / list / interval) resets the
+  // fade, so an admin edit landing mid-crossfade can't leave a window stuck on
+  // black. It doesn't depend on rotationStep, so a normal rotation isn't disturbed.
+  useEffect(() => { setVisible(true); }, [open, manifest, rotateMs]);
+
+  // The admin's custom-screensaver set changed (upload/enable/disable/remove):
+  // reload the list and restart rotation so the new set applies live, no reload.
   useSyncEvent('screensaver.manifest.changed', () => {
     resetScreensaverManifest();
+    setManifest(null);
     setSrc(null);
+    setRotationStep(0);
+    setBaseIndex(null);
+    setVisible(true);
   });
 
   // Keep the screen awake while the screensaver is on. Crucial on mobile:
@@ -402,9 +456,19 @@ export function Screensaver({ open, onExit }: Props) {
           muted
           loop
           playsInline
+          // Apply the clip's playback speed once metadata is ready (setting it
+          // before load is reset by some browsers), and (re)start playback — on
+          // a rotation the same element just swaps `src`, so autoplay may not
+          // re-fire on its own. Muted, so play() is allowed.
+          onLoadedMetadata={(e) => {
+            e.currentTarget.playbackRate = speed;
+            void e.currentTarget.play().catch(() => {});
+          }}
           // scale-105 pushes the soft blurred edge off-screen so the filter
-          // doesn't feather a faint black margin at the viewport bounds.
-          className="absolute inset-0 w-full h-full object-cover scale-105"
+          // doesn't feather a faint black margin at the viewport bounds. Opacity
+          // drives the auto-rotate crossfade (duration must match ROTATE_FADE_MS).
+          className={`absolute inset-0 w-full h-full object-cover scale-105
+                      transition-opacity duration-700 ${visible ? 'opacity-100' : 'opacity-0'}`}
           style={softenFilter ? { filter: SCREENSAVER_FILTER } : undefined}
         />
       )}

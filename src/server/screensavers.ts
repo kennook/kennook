@@ -53,9 +53,15 @@ export interface CustomScreensaver {
   /** Generation status of the reversed-tail variant. Serving uses the looped
    *  file only when loop is desired AND this is 'ready'. */
   loopStatus?: ScreensaverStatus;
+  /** Playback speed multiplier (one of SCREENSAVER_SPEEDS). Applied client-side
+   *  as the video's playbackRate — no re-encoding. Absent = 1× (back-compat). */
+  speed?: number;
   /** Populated on failure with a short reason (surfaced in the admin UI). */
   error?: string;
 }
+
+/** Allowed playback speeds. 1× is the default. */
+export const SCREENSAVER_SPEEDS = [0.25, 0.5, 0.75, 1, 2, 3] as const;
 interface Registry {
   version: 1;
   clips: CustomScreensaver[];
@@ -115,15 +121,17 @@ export interface ReadyScreensaver {
   id: string;
   /** True → the client should request the boomerang variant (`?loop=1`). */
   loop: boolean;
+  /** Playback speed to apply client-side (defaults to 1). */
+  speed: number;
 }
 
 /** Clips that are ready AND enabled — the rotation the client plays, each with
- *  whether its seamless-loop variant is ready to use. (A clip with no `enabled`
- *  field counts as enabled, for back-compat.) */
+ *  whether its seamless-loop variant is ready and its playback speed. (A clip
+ *  with no `enabled` field counts as enabled, for back-compat.) */
 export function readyScreensaverClips(): ReadyScreensaver[] {
   return readRegistry().clips
     .filter((c) => c.status === 'ready' && c.enabled !== false)
-    .map((c) => ({ id: c.id, loop: c.loop === true && c.loopStatus === 'ready' }));
+    .map((c) => ({ id: c.id, loop: c.loop === true && c.loopStatus === 'ready', speed: c.speed ?? 1 }));
 }
 
 // ── Mutations ────────────────────────────────────────────────────────────────
@@ -194,6 +202,14 @@ export function setScreensaverLoop(id: string, loop: boolean): void {
   writeRegistry(reg);
   notifyManifestChanged(); // show "preparing loop…" in the admin list
   enqueueLoopGeneration(id);
+}
+
+/** Set a clip's playback speed (applied client-side; no re-encoding). Ignores
+ *  a speed that isn't one of the allowed values. */
+export function setScreensaverSpeed(id: string, speed: number): void {
+  if (!(SCREENSAVER_SPEEDS as readonly number[]).includes(speed)) return;
+  updateScreensaver(id, { speed });
+  notifyManifestChanged();
 }
 
 /** Make one clip the sole enabled one — enable it, disable every other — in a

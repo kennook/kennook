@@ -109,3 +109,31 @@ export function setConfigValue(key: string, value: boolean): void {
   // Bump the shared rev so cross-process devices pick the change up via the poll.
   bumpConfigRev();
 }
+
+// ── Screensaver auto-rotate interval ─────────────────────────────────────────
+// A non-boolean instance setting (so it lives here rather than in CONFIG_SCHEMA):
+// milliseconds between auto-rotating to the next active screensaver clip, or 0
+// for off. Stored alongside the boolean config and covered by the same rev, so
+// it propagates to every device without a reload.
+const ROTATE_MS_KEY = STORAGE_PREFIX + 'screensaver.rotateMs';
+
+export function getScreensaverRotateMs(): number {
+  const db = getUserSqlite();
+  const row = db.prepare(
+    'SELECT value FROM user_settings WHERE user_id = ? AND key = ?',
+  ).get(CONFIG_USER_ID, ROTATE_MS_KEY) as { value: string | null } | undefined;
+  const n = Number(row?.value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function setScreensaverRotateMs(ms: number): void {
+  const db = getUserSqlite();
+  const value = String(Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0);
+  db.prepare(`
+    INSERT INTO user_settings (user_id, key, value, updated_at)
+      VALUES (?, ?, ?, unixepoch() * 1000)
+    ON CONFLICT(user_id, key)
+      DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(CONFIG_USER_ID, ROTATE_MS_KEY, value);
+  bumpConfigRev();
+}

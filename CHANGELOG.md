@@ -12,6 +12,20 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-05
+
+- **Auto-rotate the screensaver.** With more than one screensaver enabled, a new
+  admin setting (Admin → Screensaver → "Auto-rotate": 1 min / 5 / 10 / 30 / 1 hr
+  / 6 hr / 12 hr, or Off) cycles through them — each screen fades to black and
+  fades in the next active clip on the interval. Off keeps each screen on its own
+  clip. Instance-wide, and it applies live across devices.
+
+- **Playback speed for custom screensavers.** Each clip has a speed control
+  (0.25× / 0.5× / 0.75× / 1× / 2× / 3×, default 1×) — tap to cycle, slower first
+  so calming a busy clip to a gentle drift is a tap away. Unlike the loop, this
+  needs no re-encoding: it's applied as the video's playback rate on the fly, so
+  it's instant and updates live across devices (and in the admin preview).
+
 ## [0.12.0] - 2026-09-05
 
 - **Admin config changes now apply to every device without a reload.** Toggling
