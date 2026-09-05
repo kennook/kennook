@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, publicProcedure, adminProcedure } from '@/server/trpc';
 import {
+  getPasscodeLength,
   isLockEnabled,
   lockModeFor,
   setLockPasscode,
@@ -24,6 +25,7 @@ export const screensaverLockRouter = router({
   status: publicProcedure.query(({ ctx }) => ({
     enabled: isLockEnabled(),
     mode: lockModeFor(ctx.userId),
+    length: getPasscodeLength(),
   })),
 
   /** Check a dismiss attempt against whatever the session's mode requires.

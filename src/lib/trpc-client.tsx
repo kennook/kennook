@@ -11,6 +11,7 @@ import { CurrentUserProvider } from '@/lib/current-user';
 import { SyncProvider, SESSION_ID } from '@/lib/sync';
 import { ViewedBackfill } from '@/components/ViewedBackfill';
 import { ReloadPrompt } from '@/components/ReloadPrompt';
+import { ConnectionGuard, AppErrorBoundary } from '@/components/ConnectionGuard';
 import { ScreensaverShroud } from '@/components/ScreensaverShroud';
 
 export const trpc = createTRPCReact<AppRouter>();
@@ -67,7 +68,12 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
             <SyncProvider>
               <ViewedBackfill />
               <ReloadPrompt />
-              <ScreensaverShroud>{children}</ScreensaverShroud>
+              {/* Overlay sits ABOVE the boundary so it stays visible even if a
+                  child render crashes during the outage. */}
+              <ConnectionGuard />
+              <AppErrorBoundary>
+                <ScreensaverShroud>{children}</ScreensaverShroud>
+              </AppErrorBoundary>
             </SyncProvider>
           </CurrentUserProvider>
         </PreferencesProvider>

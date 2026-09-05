@@ -32,7 +32,8 @@ export function ConfigurationSettings() {
       {list.data?.length === 0 && (
         <div className="p-6 text-sm text-zinc-500">No configurable options yet.</div>
       )}
-      {list.data?.map((item) => (
+      {/* `screensaver.enabled` has its own home on the Screensaver page. */}
+      {list.data?.filter((item) => item.key !== 'screensaver.enabled').map((item) => (
         <div key={item.key} className="flex items-start justify-between gap-4 p-5">
           <div className="min-w-0">
             <div className="text-sm font-medium text-zinc-100">{item.label}</div>

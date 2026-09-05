@@ -1,43 +1,47 @@
 'use client';
 
 /**
- * Admin control for the screensaver passcode — the 4-digit PIN that gates
+ * Admin control for the screensaver passcode — the numeric PIN that gates
  * dismissing the walk-away screensaver. Setting it turns the lock on; clearing
- * it turns the lock off for everyone.
+ * it turns the lock off for everyone. The length is the admin's choice (4, 6, or
+ * 8 digits) — longer for power users who want more entropy.
  *
  * When the lock is on, a signed-in named user dismisses with their own account
  * password instead of this passcode (see server/screensaver-lock.ts). The
  * passcode itself never round-trips back to the client — we only read the
- * boolean `enabled` status and write a new value.
+ * boolean `enabled` status (and the chosen length) and write a new value.
  */
 
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { PinInput } from '@/components/PinInput';
 
-// Kept in sync with PASSCODE_LENGTH in server/screensaver-lock.ts (can't
-// import it — that module pulls in server-only code).
-const LENGTH = 4;
+// Kept in sync with PASSCODE_LENGTHS in server/screensaver-lock.ts (can't import
+// it — that module pulls in server-only code).
+const LENGTHS = [4, 6, 8] as const;
 
 export function ScreensaverLockSettings() {
   const utils = trpc.useUtils();
   const status = trpc.screensaverLock.status.useQuery();
   const enabled = status.data?.enabled === true;
+  const storedLength = status.data?.length ?? 4;
 
   const [value, setValue] = useState('');
   const [confirm, setConfirm] = useState('');
   const [done, setDone] = useState<string | null>(null);
+  // Null = follow the stored length; a number = the admin picked one for the
+  // new passcode. Reset to null after saving so it tracks the new stored value.
+  const [pickedLength, setPickedLength] = useState<number | null>(null);
+  const length = pickedLength ?? storedLength;
+
+  const reset = () => { setValue(''); setConfirm(''); setPickedLength(null); };
 
   const setPasscode = trpc.screensaverLock.setPasscode.useMutation({
-    onSuccess: () => {
-      utils.screensaverLock.status.invalidate();
-      setValue('');
-      setConfirm('');
-    },
+    onSuccess: () => { utils.screensaverLock.status.invalidate(); reset(); },
   });
 
-  const mismatch = confirm.length === LENGTH && value !== confirm;
-  const canSave = value.length === LENGTH && value === confirm && !setPasscode.isPending;
+  const mismatch = confirm.length === length && value !== confirm;
+  const canSave = value.length === length && value === confirm && !setPasscode.isPending;
 
   const save = () => {
     if (!canSave) return;
@@ -45,6 +49,11 @@ export function ScreensaverLockSettings() {
   };
   const clear = () => {
     setPasscode.mutate({ passcode: '' }, { onSuccess: () => setDone('Lock removed.') });
+  };
+
+  const pickLength = (n: number) => {
+    setPickedLength(n);
+    setValue(''); setConfirm(''); setDone(null);
   };
 
   return (
@@ -58,27 +67,53 @@ export function ScreensaverLockSettings() {
               : 'bg-zinc-800 text-zinc-400'
           }`}
         >
-          {status.isLoading ? '…' : enabled ? 'On' : 'Off'}
+          {status.isLoading ? '…' : enabled ? `On · ${storedLength} digits` : 'Off'}
         </span>
       </div>
       <p className="text-xs text-zinc-500 mb-5 leading-relaxed">
-        A 4-digit passcode to dismiss the screensaver on shared or anonymous
+        A numeric passcode to dismiss the screensaver on shared or anonymous
         displays.{' '}
         <span className="text-zinc-400">Signed-in users dismiss with their own
         account password instead — they’re never asked for this passcode.</span>{' '}
-        Remove it to let any device dismiss without unlocking. Ships on with a
-        default of <code className="text-zinc-300">1234</code> — change it here.
+        Remove it to let any device dismiss without unlocking.
       </p>
 
       <div className="flex flex-col gap-4">
+        {/* Length picker */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-400 mr-1">Length</span>
+          {LENGTHS.map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => pickLength(n)}
+              aria-pressed={length === n}
+              className={`px-3 py-1 rounded-md text-sm transition ring-1
+                          ${length === n
+                            ? 'bg-zinc-200 text-zinc-900 ring-transparent'
+                            : 'bg-zinc-900 text-zinc-300 ring-zinc-700 hover:ring-zinc-500'}`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+
         <div className="flex flex-col gap-2">
           <span className="text-xs text-zinc-400">{enabled ? 'New passcode' : 'Passcode'}</span>
-          <PinInput value={value} onChange={(v) => { setValue(v); setDone(null); }} ariaLabel="New passcode" />
+          <PinInput
+            key={`v${length}`}
+            value={value}
+            length={length}
+            onChange={(v) => { setValue(v); setDone(null); }}
+            ariaLabel="New passcode"
+          />
         </div>
         <div className="flex flex-col gap-2">
           <span className="text-xs text-zinc-400">Confirm passcode</span>
           <PinInput
+            key={`c${length}`}
             value={confirm}
+            length={length}
             onChange={(v) => { setConfirm(v); setDone(null); }}
             onComplete={save}
             error={mismatch}

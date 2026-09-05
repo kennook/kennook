@@ -25,6 +25,23 @@ interface Props {
   onSetLikes?: (item: MediaItemDto, count: number) => Promise<void> | void;
   /** Persist a rotation override for the current photo. */
   onRotate?: (item: MediaItemDto, rotation: 0 | 90 | 180 | 270) => void;
+  /** Pause playback while the screensaver is up so audio doesn't leak behind it. */
+  suspended?: boolean;
+  /** Whether the images-only slideshow is currently running. */
+  slideshow?: boolean;
+  /** Show the play/pause control at all (needs ≥2 photos to be worthwhile). */
+  canSlideshow?: boolean;
+  /** Toggle the slideshow on/off. */
+  onToggleSlideshow?: () => void;
+  /** Current per-photo dwell (ms) — shown on the speed control. */
+  slideshowMs?: number;
+  /** Lengthen the dwell (slower). */
+  onSlower?: () => void;
+  /** Shorten the dwell (faster). */
+  onFaster?: () => void;
+  /** At the dwell bounds → disable the corresponding direction. */
+  atMinSpeed?: boolean;
+  atMaxSpeed?: boolean;
 }
 
 /**
@@ -36,7 +53,9 @@ interface Props {
  * VideoPlayer is reused as-is — its own controls work fine on touch.
  */
 export function MobileViewer({
-  item, onClose, onPrev, onNext, onSetLikes, onRotate,
+  item, onClose, onPrev, onNext, onSetLikes, onRotate, suspended = false,
+  slideshow = false, canSlideshow = false, onToggleSlideshow,
+  slideshowMs = 0, onSlower, onFaster, atMinSpeed = false, atMaxSpeed = false,
 }: Props) {
   const [chromeVisible, setChromeVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
@@ -72,12 +91,15 @@ export function MobileViewer({
 
   useEffect(() => {
     if (!item) return;
+    // During a running slideshow, keep the chrome out of the way so it doesn't
+    // flash on every auto-advance; a tap still reveals it (to hit Pause).
+    if (slideshow) { setChromeVisible(false); return; }
     pulseChrome();
     return () => {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.uuid]);
+  }, [item?.uuid, slideshow]);
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
@@ -157,11 +179,16 @@ export function MobileViewer({
           src={item.mediaUrl}
           progressKey={`${item.librarySlug}:${item.uuid}`}
           onFullscreenExit={onClose}
+          suspended={suspended}
         />
       )}
 
-      {/* Top chrome — close + like */}
+      {/* Top chrome — close + like. Swallow touches so tapping a control
+          doesn't also trigger the background's tap-to-toggle (which would hide
+          the chrome out from under the press). */}
       <div
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
         className={`absolute top-0 inset-x-0 z-10 ${chromeClass}
                     px-3 pt-[max(env(safe-area-inset-top),0.75rem)] pb-3
                     bg-gradient-to-b from-black/70 to-transparent
@@ -170,13 +197,23 @@ export function MobileViewer({
         <button
           onClick={onClose}
           aria-label="Close"
-          className="w-10 h-10 rounded-full bg-black/40 backdrop-blur
+          className="w-14 h-14 rounded-full bg-black/40 backdrop-blur
                      text-zinc-100 flex items-center justify-center"
         >
           <CloseIcon />
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {canSlideshow && onToggleSlideshow && (
+            <button
+              onClick={onToggleSlideshow}
+              aria-label={slideshow ? 'Pause slideshow' : 'Play slideshow'}
+              className="w-14 h-14 rounded-full bg-black/40 backdrop-blur
+                         text-zinc-100 flex items-center justify-center"
+            >
+              {slideshow ? <PauseIcon /> : <PlayIcon />}
+            </button>
+          )}
           {item.kind === 'photo' && onRotate && (
             <button
               onClick={() => {
@@ -184,7 +221,7 @@ export function MobileViewer({
                 onRotate(item, next);
               }}
               aria-label="Rotate"
-              className="w-10 h-10 rounded-full bg-black/40 backdrop-blur
+              className="w-14 h-14 rounded-full bg-black/40 backdrop-blur
                          text-zinc-100 flex items-center justify-center"
             >
               <RotateIcon />
@@ -194,8 +231,8 @@ export function MobileViewer({
             <button
               onClick={tapLike}
               aria-label="Like"
-              className="h-10 px-3 rounded-full bg-black/40 backdrop-blur
-                         text-zinc-100 flex items-center gap-1.5"
+              className="h-14 px-5 rounded-full bg-black/40 backdrop-blur
+                         text-zinc-100 flex items-center gap-2"
             >
               <Heart filled={displayLikes > 0} />
               {displayLikes > 0 && (
@@ -208,9 +245,38 @@ export function MobileViewer({
         </div>
       </div>
 
-      {/* Bottom chrome — photos only. On videos the native controls live
-          here, so we don't double-paint a gradient over them. */}
-      {!isVideo && (
+      {/* Bottom chrome. During a slideshow this hosts the speed control; the
+          rest of the time it's the photo's filename. On videos the native
+          controls live here, so we paint neither. */}
+      {slideshow && onSlower && onFaster ? (
+        <div
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          className={`absolute bottom-0 inset-x-0 z-10 ${chromeClass}
+                      pb-[max(env(safe-area-inset-bottom),1rem)] pt-8
+                      flex justify-center`}
+        >
+          <div className="flex items-center gap-2 rounded-full bg-black/50 backdrop-blur px-2 py-1.5">
+            <SpeedButton
+              label="Faster"
+              disabled={atMinSpeed}
+              onClick={() => { onFaster(); pulseChrome(); }}
+            >
+              <MinusIcon />
+            </SpeedButton>
+            <span className="w-14 text-center text-sm font-medium tabular-nums text-zinc-100">
+              {formatInterval(slideshowMs)}
+            </span>
+            <SpeedButton
+              label="Slower"
+              disabled={atMaxSpeed}
+              onClick={() => { onSlower(); pulseChrome(); }}
+            >
+              <PlusIcon />
+            </SpeedButton>
+          </div>
+        </div>
+      ) : (!isVideo && (
         <div
           className={`absolute bottom-0 inset-x-0 z-10 ${chromeClass}
                       px-4 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-6
@@ -219,7 +285,7 @@ export function MobileViewer({
         >
           {item.filename}
         </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -234,13 +300,21 @@ function NativeVideo({
   src,
   progressKey,
   onFullscreenExit,
+  suspended = false,
 }: {
   src: string;
   progressKey: string;
   onFullscreenExit: () => void;
+  suspended?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const lastSaveRef = useRef(0);
+
+  // Pause when the screensaver comes up so the clip's audio doesn't play behind
+  // the black overlay. We don't auto-resume on exit — the user taps play.
+  useEffect(() => {
+    if (suspended) ref.current?.pause();
+  }, [suspended]);
 
   const persist = (force = false) => {
     const v = ref.current;
@@ -341,15 +415,75 @@ function NativeVideo({
 
 function CloseIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M3 3l10 10M13 3L3 13" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Per-photo dwell as a short label, e.g. 5500 → "5.5s", 6000 → "6s". */
+function formatInterval(ms: number): string {
+  const s = ms / 1000;
+  return `${Number.isInteger(s) ? s : s.toFixed(1)}s`;
+}
+
+function SpeedButton({
+  label, disabled, onClick, children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="w-11 h-11 rounded-full flex items-center justify-center text-zinc-100
+                 active:bg-white/10 disabled:opacity-30 transition"
+    >
+      {children}
+    </button>
+  );
+}
+
+function MinusIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 8h10" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M4 2.5v11a.5.5 0 0 0 .77.42l8.5-5.5a.5.5 0 0 0 0-.84l-8.5-5.5A.5.5 0 0 0 4 2.5z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <rect x="3.5" y="2.5" width="3.5" height="11" rx="1" />
+      <rect x="9" y="2.5" width="3.5" height="11" rx="1" />
     </svg>
   );
 }
 
 function RotateIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+    <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor"
          strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 8a5 5 0 0 1 9-3" />
       <path d="M12 2v3h-3" />
@@ -360,8 +494,8 @@ function RotateIcon() {
 function Heart({ filled }: { filled: boolean }) {
   return (
     <svg
-      width="16"
-      height="16"
+      width="24"
+      height="24"
       viewBox="0 0 16 16"
       fill={filled ? '#f43f5e' : 'none'}
       stroke={filled ? '#f43f5e' : 'currentColor'}

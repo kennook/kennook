@@ -21,7 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Storage',       href: '/admin/storage' },
   { label: 'Configuration', href: '/admin/configuration' },
   { label: 'Shortcuts',     href: '/admin/shortcuts' },
-  { label: 'Settings',      href: '/admin/settings' },
+  { label: 'Screensaver',   href: '/admin/settings' },
   { label: 'Users',         href: '/admin/users' },
   { label: 'Theme',         href: '/admin/theme' },
 ];

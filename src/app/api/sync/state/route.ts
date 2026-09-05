@@ -15,6 +15,7 @@
 import { NextRequest } from 'next/server';
 import { getScreensaverState, getAudioSolo, getDataRev } from '@/server/sync-broker';
 import { getSession } from '@/server/auth';
+import { KENNOOK_BUILD_ID } from '@/lib/version';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,7 +24,16 @@ export async function GET(req: NextRequest): Promise<Response> {
   // Per-user: each account's devices converge on their OWN shared UI state.
   const userId = getSession(req.headers.get('cookie')).userId;
   return Response.json(
-    { screensaver: getScreensaverState(userId), audio: getAudioSolo(userId), rev: getDataRev(userId) },
+    // `build` = the build id this server PROCESS is running (baked at build
+    // time). Clients poll this as a heartbeat; on reconnect after an outage
+    // they compare it to their own baked build to decide whether a stale
+    // bundle (broken chunks) needs a hard reload or the page can just resume.
+    {
+      screensaver: getScreensaverState(userId),
+      audio: getAudioSolo(userId),
+      rev: getDataRev(userId),
+      build: KENNOOK_BUILD_ID,
+    },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

@@ -24,6 +24,10 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 
 export type SyncEvent =
   | { type: 'screensaver'; open: boolean }
+  /** The set of custom screensaver clips changed (admin uploaded/removed one,
+   *  or a transcode finished). Open clients drop their cached manifest and
+   *  re-resolve so the new footage shows without a page reload. */
+  | { type: 'screensaver.manifest.changed' }
   /** Per-tab integer issued by the server on SSE connect. The client uses
    *  it (modulo the manifest size) to pick which screensaver video to
    *  show, so each open window in a session draws a different one. */
@@ -81,6 +85,33 @@ interface Envelope {
   event: SyncEvent;
 }
 
+/**
+ * Reachability of the main server, derived from the leader tab's `/api/sync/
+ * state` heartbeat. `unreachable` means the process is down or restarting (an
+ * upgrade), which is exactly when windows would otherwise show broken chunks /
+ * video-retry panels — the ConnectionGuard overlay covers that consistently.
+ */
+export type ConnectionStatus = 'ok' | 'unreachable';
+export interface ConnectionState {
+  status: ConnectionStatus;
+  /** Build id the server most recently reported, or null before the first
+   *  successful heartbeat. On recovery a value != our baked build means the
+   *  bundle is stale (broken chunks) and the page must hard-reload. */
+  serverBuild: string | null;
+}
+type ConnHandler = (s: ConnectionState) => void;
+
+/** Cross-tab BroadcastChannel messages that aren't sync Envelopes: the leader
+ *  relays connection status to sibling windows, and followers can ask the
+ *  leader to probe immediately (the manual "Try now"). */
+type ConnMessage =
+  | { __kind: 'conn'; status: ConnectionStatus; serverBuild: string | null }
+  | { __kind: 'conn.req' };
+function isConnMessage(m: unknown): m is ConnMessage {
+  return typeof m === 'object' && m !== null && '__kind' in m
+    && ((m as { __kind: unknown }).__kind === 'conn' || (m as { __kind: unknown }).__kind === 'conn.req');
+}
+
 const BC_NAME = 'kennook.sync.v1';
 // Cross-tab leader election over localStorage. Web Locks would be cleaner but
 // it's secure-context-only (undefined on `http://<lan-ip>` — exactly where the
@@ -119,9 +150,24 @@ class SyncBroker {
   private amLeader = false;
   private electionTimer: ReturnType<typeof setInterval> | null = null;
   private onPageHide: (() => void) | null = null;
-  // Cross-process screensaver poll (see `startStatePoll`). Runs alongside the
-  // SSE — so once per browser under leader election — instead of per tab.
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  // Cross-process state poll (see `startStatePoll`). Runs alongside the SSE —
+  // so once per browser under leader election — instead of per tab. Self-
+  // scheduling (setTimeout, not setInterval) so the delay can grow while the
+  // server is unreachable (backoff) and snap back to the fast beat when it's up.
+  private pollScheduled: ReturnType<typeof setTimeout> | null = null;
+  private pollLoopRunning = false;
+  // Consecutive heartbeat failures. At/after FAILS_BEFORE_DOWN we declare the
+  // server unreachable; a short streak (not one blip) avoids flashing the
+  // overlay on a momentary hiccup.
+  private failCount = 0;
+  private static readonly HEARTBEAT_MS = 2000;
+  private static readonly FAILS_BEFORE_DOWN = 2;
+  // Connection state + its subscribers. Driven by the leader's heartbeat and
+  // relayed to sibling windows over the BroadcastChannel so every window in a
+  // browser shows the reconnect overlay together.
+  private connection: ConnectionStatus = 'ok';
+  private serverBuild: string | null = null;
+  private connHandlers = new Set<ConnHandler>();
   // Last time a screensaver toggle flowed through (published or received). The
   // poll trusts this recent intent and won't clobber a just-made change.
   private lastScreensaverAt = 0;
@@ -141,7 +187,18 @@ class SyncBroker {
     this.started = true;
 
     this.bc = new BroadcastChannel(BC_NAME);
-    this.bc.onmessage = (e) => this.deliver(e.data as Envelope);
+    this.bc.onmessage = (e) => {
+      const data = e.data as unknown;
+      if (isConnMessage(data)) {
+        // A follower is asking the leader to probe now (manual "Try now").
+        if (data.__kind === 'conn.req') { if (this.amLeader) this.pollNow(); return; }
+        // The leader relayed a status change — apply it locally without re-
+        // broadcasting (only the leader's heartbeat originates status).
+        this.applyConnFromPeer(data.status, data.serverBuild);
+        return;
+      }
+      this.deliver(data as Envelope);
+    };
 
     this.startElection();
   }
@@ -257,20 +314,103 @@ class SyncBroker {
    * keeps a stale poll from clobbering a just-made toggle.
    */
   private startStatePoll(): void {
-    if (this.pollTimer != null) return;
-    const POLL_MS = 2000;
-    const poll = async () => {
-      try {
-        const res = await fetch('/api/sync/state', { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = (await res.json()) as { screensaver?: boolean; audio?: string | null; rev?: string | null };
-        this.handleScreensaverPoll(data.screensaver);
-        this.handleAudioPoll(data.audio);
-        this.handleDataRevPoll(data.rev);
-      } catch { /* offline / transient — retry next tick */ }
-    };
-    this.pollTimer = setInterval(poll, POLL_MS);
-    void poll();
+    if (this.pollLoopRunning) return;
+    this.pollLoopRunning = true;
+    this.failCount = 0;
+    void this.pollOnce();
+  }
+
+  /** One heartbeat. Success converges the shared state AND marks the server
+   *  reachable; failure (network error or 5xx) counts toward declaring it
+   *  unreachable. A 4xx means the server answered — it's up, just rejecting
+   *  us (e.g. auth) — so it never trips the reconnect overlay. Always reschedules. */
+  private async pollOnce(): Promise<void> {
+    try {
+      const res = await fetch('/api/sync/state', { cache: 'no-store' });
+      if (!res.ok) {
+        if (res.status >= 500) throw new Error(`state ${res.status}`); // server down/erroring
+        this.markReachable(undefined); // 4xx: reachable, don't parse a body we can't use
+        return;
+      }
+      const data = (await res.json()) as {
+        screensaver?: boolean; audio?: string | null; rev?: string | null; build?: string;
+      };
+      this.markReachable(data.build);
+      this.handleScreensaverPoll(data.screensaver);
+      this.handleAudioPoll(data.audio);
+      this.handleDataRevPoll(data.rev);
+    } catch {
+      this.failCount++;
+      if (this.failCount >= SyncBroker.FAILS_BEFORE_DOWN) this.markUnreachable();
+    } finally {
+      this.scheduleNextPoll();
+    }
+  }
+
+  private scheduleNextPoll(): void {
+    if (!this.pollLoopRunning) return;
+    // Fast beat while healthy; back off 3s→30s while unreachable so a long
+    // outage isn't hammered (each failed request still resolves fast).
+    let delay = SyncBroker.HEARTBEAT_MS;
+    if (this.connection === 'unreachable') {
+      const steps = Math.max(0, this.failCount - SyncBroker.FAILS_BEFORE_DOWN);
+      delay = Math.min(30_000, 3_000 * 2 ** steps);
+    }
+    this.pollScheduled = setTimeout(() => { this.pollScheduled = null; void this.pollOnce(); }, delay);
+  }
+
+  /** Probe immediately, collapsing any pending backoff wait — the leader's side
+   *  of the overlay's "Try now". Followers route the request here over BC. */
+  private pollNow(): void {
+    if (!this.pollLoopRunning) return;
+    if (this.pollScheduled != null) { clearTimeout(this.pollScheduled); this.pollScheduled = null; }
+    void this.pollOnce();
+  }
+
+  private markReachable(build: string | undefined): void {
+    if (build !== undefined) this.serverBuild = build;
+    this.failCount = 0;
+    if (this.connection !== 'ok') this.setConnection('ok');
+  }
+
+  private markUnreachable(): void {
+    if (this.connection !== 'unreachable') this.setConnection('unreachable');
+  }
+
+  /** Change status, notify local subscribers, and relay to sibling windows.
+   *  Called only from the leader's heartbeat; followers use applyConnFromPeer. */
+  private setConnection(status: ConnectionStatus): void {
+    this.connection = status;
+    this.emitConnection();
+    this.bc?.postMessage({ __kind: 'conn', status, serverBuild: this.serverBuild } satisfies ConnMessage);
+  }
+
+  private applyConnFromPeer(status: ConnectionStatus, serverBuild: string | null): void {
+    const changed = status !== this.connection || serverBuild !== this.serverBuild;
+    this.connection = status;
+    this.serverBuild = serverBuild;
+    if (changed) this.emitConnection();
+  }
+
+  private emitConnection(): void {
+    const snap: ConnectionState = { status: this.connection, serverBuild: this.serverBuild };
+    for (const h of this.connHandlers) h(snap);
+  }
+
+  getConnection(): ConnectionState {
+    return { status: this.connection, serverBuild: this.serverBuild };
+  }
+
+  subscribeConnection(h: ConnHandler): () => void {
+    this.connHandlers.add(h);
+    return () => { this.connHandlers.delete(h); };
+  }
+
+  /** Force an immediate reachability probe. Works from any window: the leader
+   *  probes directly; a follower asks the leader over the BroadcastChannel. */
+  checkNow(): void {
+    if (this.amLeader) this.pollNow();
+    else this.bc?.postMessage({ __kind: 'conn.req' } satisfies ConnMessage);
   }
 
   private lastPolledScreensaver: boolean | null = null;
@@ -326,10 +466,15 @@ class SyncBroker {
   }
 
   private stopStatePoll(): void {
-    if (this.pollTimer != null) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    this.pollLoopRunning = false;
+    if (this.pollScheduled != null) { clearTimeout(this.pollScheduled); this.pollScheduled = null; }
+    this.failCount = 0;
     this.lastPolledScreensaver = null;
     this.lastPolledRev = undefined;
     this.lastPolledAudio = undefined;
+    // Leave `connection`/`serverBuild` as last known: when this tab concedes
+    // leadership another tab takes over the heartbeat, and the overlay state
+    // shouldn't blink in the gap.
   }
 
   /** Run handlers for a locally-sourced event (the poll) — no sessionId skip. */
@@ -409,6 +554,24 @@ export function useScreensaverIndex(): number {
   const [index, setIndex] = useState(() => sync.getScreensaverIndex());
   useSyncEvent('screensaver.assignment', (e) => setIndex(e.index));
   return index;
+}
+
+/**
+ * Reactive server-reachability. Returns the broker's current connection state
+ * and re-renders whenever it flips (driven by the leader tab's heartbeat and
+ * relayed to sibling windows). Used by ConnectionGuard to show the reconnect
+ * overlay and decide reload-vs-resume on recovery.
+ */
+export function useConnection(): ConnectionState {
+  const sync = useSync();
+  const [state, setState] = useState<ConnectionState>(() => sync.getConnection());
+  useEffect(() => {
+    // Re-sync on mount in case status changed between the initial render and
+    // the effect, then subscribe for subsequent flips.
+    setState(sync.getConnection());
+    return sync.subscribeConnection(setState);
+  }, [sync]);
+  return state;
 }
 
 /**

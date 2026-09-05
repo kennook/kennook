@@ -12,6 +12,56 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-05
+
+- **Slideshows on mobile (photos).** The mobile viewer now has a play/pause
+  button that auto-advances through your photos hands-free, using the same
+  per-photo timing as the desktop slideshow. Videos are skipped so the show
+  flows uninterrupted (on a phone a video takes over the whole screen with the
+  system player), the next photo is preloaded so it doesn't flash, and it loops
+  when it reaches the end. Tap to reveal the controls and pause.
+
+- **Upload your own screensaver.** Admins can now upload custom clips (Admin →
+  Screensaver) to play as the walk-away screensaver instead of the built-in
+  footage. Drop in any video — mp4, mov, m4v, webm — and KenNook converts it to a
+  web-friendly format in the background. Hover a clip to preview it, then enable
+  the ones you want in the rotation: turn on several and they rotate (a different
+  one per screen on a wall), or just one to pin it; with none enabled the
+  built-in screensaver plays. Enabling, disabling, adding, or removing a clip now
+  updates every open window live — no reload. No extra software to install — it
+  reuses the same video tooling KenNook already needs for thumbnails.
+
+- **A dedicated Screensaver admin page + longer passcodes.** The admin
+  "Settings" page is now "Screensaver", with a master on/off switch at the top
+  (the rest of the page greys out when it's off). And the screensaver unlock
+  passcode is no longer stuck at 4 digits — choose **4, 6, or 8** for more
+  entropy on shared displays; the unlock prompt adapts to match.
+
+- **Fixed: clearing filters now de-selects the saved search.** Applying a saved
+  search then hitting "Clear all" left that search still highlighted as active,
+  even though none of its filters remained. The highlight now tracks the actual
+  filter state, so it clears when the filters do (and reappears if you dial the
+  same filters back in).
+
+- **A calm "reconnecting" screen when the server restarts.** Upgrading or
+  restarting the main server used to leave open windows in a mess of different
+  broken states — a stock Chrome error page here, a video "Retry" panel there,
+  assorted errors elsewhere. Now every window (desktop and mobile) shows one
+  consistent full-screen "Reconnecting…" overlay the moment the server goes
+  unreachable, with a running "disconnected for m:ss" and a "Try now" button. It
+  keeps probing on its own — quickly at first, then backing off — and the instant
+  the server answers it recovers automatically: if a new version was deployed it
+  reloads to it, otherwise it just dismisses and refreshes in place, keeping your
+  scroll position and open viewer.
+
+- **The screensaver now reaches your phone.** When the walk-away screensaver is
+  triggered on any device (the desktop `S` shortcut or a hot corner), mobile
+  screens now blank to the same ambient screensaver in step — handy for a
+  multi-screen wall where a phone is one of the displays. It keeps the screen
+  awake, pauses any video that was playing behind it, and (if a lock is set) asks
+  for the PIN/password before it exits. Mobile mirrors the screensaver but can't
+  start it on its own — there's no keyboard or hot corners on a phone.
+
 ## [0.9.1] - 2026-09-03
 
 - **Skip step scales to the video's length.** Jumping forward/back (J/L, or the

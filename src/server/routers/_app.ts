@@ -7,6 +7,7 @@ import { storageRouter } from './storage';
 import { systemRouter } from './system';
 import { savedSearchRouter } from './savedSearch';
 import { screensaverLockRouter } from './screensaverLock';
+import { screensaverRouter } from './screensaver';
 import { usersRouter } from './users';
 import { mediaViewRouter } from './mediaView';
 import { configRouter } from './config';
@@ -24,6 +25,7 @@ export const appRouter = router({
   system: systemRouter,
   savedSearch: savedSearchRouter,
   screensaverLock: screensaverLockRouter,
+  screensaver: screensaverRouter,
   users: usersRouter,
   mediaView: mediaViewRouter,
   config: configRouter,

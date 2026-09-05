@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useScreensaverIndex } from '@/lib/sync';
+import { useScreensaverIndex, useSyncEvent } from '@/lib/sync';
 import { setScreensaverActive } from '@/lib/screensaver-active';
 import { trpc } from '@/lib/trpc-client';
 import { PinInput } from '@/components/PinInput';
@@ -26,23 +26,51 @@ function pickHeight(): 720 | 1080 {
   return 720;
 }
 
+/** A clip in the rotation: either an admin-uploaded ('custom') clip served from
+ *  the data dir, or a built-in ('builtin') clip served statically from public/.
+ *  Both expose `<720|1080>` variants; only the URL shape differs. */
+type ScreensaverClip = { kind: 'builtin' | 'custom'; id: string };
+
 /**
- * Lazy manifest cache. Fetched once per session — single small JSON file
- * listing every available screensaver id. Each id has two encoded
- * variants on disk: `<id>-{720,1080}.mp4`.
+ * Lazy manifest cache. Fetched once per session. Admin-uploaded clips take
+ * precedence over the built-in stock set when any are ready; with none
+ * uploaded, the built-in `public/screensaver/manifest.json` list is used.
+ * Each clip has two encoded variants (720/1080) — see `pickVariantUrl`.
  */
-let manifestPromise: Promise<string[]> | null = null;
-function loadManifest(): Promise<string[]> {
-  if (!manifestPromise) {
-    manifestPromise = fetch('/screensaver/manifest.json')
-      .then((r) => r.json() as Promise<string[]>)
-      .catch(() => []); // network error / 404 — return empty list
-  }
+let manifestPromise: Promise<ScreensaverClip[]> | null = null;
+function loadManifest(): Promise<ScreensaverClip[]> {
+  if (!manifestPromise) manifestPromise = resolveManifest();
   return manifestPromise;
 }
 
-function pickVariantUrl(id: string): string {
-  return `/screensaver/${id}-${pickHeight()}.mp4`;
+async function resolveManifest(): Promise<ScreensaverClip[]> {
+  try {
+    const custom = await fetch('/api/screensaver/custom')
+      .then((r) => (r.ok ? (r.json() as Promise<string[]>) : []));
+    if (Array.isArray(custom) && custom.length > 0) {
+      return custom.map((id) => ({ kind: 'custom', id }));
+    }
+  } catch { /* fall through to the built-in set */ }
+  try {
+    const ids = await fetch('/screensaver/manifest.json').then((r) => r.json() as Promise<string[]>);
+    return Array.isArray(ids) ? ids.map((id) => ({ kind: 'builtin', id })) : [];
+  } catch {
+    return []; // network error / 404 — nothing to play
+  }
+}
+
+/** Drop the cached manifest so the next `loadManifest()` refetches — called
+ *  when the admin's clip set changes (see the `screensaver.manifest.changed`
+ *  sync event). */
+export function resetScreensaverManifest(): void {
+  manifestPromise = null;
+}
+
+function pickVariantUrl(clip: ScreensaverClip): string {
+  const h = pickHeight();
+  return clip.kind === 'custom'
+    ? `/api/screensaver/media/${clip.id}/${h}`
+    : `/screensaver/${clip.id}-${h}.mp4`;
 }
 
 // Deliberately understated grade so the footage recedes into the
@@ -201,11 +229,35 @@ export function Screensaver({ open, onExit }: Props) {
     let cancelled = false;
     void loadManifest().then((manifest) => {
       if (cancelled || manifest.length === 0) return;
-      const id = manifest[assignedIndex % manifest.length];
-      setSrc(pickVariantUrl(id));
+      const clip = manifest[assignedIndex % manifest.length];
+      setSrc(pickVariantUrl(clip));
     });
     return () => { cancelled = true; };
   }, [open, src, assignedIndex]);
+
+  // Re-resolve on EVERY open, not just the first. When the screensaver closes,
+  // drop the resolved clip and the cached list so the next open re-resolves
+  // against the current enabled set. Without this a window keeps whatever clip
+  // it resolved the first time for its whole life — so a clip uploaded/enabled/
+  // disabled after the window loaded would only appear after a full page reload.
+  // The refetch is a tiny JSON GET under the (already-black) overlay, so there's
+  // no perceptible delay; the first open is still instant off the warmed cache.
+  useEffect(() => {
+    if (!open) {
+      setSrc(null);
+      resetScreensaverManifest();
+    }
+  }, [open]);
+
+  // The admin's custom-screensaver set changed (upload finished, or one was
+  // removed): forget the cached manifest and clear the resolved clip so the
+  // effect above re-resolves against the new set — live, no reload. If the
+  // screensaver is open it swaps to the new footage; if closed, the next open
+  // uses it. (A window otherwise keeps the clip it resolved at load for life.)
+  useSyncEvent('screensaver.manifest.changed', () => {
+    resetScreensaverManifest();
+    setSrc(null);
+  });
 
   // Keep the screen awake while the screensaver is on. Crucial on mobile:
   // a muted video doesn't otherwise prevent the screen from sleeping, and
@@ -372,10 +424,12 @@ export function Screensaver({ open, onExit }: Props) {
               {isPasscode ? 'Enter passcode to unlock' : 'Enter your password to unlock'}
             </div>
             {isPasscode ? (
-              // Four-box numeric PIN; auto-submits on the 4th digit.
+              // Numeric PIN (4/6/8 boxes per the admin's setting); auto-submits
+              // when the last digit is entered.
               <PinInput
                 key={attemptKey}
                 value={entry}
+                length={lockStatus.data?.length ?? 4}
                 onChange={(v) => { setEntry(v); setAuthError(false); }}
                 onComplete={(v) => void attemptUnlock(v)}
                 error={authError}

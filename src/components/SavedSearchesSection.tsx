@@ -28,20 +28,40 @@ interface SearchPayload {
   sort?: string | null;
 }
 
+// Order used both to compare and to serialize, so two equal searches produce an
+// identical string regardless of key order. Array values (tags/mentioned) keep
+// their order — `apply` restores them verbatim, so a match is exact.
+const PAYLOAD_FIELDS = [
+  'query', 'kind', 'orientation', 'quality', 'cameraMake', 'storage', 'year',
+  'tags', 'mentioned', 'minLikes', 'watched', 'sensitive', 'sort',
+] as const;
+
+/** Canonical string for a search payload — only meaningful (non-empty) keys, in
+ *  a fixed order — so the current filter state and a stored search can be
+ *  compared for "is this the one that's applied right now?". */
+function canonicalSearch(src: Record<string, unknown>): string {
+  const out: Record<string, unknown> = {};
+  for (const k of PAYLOAD_FIELDS) {
+    const v = src[k];
+    if (v == null || v === '') continue;
+    if (Array.isArray(v)) { if (v.length) out[k] = v; continue; }
+    out[k] = v;
+  }
+  return JSON.stringify(out, PAYLOAD_FIELDS as unknown as string[]);
+}
+
 export function SavedSearchesSection() {
   const url = usePageState();
   const utils = trpc.useUtils();
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
-  // The saved search last applied — highlighted, and the obvious "update" target.
-  const [activeUuid, setActiveUuid] = useState<string | null>(null);
 
   const list = trpc.savedSearch.list.useQuery({ librarySlug: url.library ?? undefined });
 
   const create = trpc.savedSearch.create.useMutation({
-    onSuccess: (res) => {
+    onSuccess: () => {
       utils.savedSearch.list.invalidate();
-      setSaving(false); setName(''); setActiveUuid(res.uuid);
+      setSaving(false); setName('');
     },
   });
   const update = trpc.savedSearch.update.useMutation({
@@ -74,6 +94,15 @@ export function SavedSearchesSection() {
   ]);
 
   const hasSaveableState = Object.keys(payload).length > 0;
+
+  // Which saved search (if any) is "selected" is DERIVED from the live filter
+  // state, never tracked separately — so clearing filters (or editing away from
+  // a saved set) drops the highlight automatically. A row is active when the
+  // current saveable state canonicalizes to exactly the same thing it stored.
+  const activeKey = useMemo(
+    () => (hasSaveableState ? canonicalSearch(payload as Record<string, unknown>) : null),
+    [payload, hasSaveableState],
+  );
 
   // Restore: reset ALL saveable keys (so filters not in the saved search are
   // cleared), then overlay the saved ones, and drop view-mode context.
@@ -146,7 +175,7 @@ export function SavedSearchesSection() {
 
       <div className="flex flex-col">
         {list.data?.map((s) => {
-          const active = s.uuid === activeUuid;
+          const active = activeKey != null && canonicalSearch(s.search) === activeKey;
           return (
             <div
               key={s.uuid}
@@ -156,7 +185,7 @@ export function SavedSearchesSection() {
                             : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/60'}`}
             >
               <button
-                onClick={() => { apply(s.search); setActiveUuid(s.uuid); }}
+                onClick={() => apply(s.search)}
                 className="flex-1 min-w-0 text-left flex items-center gap-2.5"
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-emerald-400' : 'bg-zinc-700'}`} />

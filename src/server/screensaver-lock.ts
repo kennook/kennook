@@ -11,10 +11,10 @@
  *     with no password — unlocks with the shared numeric PASSCODE
  *     (mode `'passcode'`).
  *
- * The passcode is a 4-digit PIN, deliberately distinct from the
- * alphanumeric account password so the prompt can be unambiguous. It also
- * acts as the on-switch: with no passcode set, the lock is off for the
- * anonymous/kiosk path (mode `'none'`), and the admin owns it.
+ * The passcode is a numeric PIN (4, 6, or 8 digits — the admin's choice),
+ * deliberately distinct from the alphanumeric account password so the prompt can
+ * be unambiguous. It also acts as the on-switch: with no passcode set, the lock
+ * is off for the anonymous/kiosk path (mode `'none'`), and the admin owns it.
  *
  * Stored as a salted scrypt hash in the shared `user_settings` bag so both
  * the prod and dev Node processes — which share one user.db — agree on it.
@@ -33,9 +33,24 @@ import { DEFAULT_USER_ID, userHasPassword, verifyUserPassword } from '@/server/a
 // of the user-scoped data and the screensaver state itself.
 const LOCK_USER_ID = 1;
 const LOCK_KEY = 'screensaver.lock.hash';
+const LENGTH_KEY = 'screensaver.lock.length';
 
-/** Passcode length — a fixed 4-digit PIN (entered as four boxes in the UI). */
+/** Allowed passcode lengths — a plain 4-digit PIN, or a longer 6/8 for power
+ *  users who want more entropy. */
+export const PASSCODE_LENGTHS = [4, 6, 8] as const;
+/** Default length when none is stored. */
 export const PASSCODE_LENGTH = 4;
+
+/** The stored passcode length (number of digits), defaulting to PASSCODE_LENGTH.
+ *  Drives how many entry boxes the unlock prompt renders. */
+export function getPasscodeLength(): number {
+  const db = getUserSqlite();
+  const row = db
+    .prepare('SELECT value FROM user_settings WHERE user_id = ? AND key = ?')
+    .get(LOCK_USER_ID, LENGTH_KEY) as { value: string | null } | undefined;
+  const n = Number(row?.value);
+  return (PASSCODE_LENGTHS as readonly number[]).includes(n) ? n : PASSCODE_LENGTH;
+}
 
 /** How the current session must unlock the screensaver. */
 export type LockMode = 'none' | 'password' | 'passcode';
@@ -57,29 +72,32 @@ export function isLockEnabled(): boolean {
 }
 
 /**
- * Set (non-empty) or clear (empty/blank) the screensaver passcode. The
- * passcode must be exactly PASSCODE_LENGTH digits; anything else throws.
- * Clearing removes the row so the anonymous/kiosk path reverts to
+ * Set (non-empty) or clear (empty/blank) the screensaver passcode. The passcode
+ * must be all digits and one of PASSCODE_LENGTHS (4/6/8); anything else throws.
+ * The chosen length is remembered so the unlock prompt renders the right number
+ * of boxes. Clearing removes the rows so the anonymous/kiosk path reverts to
  * dismiss-on-any-gesture.
  */
 export function setLockPasscode(passcode: string | null | undefined): void {
   const db = getUserSqlite();
   const trimmed = (passcode ?? '').trim();
   if (!trimmed) {
-    db.prepare('DELETE FROM user_settings WHERE user_id = ? AND key = ?')
-      .run(LOCK_USER_ID, LOCK_KEY);
+    // Clear both the hash and the remembered length.
+    db.prepare('DELETE FROM user_settings WHERE user_id = ? AND key IN (?, ?)')
+      .run(LOCK_USER_ID, LOCK_KEY, LENGTH_KEY);
     return;
   }
-  if (!new RegExp(`^\\d{${PASSCODE_LENGTH}}$`).test(trimmed)) {
-    throw new Error(`Passcode must be exactly ${PASSCODE_LENGTH} digits.`);
+  if (!/^\d+$/.test(trimmed) || !(PASSCODE_LENGTHS as readonly number[]).includes(trimmed.length)) {
+    throw new Error(`Passcode must be ${PASSCODE_LENGTHS.join(', ')} digits.`);
   }
-  const stored = hashSecret(trimmed);
-  db.prepare(
+  const upsert = db.prepare(
     `INSERT INTO user_settings (user_id, key, value, updated_at)
        VALUES (?, ?, ?, unixepoch() * 1000)
      ON CONFLICT(user_id, key)
        DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-  ).run(LOCK_USER_ID, LOCK_KEY, stored);
+  );
+  upsert.run(LOCK_USER_ID, LOCK_KEY, hashSecret(trimmed));
+  upsert.run(LOCK_USER_ID, LENGTH_KEY, String(trimmed.length));
 }
 
 /**

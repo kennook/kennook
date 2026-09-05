@@ -3,32 +3,73 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
 import { usePageState } from '@/lib/url-state';
-import { useSyncEvent } from '@/lib/sync';
+import { usePreference } from '@/lib/preferences';
+import { useSync, useSyncEvent } from '@/lib/sync';
+import { Screensaver, preloadScreensaverInBackground } from '@/components/Screensaver';
 import type { MediaItemDto } from '@/components/MediaGrid';
 import { LibrarySwitcher } from '@/components/LibrarySwitcher';
-import { KenNookLogo } from '@/components/KenNookLogo';
 import { MobileViewer } from './MobileViewer';
 import { MobileFilterSheet } from './MobileFilterSheet';
 
 const PAGE_SIZE = 60;
 
+// Slideshow dwell bounds (shared `slideshowPhotoMs` preference, same range as
+// the desktop `,`/`.` controls). Mobile steps in whole seconds so the readout
+// stays clean (6s, 7s…) rather than inheriting the 5.5s default's half-second.
+const SLIDESHOW_MIN_MS = 2000;
+const SLIDESHOW_MAX_MS = 60000;
+
 type Tab = 'library' | 'playlists' | 'people';
 
 /**
+ * Index of the next PHOTO after `from`, wrapping around, or -1 if the list has
+ * no photos. The mobile slideshow is images-only — videos are skipped, since on
+ * mobile a video hands off to the OS fullscreen player, which owns the screen
+ * and would break the auto-advance flow.
+ */
+function nextPhotoIndex(items: MediaItemDto[], from: number): number {
+  const n = items.length;
+  for (let step = 1; step <= n; step++) {
+    const idx = (from + step) % n;
+    if (items[idx]?.kind === 'photo') return idx;
+  }
+  return -1;
+}
+
+/**
  * Mobile root. Two-tab shell (Library / Playlists), full-screen viewer,
- * native lazy-loaded thumbnail grid. Intentionally NOT a port of the
- * desktop page — keyboard shortcuts, selection mode, filter sidebar,
- * slideshow, and the screensaver shortcut all live in the desktop tree
- * because they don't fit a touch interface.
+ * native lazy-loaded thumbnail grid, and a touch filter sheet. Intentionally
+ * NOT a port of the desktop page — keyboard shortcuts and selection mode live
+ * in the desktop tree because they don't fit a touch interface. The viewer does
+ * offer an images-only slideshow (play/pause in its chrome); videos are skipped
+ * because on mobile they hand off to the OS fullscreen player. The screensaver
+ * mirrors here (via the shared `screensaver` sync event) but can only be
+ * *started* from a desktop shortcut/hot-corner.
  *
- * URL state (search, playlist) is shared with the desktop view via the
- * same `usePageState` hook, so deep links work cross-device.
+ * URL state (search, playlist, filters) is shared with the desktop view via
+ * the same `usePageState` hook, so deep links work cross-device.
  */
 export function MobileApp() {
   const url = usePageState();
   const [tab, setTab] = useState<Tab>(url.playlist ? 'playlists' : 'library');
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  // Walk-away screensaver. Mobile can't *start* it (no keyboard/hot-corners) —
+  // it mirrors whatever a desktop `S`/hot-corner (or another device) triggers,
+  // via the shared `screensaver` sync event. The overlay itself is touch-ready
+  // (tap-to-dismiss, PIN/password unlock, wake-lock, playsInline).
+  const [screensaverOpen, setScreensaverOpen] = useState(false);
+  // Images-only slideshow: auto-advance through photos in the open viewer.
+  const [slideshow, setSlideshow] = useState(false);
+  // Per-photo dwell — shared with the desktop slideshow preference, so a speed
+  // set on either surface applies here too.
+  const [slideshowPhotoMs, setSlideshowPhotoMs] = usePreference('slideshowPhotoMs');
+  // Step to the next/previous whole second (dir: +1 slower, -1 faster), clamped.
+  const stepSlideshowSpeed = (dir: 1 | -1) => {
+    const sec = slideshowPhotoMs / 1000;
+    const nextSec = dir > 0 ? Math.floor(sec) + 1 : Math.ceil(sec) - 1;
+    setSlideshowPhotoMs(Math.min(SLIDESHOW_MAX_MS, Math.max(SLIDESHOW_MIN_MS, nextSec * 1000)));
+  };
 
   const inPlaylist = !!url.playlist;
   const inSearch = !inPlaylist && url.query !== '';
@@ -106,6 +147,44 @@ export function MobileApp() {
     url.tags.length +
     url.mentioned.length;
 
+  // ── Screensaver (mirror-only on mobile) ───────────────────────────────────
+  const sync = useSync();
+  const config = trpc.config.list.useQuery(undefined, { staleTime: 30_000 });
+  const screensaverEnabled =
+    config.data?.find((c) => c.key === 'screensaver.enabled')?.value ?? true;
+  useSyncEvent('config.changed', () => { void trpcUtils.config.list.invalidate(); });
+
+  // The one signal that shows/hides it: a `screensaver` event from any device
+  // (desktop shortcut/hot-corner, or another screen). Gated by the instance
+  // config so a disabled screensaver can never blank the phone.
+  useSyncEvent('screensaver', (e) => {
+    setScreensaverOpen(e.open && screensaverEnabled);
+  });
+
+  // Exiting (after unlock) turns the wall off everywhere, same as desktop.
+  const dismissScreensaver = () => {
+    setScreensaverOpen(false);
+    sync.publish({ type: 'screensaver', open: false });
+  };
+
+  // Join an already-running screensaver on fresh load (the `screensaver` event
+  // only fires on change, so a phone that loads late would otherwise miss it).
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/sync/state', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { screensaver?: boolean } | null) => {
+        if (!cancelled && d?.screensaver && screensaverEnabled) setScreensaverOpen(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // Runs once on mount; screensaverEnabled defaults to true until config loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Warm the ambient clip during idle so it appears instantly when triggered.
+  useEffect(() => preloadScreensaverInBackground(), []);
+
   // Pick the active infinite query so the sentinel + status flags all
   // route to the same source.
   const active = inPlaylist ? playlistQ : inSearch ? search : recent;
@@ -153,6 +232,47 @@ export function MobileApp() {
   const onNext = selectedIndex >= 0 && selectedIndex < items.length - 1
     ? () => setSelectedUuid(items[selectedIndex + 1].uuid)
     : undefined;
+
+  // A slideshow only makes sense with at least two photos to move between.
+  const photoCount = useMemo(
+    () => items.reduce((n, i) => n + (i.kind === 'photo' ? 1 : 0), 0),
+    [items],
+  );
+  const canSlideshow = photoCount >= 2;
+
+  // Auto-advance loop. Dwell `slideshowPhotoMs` on each photo, then jump to the
+  // next photo (looping the loaded set); land on a video → skip straight past
+  // it. Paused while the screensaver is up. Stops on its own if the photos run
+  // out (e.g. a filter change emptied the list).
+  useEffect(() => {
+    if (!slideshow || !selected || screensaverOpen) return;
+
+    const advance = () => {
+      const from = items.findIndex((i) => i.uuid === selected.uuid);
+      if (from < 0) return;
+      const next = nextPhotoIndex(items, from);
+      if (next < 0) { setSlideshow(false); return; }
+      setSelectedUuid(items[next].uuid);
+    };
+
+    if (selected.kind !== 'photo') { advance(); return; } // don't dwell on videos
+    const t = window.setTimeout(advance, slideshowPhotoMs);
+    return () => window.clearTimeout(t);
+  }, [slideshow, selected, screensaverOpen, slideshowPhotoMs, items]);
+
+  // Warm the next photo so it appears instantly on advance instead of flashing
+  // a load. Cheap: the browser caches it; the <img> that shows it reuses it.
+  useEffect(() => {
+    if (!slideshow || !selected) return;
+    const from = items.findIndex((i) => i.uuid === selected.uuid);
+    if (from < 0) return;
+    const next = nextPhotoIndex(items, from);
+    const url = next >= 0 ? items[next].previewUrl : null;
+    if (url) { const img = new Image(); img.src = url; }
+  }, [slideshow, selected, items]);
+
+  // Leaving the viewer ends the slideshow.
+  const closeViewer = () => { setSlideshow(false); setSelectedUuid(null); };
 
   // Like flow shared between viewer and list-tap-to-like.
   const trpcUtils = trpc.useUtils();
@@ -253,20 +373,15 @@ export function MobileApp() {
                          pt-[max(env(safe-area-inset-top),0.5rem)]
                          px-3 pb-2">
         <div className="flex items-center gap-2">
-          {showBackButton ? (
+          {showBackButton && (
             <button
               onClick={leavePlaylist}
               aria-label="Back"
-              className="w-9 h-9 -ml-1 flex items-center justify-center
+              className="w-11 h-11 -ml-1 flex items-center justify-center
                          text-zinc-300 active:bg-zinc-800 rounded-full"
             >
               <ChevronLeftIcon />
             </button>
-          ) : (
-            <h1 className="shrink-0">
-              <KenNookLogo height={22} />
-              <span className="sr-only">KenNook</span>
-            </h1>
           )}
 
           {tab === 'library' && !inPlaylist && (
@@ -374,7 +489,16 @@ export function MobileApp() {
 
       <MobileViewer
         item={selected}
-        onClose={() => setSelectedUuid(null)}
+        suspended={screensaverOpen}
+        slideshow={slideshow}
+        canSlideshow={canSlideshow}
+        onToggleSlideshow={() => setSlideshow((s) => !s)}
+        slideshowMs={slideshowPhotoMs}
+        onSlower={() => stepSlideshowSpeed(1)}
+        onFaster={() => stepSlideshowSpeed(-1)}
+        atMinSpeed={slideshowPhotoMs <= SLIDESHOW_MIN_MS}
+        atMaxSpeed={slideshowPhotoMs >= SLIDESHOW_MAX_MS}
+        onClose={closeViewer}
         onPrev={onPrev}
         onNext={onNext}
         onSetLikes={handleSetLikes}
@@ -400,6 +524,8 @@ export function MobileApp() {
           onClose={() => setFilterSheetOpen(false)}
         />
       )}
+
+      <Screensaver open={screensaverOpen} onExit={dismissScreensaver} />
     </div>
   );
 }
@@ -647,7 +773,7 @@ function FilterButton({
     <button
       onClick={onOpen}
       aria-label="Filters"
-      className={`relative h-9 px-2.5 rounded-full flex items-center gap-1 shrink-0 transition
+      className={`relative h-11 px-4 rounded-full flex items-center gap-1.5 shrink-0 transition
                   ${active
                     ? 'bg-emerald-950/60 text-emerald-400'
                     : 'text-zinc-400 active:bg-zinc-900'}`}
@@ -666,7 +792,7 @@ function FilterButton({
 function FilterIcon() {
   return (
     <svg
-      width="16" height="16" viewBox="0 0 16 16" fill="none"
+      width="20" height="20" viewBox="0 0 16 16" fill="none"
       stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
     >
       <path d="M2 3h12l-4.5 5.5v4L6.5 14V8.5L2 3z" />
