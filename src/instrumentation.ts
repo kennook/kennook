@@ -22,4 +22,11 @@ export async function register(): Promise<void> {
   void import('@/ai/embed-client')
     .then(({ warmEmbedWorker }) => warmEmbedWorker())
     .catch((err) => console.error('[startup] embed warm failed:', err));
+
+  // Cloud agent — resumes heartbeat if this instance is already enrolled. A
+  // no-op unless KENNOOK_CLOUD_ENABLED opts in, so the default build stays
+  // strictly LAN-only. Fire-and-forget; a cloud hiccup never affects boot.
+  void import('@/server/cloud/agent')
+    .then(({ startCloudAgent }) => startCloudAgent())
+    .catch((err) => console.error('[startup] cloud agent failed:', err));
 }

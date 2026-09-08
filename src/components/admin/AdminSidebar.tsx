@@ -22,6 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Configuration', href: '/admin/configuration' },
   { label: 'Shortcuts',     href: '/admin/shortcuts' },
   { label: 'Screensaver',   href: '/admin/settings' },
+  { label: 'Cloud',         href: '/admin/cloud' },
   { label: 'Users',         href: '/admin/users' },
   { label: 'Theme',         href: '/admin/theme' },
 ];
