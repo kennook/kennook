@@ -14,15 +14,16 @@ import type { CloudStatus } from '@/server/cloud/agent';
 export function CloudConnection() {
   const utils = trpc.useUtils();
   const status = trpc.cloud.status.useQuery(undefined, {
-    // While an enrollment is pending, poll so the card flips to Connected on its
-    // own the moment the background agent sees the approval.
-    refetchInterval: (q) => (q.state.data?.connecting ? 3000 : false),
+    // While an enrollment is pending — or a cert is being issued — poll so the
+    // card updates on its own the moment the background agent makes progress.
+    refetchInterval: (q) => (q.state.data?.connecting || q.state.data?.certPending ? 3000 : false),
   });
   const s = status.data;
 
   const connect = trpc.cloud.connect.useMutation({ onSettled: () => utils.cloud.status.invalidate() });
   const cancel = trpc.cloud.cancel.useMutation({ onSettled: () => utils.cloud.status.invalidate() });
   const disconnect = trpc.cloud.disconnect.useMutation({ onSettled: () => utils.cloud.status.invalidate() });
+  const requestCert = trpc.cloud.requestCert.useMutation({ onSettled: () => utils.cloud.status.invalidate() });
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-2xl">
@@ -76,6 +77,11 @@ export function CloudConnection() {
       ) : s.enrolled ? (
         <div className="flex flex-col gap-4">
           <Entitlements s={s} />
+          <Certificate
+            s={s}
+            onRequest={() => requestCert.mutate()}
+            requesting={requestCert.isPending}
+          />
           <div className="text-[11px] text-zinc-600 font-mono truncate">agent {s.agentId}</div>
           <button
             onClick={() => disconnect.mutate()}
@@ -142,4 +148,57 @@ function Feature({ on, label }: { on: boolean; label: string }) {
       {label} {on ? 'on' : 'off'}
     </span>
   );
+}
+
+function Certificate({ s, onRequest, requesting }: {
+  s: CloudStatus;
+  onRequest: () => void;
+  requesting: boolean;
+}) {
+  // Cert issuance isn't opted into on this instance.
+  if (!s.certZone) {
+    return (
+      <div className="border-t border-zinc-800 pt-4 text-xs text-zinc-500 leading-relaxed">
+        TLS certificate issuance isn&apos;t configured. Set{' '}
+        <code className="text-zinc-300">KENNOOK_CLOUD_CERT_ZONE</code> (e.g.{' '}
+        <code className="text-zinc-300">d.kennook.dev</code>) to get a wildcard HTTPS
+        certificate for this instance&apos;s hostname.
+      </div>
+    );
+  }
+  const busy = requesting || s.certPending;
+  return (
+    <div className="flex flex-col gap-2 border-t border-zinc-800 pt-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-zinc-200">TLS certificate</span>
+        {s.cert
+          ? <ExpiryChip notAfter={s.cert.notAfter} />
+          : <span className="text-xs text-zinc-500">{busy ? 'issuing…' : 'none yet'}</span>}
+      </div>
+      {s.cert ? (
+        <div className="text-xs text-zinc-400 font-mono truncate">{s.cert.domain}</div>
+      ) : (
+        <p className="text-xs text-zinc-500">
+          No certificate yet{busy ? '' : ' — request one to enable HTTPS / HTTP-2 on this instance’s hostname.'}
+        </p>
+      )}
+      {s.certError && !busy && (
+        <div className="text-xs text-amber-400">Last attempt failed: {s.certError}</div>
+      )}
+      <button
+        onClick={onRequest}
+        disabled={busy}
+        className="self-start text-sm text-emerald-400 hover:text-emerald-300 transition disabled:opacity-40"
+      >
+        {busy ? 'Issuing…' : s.cert ? 'Renew certificate' : 'Request certificate'}
+      </button>
+    </div>
+  );
+}
+
+function ExpiryChip({ notAfter }: { notAfter: number | null }) {
+  if (!notAfter) return <span className="text-xs text-emerald-300">issued</span>;
+  const days = Math.round((notAfter - Date.now()) / 86_400_000);
+  const cls = days < 0 ? 'text-red-300' : days < 15 ? 'text-amber-300' : 'text-emerald-300';
+  return <span className={`text-xs ${cls}`}>{days < 0 ? 'expired' : `expires in ${days}d`}</span>;
 }

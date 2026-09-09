@@ -87,3 +87,27 @@ export interface AgentMeResp { agent_id: string; account_id: string; hash: strin
 export function getMe(token: string): Promise<AgentMeResp> {
   return call<AgentMeResp>('/agent/me', { method: 'GET', headers: authHeaders(token) });
 }
+
+// ── Certificate issuance (bearer-token) ──────────────────────────────────────
+// POST submits the agent's locally-generated CSR (field is `csr`); the spine
+// marks the row `issuing`, async-invokes the ACME issuer, and returns 202. GET
+// polls: `issued` carries the PEM under `certificate` (leaf+chain concatenated)
+// and the `domain`; otherwise `issuing`/`none`. There is NO error state — a
+// stuck `issuing` is surfaced by the caller's own timeout.
+
+export interface SubmitCsrResp { status: 'issuing' }
+export function submitCsr(token: string, csr: string): Promise<SubmitCsrResp> {
+  return call<SubmitCsrResp>('/agent/cert', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ csr }),
+  });
+}
+
+export type PollCertResp =
+  | { status: 'issued'; domain: string | null; certificate: string }
+  | { status: 'issuing' }
+  | { status: 'none' };
+export function pollCert(token: string): Promise<PollCertResp> {
+  return call<PollCertResp>('/agent/cert', { method: 'GET', headers: authHeaders(token) });
+}

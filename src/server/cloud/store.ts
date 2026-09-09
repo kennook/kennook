@@ -11,6 +11,10 @@ const DATA_ROOT = process.env.KENNOOK_DATA_ROOT ?? './data';
 const CLOUD_DIR = path.join(DATA_ROOT, 'cloud');
 const CREDS_PATH = path.join(CLOUD_DIR, 'agent.json');
 const ENTITLEMENTS_PATH = path.join(CLOUD_DIR, 'entitlements.json');
+const CERTS_DIR = path.join(CLOUD_DIR, 'certs');
+const CERT_KEY_PATH = path.join(CERTS_DIR, 'key.pem');
+const CERT_CHAIN_PATH = path.join(CERTS_DIR, 'fullchain.pem');
+const CERT_META_PATH = path.join(CERTS_DIR, 'cert.json');
 
 /** What the spine hands back on approved enrollment — the agent's identity. */
 export interface AgentCreds {
@@ -58,6 +62,8 @@ export function writeAgentCreds(creds: AgentCreds): void {
 
 export function clearAgentCreds(): void {
   for (const p of [CREDS_PATH, ENTITLEMENTS_PATH]) fs.rmSync(p, { force: true });
+  // Disconnect = forget everything, including the private key + issued cert.
+  fs.rmSync(CERTS_DIR, { recursive: true, force: true });
 }
 
 export function readEntitlements(): Entitlements | null {
@@ -67,4 +73,32 @@ export function readEntitlements(): Entitlements | null {
 export function writeEntitlements(e: Entitlements): void {
   ensureDir();
   fs.writeFileSync(ENTITLEMENTS_PATH, JSON.stringify(e, null, 2) + '\n', { mode: 0o600 });
+}
+
+// ── TLS cert material ─────────────────────────────────────────────────────────
+// The agent's own private key (never leaves this machine) + the wildcard cert
+// chain the spine's ACME issuer returned. Standard on-disk PEMs so any consumer
+// (a caddy `tls` drop-in today, native in-process TLS later) can point at them.
+
+/** Metadata about the currently-installed cert, alongside the PEM files. */
+export interface CertMeta {
+  domain: string;           // *.<hash>.<zone>
+  issuedAt: number;         // when we persisted it (epoch ms)
+  notAfter: number | null;  // cert's own expiry (epoch ms), null if unparseable
+}
+
+export function writeCert(keyPem: string, chainPem: string, meta: CertMeta): void {
+  if (!fs.existsSync(CERTS_DIR)) fs.mkdirSync(CERTS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(CERT_KEY_PATH, keyPem, { mode: 0o600 });      // secret
+  fs.writeFileSync(CERT_CHAIN_PATH, chainPem, { mode: 0o600 });  // public, but kept tight
+  fs.writeFileSync(CERT_META_PATH, JSON.stringify(meta, null, 2) + '\n', { mode: 0o600 });
+}
+
+export function readCertMeta(): CertMeta | null {
+  return readJson<CertMeta>(CERT_META_PATH);
+}
+
+/** Absolute paths a TLS consumer would point at. */
+export function certPaths(): { key: string; chain: string } {
+  return { key: CERT_KEY_PATH, chain: CERT_CHAIN_PATH };
 }

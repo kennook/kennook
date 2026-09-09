@@ -10,6 +10,7 @@
  *   KENNOOK_CLOUD_ENABLED=1                              — master opt-in
  *   KENNOOK_CLOUD_API_URL=https://<id>.execute-api.us-west-2.amazonaws.com
  *                                                        — the spine HTTP API base
+ *   KENNOOK_CLOUD_CERT_ZONE=d.kennook.dev                — cert-plane zone (see below)
  *
  * The API base is the auto-generated API Gateway endpoint (per env / account);
  * there's no stable alias yet, so it's supplied out-of-band rather than baked in.
@@ -18,6 +19,16 @@
 const RAW_ENABLED = process.env.KENNOOK_CLOUD_ENABLED === '1';
 /** Spine HTTP API base URL, trailing slash stripped. */
 export const CLOUD_API_URL = (process.env.KENNOOK_CLOUD_API_URL ?? '').replace(/\/+$/, '');
+
+/** The delegated cert-plane zone this agent's wildcard cert lives under —
+ *  `d.kennook.dev` (dev) / `d.kennook.net` (prod). The spine NEVER tells the
+ *  agent its zone (only its per-agent `hash`), and DNS-01 is only authorized
+ *  inside this delegated zone, so the operator supplies it alongside the API
+ *  base. Empty → cert issuance is skipped (enrollment + heartbeat still work).
+ *  The agent's cert domain is `*.<hash>.<CLOUD_CERT_ZONE>`. */
+export const CLOUD_CERT_ZONE = (process.env.KENNOOK_CLOUD_CERT_ZONE ?? '')
+  .trim()
+  .replace(/^\.+|\.+$/g, '');
 
 /** True only when cloud is opted-in AND an API base is set. Every cloud code
  *  path must guard on this and no-op when false. */

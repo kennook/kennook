@@ -12,12 +12,20 @@
 
 import os from 'node:os';
 import { KENNOOK_VERSION, KENNOOK_BUILD_ID } from '@/lib/version';
-import { cloudConfigured, HEARTBEAT_INTERVAL_MS } from './config';
+import { cloudConfigured, CLOUD_CERT_ZONE, HEARTBEAT_INTERVAL_MS } from './config';
 import { enrollStart, enrollPoll, heartbeat } from './client';
+import { obtainCertificate, getCertState } from './certs';
 import {
   readAgentCreds, writeAgentCreds, clearAgentCreds,
   readEntitlements, writeEntitlements, type Entitlements,
 } from './store';
+
+/** Kick a best-effort cert acquisition/renewal, but only when a cert zone is
+ *  configured — otherwise certs aren't part of this instance's opt-in and we
+ *  stay silent. obtainCertificate() self-skips when a fresh cert already exists. */
+function maybeObtainCert(): void {
+  if (CLOUD_CERT_ZONE) void obtainCertificate();
+}
 
 interface PendingEnrollment {
   deviceCode: string;
@@ -33,6 +41,12 @@ let lastError: string | null = null;
 
 // ── Status (for the admin UI) ────────────────────────────────────────────────
 
+export interface CertStatus {
+  domain: string;
+  notAfter: number | null;
+  issuedAt: number;
+}
+
 export interface CloudStatus {
   enabled: boolean;        // configured on this instance at all
   enrolled: boolean;
@@ -40,11 +54,16 @@ export interface CloudStatus {
   agentId: string | null;
   pending: { userCode: string; verificationUri: string } | null;
   entitlements: Entitlements | null;
+  certZone: string | null; // cert-plane zone if issuance is configured
+  cert: CertStatus | null; // the installed wildcard cert, if any
+  certPending: boolean;    // an issuance/renewal is in flight
+  certError: string | null;
   lastError: string | null;
 }
 
 export function getCloudStatus(): CloudStatus {
   const creds = cloudConfigured() ? readAgentCreds() : null;
+  const cs = creds ? getCertState() : { pending: false, lastError: null, meta: null };
   return {
     enabled: cloudConfigured(),
     enrolled: !!creds,
@@ -52,6 +71,10 @@ export function getCloudStatus(): CloudStatus {
     agentId: creds?.agentId ?? null,
     pending: pending ? { userCode: pending.userCode, verificationUri: pending.verificationUri } : null,
     entitlements: creds ? readEntitlements() : null,
+    certZone: CLOUD_CERT_ZONE || null,
+    cert: cs.meta ? { domain: cs.meta.domain, notAfter: cs.meta.notAfter, issuedAt: cs.meta.issuedAt } : null,
+    certPending: cs.pending,
+    certError: cs.lastError,
     lastError,
   };
 }
@@ -96,7 +119,8 @@ async function pollOnce(): Promise<void> {
       writeAgentCreds({ agentId: r.agent_id, hash: r.hash, token: r.token, enrolledAt: Date.now() });
       cancelEnrollment();
       lastError = null;
-      startHeartbeat(); // begin the steady loop immediately
+      startHeartbeat();  // begin the steady loop immediately
+      maybeObtainCert(); // fetch the wildcard cert now that we're enrolled
       return;
     }
     schedulePoll(interval); // pending — keep waiting
@@ -147,8 +171,10 @@ async function beat(): Promise<void> {
     };
     writeEntitlements(ent);
     lastError = null;
-    // commands[] is an empty stub today — drained here when the spine starts
-    // issuing renew-cert / deprovision commands (Slice 2+).
+    // Renewal seam: a cheap freshness check that self-skips unless the cert is
+    // missing or within its renew window. (commands[] is still an empty stub —
+    // drained here when the spine starts issuing renew-cert / deprovision.)
+    maybeObtainCert();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     lastError = msg;
@@ -173,5 +199,5 @@ function stopHeartbeat(): void {
  *  no-op when cloud is off or not yet connected. */
 export function startCloudAgent(): void {
   if (!cloudConfigured()) return;
-  if (readAgentCreds()) startHeartbeat();
+  if (readAgentCreds()) { startHeartbeat(); maybeObtainCert(); }
 }
