@@ -9,6 +9,7 @@
     "start": "next start",
     "build:prod": "KENNOOK_PROD=1 next build",
     "start:prod": "KENNOOK_PROD=1 next start -H :: -p 3001",
+  "start:tls": "KENNOOK_PROD=1 node server.mjs",
     "prod": "pnpm build:prod && pnpm start:prod",
     "commit": "tsx scripts/commit.ts",
     "release": "tsx scripts/release.ts",
