@@ -4,8 +4,9 @@
  * Admin control for custom screensaver clips (mounted on /admin/settings). Drop
  * or choose videos; each POSTs to /api/admin/screensaver/upload, which stores it
  * and transcodes it to web-safe MP4 in the background. The list polls for the
- * processing → ready/failed flip. When any clip is `ready` it replaces the
- * built-in stock footage in the screensaver rotation across every screen.
+ * processing → ready/failed flip. One clip is active at a time (selecting one
+ * deselects the others); the active clip replaces the built-in stock footage
+ * across every screen. With none selected, the built-in set plays.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -47,8 +48,6 @@ export function CustomScreensaversCard() {
         ? 2000 : false,
   });
   const clips = list.data ?? [];
-  const readyCount = clips.filter((c) => c.status === 'ready').length;
-  const enabledReadyCount = clips.filter((c) => c.status === 'ready' && c.enabled !== false).length;
 
   const remove = trpc.screensaver.remove.useMutation({
     onSuccess: () => utils.screensaver.list.invalidate(),
@@ -154,9 +153,9 @@ export function CustomScreensaversCard() {
       <p className="text-xs text-zinc-500 mb-5 leading-relaxed">
         Upload your own clips to play as the walk-away screensaver. Any video
         works (mp4, mov, m4v, webm) — it’s converted to a web-friendly format
-        automatically. Hover a clip to preview it, then enable the ones you want:
-        turn on several and they rotate (a different one per screen on a wall), or
-        just one to pin it. With none enabled, the built-in screensaver plays.
+        automatically. Hover a clip to preview it, then switch on the one you
+        want — only one plays at a time, so turning one on turns the others off.
+        With none selected, the built-in screensaver plays.
       </p>
 
       <div
@@ -245,7 +244,7 @@ export function CustomScreensaversCard() {
                           {c.status === 'processing' && <span className="text-amber-300">converting…</span>}
                           {isReady && (
                             <span className={on ? 'text-emerald-300' : 'text-zinc-500'}>
-                              {on ? (enabledReadyCount > 1 ? 'in rotation' : 'active') : 'disabled'}
+                              {on ? 'active' : 'off'}
                             </span>
                           )}
                           {isReady && loopBusy && <span className="text-amber-300"> · preparing loop…</span>}
@@ -255,17 +254,6 @@ export function CustomScreensaversCard() {
                         </div>
                       </div>
 
-                      {isReady && readyCount > 1 && !(on && enabledReadyCount === 1) && (
-                        <button
-                          onClick={() => setOnly.mutate({ id: c.id })}
-                          disabled={setOnly.isPending}
-                          title="Play only this one — disable the others"
-                          className="text-[11px] text-zinc-500 hover:text-emerald-300 transition
-                                     disabled:opacity-40 shrink-0"
-                        >
-                          Only
-                        </button>
-                      )}
                       {isReady && (() => {
                         const speed = c.speed ?? 1;
                         return (
@@ -311,9 +299,14 @@ export function CustomScreensaversCard() {
                       {isReady && (
                         <Toggle
                           on={on}
-                          disabled={setEnabled.isPending}
-                          label={`${c.name} in rotation`}
-                          onChange={(v) => setEnabled.mutate({ id: c.id, enabled: v })}
+                          disabled={setEnabled.isPending || setOnly.isPending}
+                          label={`Use ${c.name} as the screensaver`}
+                          // Single-select: switching one on turns the others off
+                          // (setOnly flips all optimistically); switching off
+                          // falls back to the built-in set.
+                          onChange={(v) =>
+                            v ? setOnly.mutate({ id: c.id })
+                              : setEnabled.mutate({ id: c.id, enabled: false })}
                         />
                       )}
                     </div>

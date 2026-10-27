@@ -23,6 +23,13 @@ import { classifyBump } from '@/lib/semver';
 
 const DISMISS_KEY = 'kennook.reloadDismissed';
 
+/** Reload after a small random delay so a wall of screens updating to a new
+ *  build doesn't all reload in the same instant (a thundering herd that hammers
+ *  the server and each browser's HTTP/1.1 connection pool at once). */
+function jitteredReload(): void {
+  window.setTimeout(() => window.location.reload(), Math.floor(Math.random() * 4000));
+}
+
 function dismissedKey(version: string, buildId: string): string {
   return `${version}+${buildId}`;
 }
@@ -60,7 +67,7 @@ export function ReloadPrompt() {
     // user) screensaver state re-opens it on load, so the swap is invisible.
     // The reloaded bundle runs the new version, so this can't loop.
     if (screensaverActive) {
-      window.location.reload();
+      jitteredReload();
       return;
     }
     const bump = classifyBump(KENNOOK_VERSION, e.version);
@@ -77,7 +84,7 @@ export function ReloadPrompt() {
   // Also cover the reverse order: a banner was already showing (update detected
   // earlier) and THEN the screensaver comes up. Reload silently at that point.
   useEffect(() => {
-    if (prompt && screensaverActive) window.location.reload();
+    if (prompt && screensaverActive) jitteredReload();
   }, [prompt, screensaverActive]);
 
   if (!prompt) return null;

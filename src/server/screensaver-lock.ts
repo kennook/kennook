@@ -11,10 +11,14 @@
  *     with no password — unlocks with the shared numeric PASSCODE
  *     (mode `'passcode'`).
  *
- * The passcode is a numeric PIN (4, 6, or 8 digits — the admin's choice),
- * deliberately distinct from the alphanumeric account password so the prompt can
- * be unambiguous. It also acts as the on-switch: with no passcode set, the lock
- * is off for the anonymous/kiosk path (mode `'none'`), and the admin owns it.
+ * The shared secret is one the admin configures as either a numeric PASSCODE (a
+ * PIN of a chosen length, PASSCODE_MIN_LENGTH..PASSCODE_MAX_LENGTH) or a
+ * free-form PASSWORD (text, PASSWORD_MIN_LENGTH..PASSWORD_MAX_LENGTH) — see
+ * `LockSecretType`. A short 4-digit PIN is easy to shoulder-surf, so a longer
+ * passcode or a password is available for real security. The secret also acts
+ * as the on-switch: with none set, the lock is off for the anonymous/kiosk path
+ * (mode `'none'`), and the admin owns it. This shared secret is distinct from
+ * the account password a signed-in named user unlocks with (mode `'password'`).
  *
  * Stored as a salted scrypt hash in the shared `user_settings` bag so both
  * the prod and dev Node processes — which share one user.db — agree on it.
@@ -34,22 +38,49 @@ import { DEFAULT_USER_ID, userHasPassword, verifyUserPassword } from '@/server/a
 const LOCK_USER_ID = 1;
 const LOCK_KEY = 'screensaver.lock.hash';
 const LENGTH_KEY = 'screensaver.lock.length';
+const TYPE_KEY = 'screensaver.lock.type';
 
-/** Allowed passcode lengths — a plain 4-digit PIN, or a longer 6/8 for power
- *  users who want more entropy. */
-export const PASSCODE_LENGTHS = [4, 6, 8] as const;
-/** Default length when none is stored. */
-export const PASSCODE_LENGTH = 4;
+/** The kind of SHARED secret the admin configured for the anonymous/kiosk
+ *  unlock path: a numeric `passcode` (PIN of a chosen length) or a free-form
+ *  `password` (text + confirmation). Distinct from the per-session account
+ *  password a signed-in named user uses — see `lockModeFor`. */
+export type LockSecretType = 'passcode' | 'password';
 
-/** The stored passcode length (number of digits), defaulting to PASSCODE_LENGTH.
- *  Drives how many entry boxes the unlock prompt renders. */
+/** Free-form shared-password bounds (the `password` secret type). */
+export const PASSWORD_MIN_LENGTH = 4;
+export const PASSWORD_MAX_LENGTH = 128;
+
+/** Passcode length bounds. The admin picks any length in this range; the
+ *  passcode is then randomly generated at that length. 4 is the floor (a PIN),
+ *  32 a sane ceiling that scrypt handles trivially and stays typeable. */
+export const PASSCODE_MIN_LENGTH = 4;
+export const PASSCODE_MAX_LENGTH = 32;
+/** Default length when none is stored (what the admin's length picker starts
+ *  at) — 6, since 4 is easily guessable. */
+export const PASSCODE_LENGTH = 6;
+
+/** The stored passcode length (number of digits), clamped into the allowed
+ *  range and defaulting to PASSCODE_LENGTH. Drives how many entry boxes the
+ *  unlock prompt renders. */
 export function getPasscodeLength(): number {
   const db = getUserSqlite();
   const row = db
     .prepare('SELECT value FROM user_settings WHERE user_id = ? AND key = ?')
     .get(LOCK_USER_ID, LENGTH_KEY) as { value: string | null } | undefined;
   const n = Number(row?.value);
-  return (PASSCODE_LENGTHS as readonly number[]).includes(n) ? n : PASSCODE_LENGTH;
+  if (Number.isInteger(n) && n >= PASSCODE_MIN_LENGTH && n <= PASSCODE_MAX_LENGTH) return n;
+  return PASSCODE_LENGTH;
+}
+
+/** The configured shared-secret type. Defaults to `passcode` — both for a fresh
+ *  install and for legacy locks set before the type was stored (they were all
+ *  numeric passcodes). */
+export function getLockSecretType(): LockSecretType {
+  const db = getUserSqlite();
+  const row = db
+    .prepare('SELECT value FROM user_settings WHERE user_id = ? AND key = ?')
+    .get(LOCK_USER_ID, TYPE_KEY) as { value: string | null } | undefined;
+  return row?.value === 'password' ? 'password' : 'passcode';
 }
 
 /** How the current session must unlock the screensaver. */
@@ -71,33 +102,57 @@ export function isLockEnabled(): boolean {
   return readStored() !== null;
 }
 
+/** Clear the shared secret entirely — the anonymous/kiosk path reverts to
+ *  dismiss-on-any-gesture and the lock is off. */
+export function clearLockSecret(): void {
+  getUserSqlite()
+    .prepare('DELETE FROM user_settings WHERE user_id = ? AND key IN (?, ?, ?)')
+    .run(LOCK_USER_ID, LOCK_KEY, LENGTH_KEY, TYPE_KEY);
+}
+
 /**
- * Set (non-empty) or clear (empty/blank) the screensaver passcode. The passcode
- * must be all digits and one of PASSCODE_LENGTHS (4/6/8); anything else throws.
- * The chosen length is remembered so the unlock prompt renders the right number
- * of boxes. Clearing removes the rows so the anonymous/kiosk path reverts to
- * dismiss-on-any-gesture.
+ * Set the shared screensaver secret. `type` picks how it's validated and how the
+ * unlock prompt renders it:
+ *   - `passcode`: all digits, length in [PASSCODE_MIN_LENGTH, PASSCODE_MAX_LENGTH];
+ *     the length is remembered so the prompt draws the right number of boxes.
+ *   - `password`: free-form text, length in [PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH];
+ *     no length is stored (the prompt is a single field).
+ * An empty value clears the lock. Only the salted hash is persisted.
  */
-export function setLockPasscode(passcode: string | null | undefined): void {
+export function setLockSecret(type: LockSecretType, value: string): void {
+  // For a passcode, surrounding whitespace is never meaningful; for a password
+  // it could be, so only trim the passcode.
+  const secret = type === 'passcode' ? value.trim() : value;
+  if (!secret) { clearLockSecret(); return; }
+
+  if (type === 'passcode') {
+    if (!/^\d+$/.test(secret)
+        || secret.length < PASSCODE_MIN_LENGTH
+        || secret.length > PASSCODE_MAX_LENGTH) {
+      throw new Error(`Passcode must be ${PASSCODE_MIN_LENGTH}–${PASSCODE_MAX_LENGTH} digits.`);
+    }
+  } else {
+    if (secret.length < PASSWORD_MIN_LENGTH || secret.length > PASSWORD_MAX_LENGTH) {
+      throw new Error(`Password must be ${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} characters.`);
+    }
+  }
+
   const db = getUserSqlite();
-  const trimmed = (passcode ?? '').trim();
-  if (!trimmed) {
-    // Clear both the hash and the remembered length.
-    db.prepare('DELETE FROM user_settings WHERE user_id = ? AND key IN (?, ?)')
-      .run(LOCK_USER_ID, LOCK_KEY, LENGTH_KEY);
-    return;
-  }
-  if (!/^\d+$/.test(trimmed) || !(PASSCODE_LENGTHS as readonly number[]).includes(trimmed.length)) {
-    throw new Error(`Passcode must be ${PASSCODE_LENGTHS.join(', ')} digits.`);
-  }
   const upsert = db.prepare(
     `INSERT INTO user_settings (user_id, key, value, updated_at)
        VALUES (?, ?, ?, unixepoch() * 1000)
      ON CONFLICT(user_id, key)
        DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   );
-  upsert.run(LOCK_USER_ID, LOCK_KEY, hashSecret(trimmed));
-  upsert.run(LOCK_USER_ID, LENGTH_KEY, String(trimmed.length));
+  upsert.run(LOCK_USER_ID, LOCK_KEY, hashSecret(secret));
+  upsert.run(LOCK_USER_ID, TYPE_KEY, type);
+  if (type === 'passcode') {
+    upsert.run(LOCK_USER_ID, LENGTH_KEY, String(secret.length));
+  } else {
+    // A password has no digit-box length — drop any stale value.
+    db.prepare('DELETE FROM user_settings WHERE user_id = ? AND key = ?')
+      .run(LOCK_USER_ID, LENGTH_KEY);
+  }
 }
 
 /**

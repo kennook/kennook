@@ -90,10 +90,6 @@ function pickVariantUrl(clip: ScreensaverClip): string {
 // the blur if it feels too faint.
 const SCREENSAVER_FILTER = 'brightness(0.2) contrast(1) saturate(0.8) blur(4px)';
 
-// Fade duration (ms) for the auto-rotate crossfade-to-black. Must match the
-// Tailwind `duration-*` on the video so the black hold lines up with the swap.
-const ROTATE_FADE_MS = 700;
-
 /**
  * Mount once at the page root. Triggered via the `global.screensaver`
  * shortcut from `page.tsx`. Covers everything (z-[100]) and exits on any
@@ -121,16 +117,19 @@ export function Screensaver({ open, onExit }: Props) {
   // Playback speed for the resolved clip (custom clips can set 0.5/1/2/3×);
   // applied as the video's playbackRate when it loads.
   const [speed, setSpeed] = useState(1);
-  // Rotation state: the loaded clip list, how many times we've advanced, and a
-  // visibility flag driving the crossfade-to-black between clips.
+  // The loaded clip list. Only ONE screensaver plays at a time (custom clips are
+  // single-select; the built-in set resolves one clip per window by index) — no
+  // rotation. Running several different clips across many windows on one machine
+  // exhausted the browser's per-origin connection pool, so rotation was removed.
   const [manifest, setManifest] = useState<ScreensaverClip[] | null>(null);
-  const [rotationStep, setRotationStep] = useState(0);
-  const [visible, setVisible] = useState(true);
-  // The window's base position in the rotation, snapshotted on the first resolve
-  // so a later assignment change (SSE reconnect re-issues one) can't jump the
-  // clip out from under an in-progress rotation.
+  // The window's position in the list, snapshotted on the first resolve so a
+  // later assignment change (SSE reconnect re-issues one) can't swap the clip
+  // out from under the window.
   const [baseIndex, setBaseIndex] = useState<number | null>(null);
   const assignedIndex = useScreensaverIndex();
+  // Nudge playback back to life when the tab becomes visible again (see the
+  // wake-lock effect) — browsers can pause a backgrounded <video>.
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // Lock state. Fetched eagerly (not just while open) so the unlock
   // requirement is known before the first dismiss gesture.
@@ -144,12 +143,6 @@ export function Screensaver({ open, onExit }: Props) {
   const config = trpc.config.list.useQuery(undefined, { staleTime: 30_000 });
   const softenFilter = config.data?.find((c) => c.key === 'screensaver.filter')?.value ?? true;
 
-  // Auto-rotate interval (ms; 0 = off). Its own query (not part of config.list),
-  // so refetch it when config changes to pick up an admin change live.
-  const trpcUtils = trpc.useUtils();
-  const rotateQuery = trpc.screensaver.rotate.useQuery(undefined, { staleTime: 30_000 });
-  const rotateMs = rotateQuery.data?.ms ?? 0;
-  useSyncEvent('config.changed', () => { void trpcUtils.screensaver.rotate.invalidate(); });
   // FAIL CLOSED: treat the screensaver as locked unless the server has
   // positively told us the mode is 'none'. While the status is loading or the
   // request errors (e.g. a stale build without the endpoint, or a dropped
@@ -161,7 +154,15 @@ export function Screensaver({ open, onExit }: Props) {
   // account password; 'passcode' → the shared numeric PIN.
   const mode = lockStatus.data?.mode;
   const locked = mode !== 'none';
-  const isPasscode = mode === 'passcode';
+  // The shared-secret path ('passcode' mode) can be a numeric passcode OR a
+  // free-form password, per the admin's choice (`secretType`). Only a numeric
+  // passcode gets the PIN boxes; a shared password (and the account-password
+  // path) gets a password field.
+  const secretType = lockStatus.data?.secretType;
+  const isNumericPasscode = mode === 'passcode' && secretType !== 'password';
+  // Admin-chosen passcode length — drives how many PIN boxes the prompt draws
+  // (they wrap onto more rows for longer codes).
+  const passLen = lockStatus.data?.length ?? 6;
   const verify = trpc.screensaverLock.verify.useMutation();
 
   // Refetch the lock state each time the screensaver opens, so a passcode (or
@@ -269,9 +270,7 @@ export function Screensaver({ open, onExit }: Props) {
     if (!open) {
       setManifest(null);
       setSrc(null);
-      setRotationStep(0);
       setBaseIndex(null);
-      setVisible(true);
       resetScreensaverManifest();
       return;
     }
@@ -281,50 +280,27 @@ export function Screensaver({ open, onExit }: Props) {
     return () => { cancelled = true; };
   }, [open, manifest]);
 
-  // Resolve the clip to show: each window starts at its assigned index (variety
-  // across a wall) and steps forward by `rotationStep` on each auto-rotate. The
-  // base index is captured on the first resolve; after that, live assignedIndex
-  // changes are ignored (they'd resolve to the same clip anyway), so nothing
-  // jumps mid-rotation.
+  // Resolve the one clip to show. Each window picks by its assigned index — for
+  // the built-in set that gives variety across a wall; a single-select custom
+  // clip (list length 1) resolves to the same clip everywhere. The index is
+  // snapshotted on the first resolve so a later assignedIndex change (SSE
+  // reconnect) can't swap the clip out from under the window.
   useEffect(() => {
     if (!manifest || manifest.length === 0) return;
     const base = baseIndex ?? assignedIndex;
     if (baseIndex == null) setBaseIndex(assignedIndex);
-    const clip = manifest[(base + rotationStep) % manifest.length];
+    const clip = manifest[base % manifest.length];
     setSrc(pickVariantUrl(clip));
     setSpeed(clip.speed ?? 1);
-  }, [manifest, rotationStep, baseIndex, assignedIndex]);
+  }, [manifest, baseIndex, assignedIndex]);
 
-  // Auto-rotate: after `rotateMs`, fade to black, then advance to the next
-  // active clip and fade back in. Only when enabled and there's more than one
-  // clip to rotate between. Re-arms after each advance (rotationStep dep).
-  useEffect(() => {
-    if (!open || !manifest || manifest.length <= 1 || rotateMs <= 0) return;
-    let advanceTimer: ReturnType<typeof setTimeout> | undefined;
-    const fadeTimer = setTimeout(() => {
-      setVisible(false); // crossfade to black
-      advanceTimer = setTimeout(() => {
-        setRotationStep((s) => s + 1); // load the next clip → re-resolves src
-        setVisible(true);              // fade the new clip in
-      }, ROTATE_FADE_MS);
-    }, rotateMs);
-    return () => { clearTimeout(fadeTimer); if (advanceTimer) clearTimeout(advanceTimer); };
-  }, [open, manifest, rotateMs, rotationStep]);
-
-  // Safety: a change to the source of truth (open / list / interval) resets the
-  // fade, so an admin edit landing mid-crossfade can't leave a window stuck on
-  // black. It doesn't depend on rotationStep, so a normal rotation isn't disturbed.
-  useEffect(() => { setVisible(true); }, [open, manifest, rotateMs]);
-
-  // The admin's custom-screensaver set changed (upload/enable/disable/remove):
-  // reload the list and restart rotation so the new set applies live, no reload.
+  // The admin's custom-screensaver set changed (upload/select/disable/remove):
+  // reload the list so the new choice applies live, no reload.
   useSyncEvent('screensaver.manifest.changed', () => {
     resetScreensaverManifest();
     setManifest(null);
     setSrc(null);
-    setRotationStep(0);
     setBaseIndex(null);
-    setVisible(true);
   });
 
   // Keep the screen awake while the screensaver is on. Crucial on mobile:
@@ -347,7 +323,13 @@ export function Screensaver({ open, onExit }: Props) {
     void acquire();
 
     const onVis = () => {
-      if (document.visibilityState === 'visible' && open) void acquire();
+      if (document.visibilityState === 'visible' && open) {
+        void acquire();
+        // Chrome pauses a backgrounded <video>; nudge it back to playing so the
+        // footage doesn't come back on a frozen (dark) frame after the tab was
+        // hidden/throttled.
+        void videoRef.current?.play().catch(() => {});
+      }
     };
     document.addEventListener('visibilitychange', onVis);
 
@@ -451,24 +433,22 @@ export function Screensaver({ open, onExit }: Props) {
     >
       {src && (
         <video
+          ref={videoRef}
           src={src}
           autoPlay
           muted
           loop
           playsInline
           // Apply the clip's playback speed once metadata is ready (setting it
-          // before load is reset by some browsers), and (re)start playback — on
-          // a rotation the same element just swaps `src`, so autoplay may not
-          // re-fire on its own. Muted, so play() is allowed.
+          // before load is reset by some browsers), and start playback. Muted,
+          // so play() is allowed.
           onLoadedMetadata={(e) => {
             e.currentTarget.playbackRate = speed;
             void e.currentTarget.play().catch(() => {});
           }}
           // scale-105 pushes the soft blurred edge off-screen so the filter
-          // doesn't feather a faint black margin at the viewport bounds. Opacity
-          // drives the auto-rotate crossfade (duration must match ROTATE_FADE_MS).
-          className={`absolute inset-0 w-full h-full object-cover scale-105
-                      transition-opacity duration-700 ${visible ? 'opacity-100' : 'opacity-0'}`}
+          // doesn't feather a faint black margin at the viewport bounds.
+          className="absolute inset-0 w-full h-full object-cover scale-105"
           style={softenFilter ? { filter: SCREENSAVER_FILTER } : undefined}
         />
       )}
@@ -483,8 +463,9 @@ export function Screensaver({ open, onExit }: Props) {
           <form
             onSubmit={submitUnlock}
             onAnimationEnd={() => setShaking(false)}
-            className={`relative w-full max-w-xs bg-zinc-950/90 backdrop-blur ring-1
+            className={`relative w-full bg-zinc-950/90 backdrop-blur ring-1
                        rounded-xl p-5 flex flex-col gap-3 shadow-2xl
+                       ${isNumericPasscode ? 'max-w-sm' : 'max-w-xs'}
                        ${shaking ? 'kn-shake ring-red-500/50' : 'ring-zinc-800'}`}
           >
             <button
@@ -499,15 +480,19 @@ export function Screensaver({ open, onExit }: Props) {
             </button>
 
             <div className="text-sm text-zinc-300 text-center pt-1">
-              {isPasscode ? 'Enter passcode to unlock' : 'Enter your password to unlock'}
+              {isNumericPasscode
+                ? 'Enter passcode to unlock'
+                : mode === 'passcode'
+                  ? 'Enter the password to unlock'
+                  : 'Enter your password to unlock'}
             </div>
-            {isPasscode ? (
-              // Numeric PIN (4/6/8 boxes per the admin's setting); auto-submits
-              // when the last digit is entered.
+            {isNumericPasscode ? (
+              // Segmented PIN boxes — one per digit, wrapping onto more rows for
+              // longer codes. Auto-submits on the last digit.
               <PinInput
                 key={attemptKey}
                 value={entry}
-                length={lockStatus.data?.length ?? 4}
+                length={passLen}
                 onChange={(v) => { setEntry(v); setAuthError(false); }}
                 onComplete={(v) => void attemptUnlock(v)}
                 error={authError}
@@ -530,7 +515,7 @@ export function Screensaver({ open, onExit }: Props) {
             )}
             {authError && (
               <div className="text-xs text-red-400 text-center">
-                {isPasscode ? 'Incorrect passcode' : 'Incorrect password'}
+                {isNumericPasscode ? 'Incorrect passcode' : 'Incorrect password'}
               </div>
             )}
             <div className="flex gap-2">

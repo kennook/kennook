@@ -41,11 +41,20 @@ export function WindowFocusPulse() {
   );
 }
 
+// Presence heartbeat timings. Each window pings on this interval; a peer is
+// considered gone if we haven't heard from it within the TTL (a few missed
+// pings). Self-healing: a window that missed earlier messages (e.g. it was in
+// the background when the others opened) rediscovers everyone within one ping.
+const PING_MS = 2000;
+const PEER_TTL_MS = 6500; // > 3 pings of slack
+
 /**
  * True when one or more other same-origin KenNook windows/tabs are open, via a
- * BroadcastChannel presence handshake: on mount we announce ourselves and every
- * peer replies; each window says goodbye on unload. Best-effort and cosmetic —
- * a missed goodbye (e.g. a crash) just means a stale peer until it re-syncs.
+ * BroadcastChannel presence HEARTBEAT: every window pings periodically and tracks
+ * when it last heard from each peer, expiring stale ones. This replaced a
+ * one-shot hello/here handshake that could leave a window permanently thinking
+ * it was alone if it missed the initial messages — which is why the focus pulse
+ * never fired on an occasional window. Best-effort and cosmetic.
  */
 function usePeerWindows(): boolean {
   const [hasPeers, setHasPeers] = useState(false);
@@ -58,33 +67,53 @@ function usePeerWindows(): boolean {
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random()}`;
-    const peers = new Set<string>();
+    const peers = new Map<string, number>(); // id → last-seen (ms)
     const sync = () => setHasPeers(peers.size > 0);
+
+    const prune = () => {
+      const now = Date.now();
+      let changed = false;
+      for (const [id, seen] of peers) {
+        if (now - seen > PEER_TTL_MS) { peers.delete(id); changed = true; }
+      }
+      if (changed) sync();
+    };
 
     channel.onmessage = (e: MessageEvent) => {
       const msg = e.data as { type?: string; id?: string } | null;
       if (!msg?.id || msg.id === myId) return;
-      if (msg.type === 'hello') {
-        // A new window arrived — record it and announce ourselves back.
-        peers.add(msg.id);
-        channel.postMessage({ type: 'here', id: myId });
-        sync();
-      } else if (msg.type === 'here') {
-        peers.add(msg.id);
-        sync();
+      if (msg.type === 'ping') {
+        const known = peers.has(msg.id);
+        peers.set(msg.id, Date.now());
+        if (!known) {
+          // New peer — ping straight back so IT learns about us without waiting
+          // for our next interval tick.
+          channel.postMessage({ type: 'ping', id: myId });
+          sync();
+        }
       } else if (msg.type === 'bye') {
-        peers.delete(msg.id);
-        sync();
+        if (peers.delete(msg.id)) sync();
       }
     };
 
-    channel.postMessage({ type: 'hello', id: myId });
+    const ping = () => channel.postMessage({ type: 'ping', id: myId });
+    ping(); // announce immediately
+    const iv = window.setInterval(() => { ping(); prune(); }, PING_MS);
+
+    // Re-announce the moment we regain focus/visibility so a just-foregrounded
+    // window refreshes presence promptly (and its pulse reflects reality).
+    const reannounce = () => ping();
+    window.addEventListener('focus', reannounce);
+    document.addEventListener('visibilitychange', reannounce);
 
     const sayBye = () => channel.postMessage({ type: 'bye', id: myId });
     window.addEventListener('pagehide', sayBye);
 
     return () => {
+      window.clearInterval(iv);
       sayBye();
+      window.removeEventListener('focus', reannounce);
+      document.removeEventListener('visibilitychange', reannounce);
       window.removeEventListener('pagehide', sayBye);
       channel.close();
     };

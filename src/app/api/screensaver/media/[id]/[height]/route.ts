@@ -39,6 +39,12 @@ export async function GET(
   const stat = await fs.promises.stat(absPath);
   const total = stat.size;
   const contentType = 'video/mp4';
+  // These variant files are written once at transcode and never rewritten (a new
+  // upload/loop is a new URL), so they're safe to cache hard. This matters most
+  // on a multi-screen wall: several windows in one browser then share ONE
+  // download instead of each re-fetching the clip and exhausting the connection
+  // pool (HTTP/1.1's ~6-per-host limit).
+  const cacheControl = 'public, max-age=31536000, immutable';
 
   const range = req.headers.get('range');
   if (range) {
@@ -55,6 +61,7 @@ export async function GET(
           'accept-ranges': 'bytes',
           'content-length': String(chunkSize),
           'content-type': contentType,
+          'cache-control': cacheControl,
         },
       });
     }
@@ -66,6 +73,7 @@ export async function GET(
       'content-type': contentType,
       'content-length': String(total),
       'accept-ranges': 'bytes',
+      'cache-control': cacheControl,
     },
   });
 }

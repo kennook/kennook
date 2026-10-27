@@ -72,7 +72,9 @@ export function PinInput({
   };
 
   return (
-    <div className="flex gap-2 justify-center" onPaste={onPaste}>
+    // Wrap so longer passcodes (the admin can choose up to 32 digits) don't
+    // overflow the modal — they flow onto additional rows.
+    <div className="flex flex-wrap gap-2 justify-center" onPaste={onPaste}>
       {Array.from({ length }).map((_, i) => (
         <input
           key={i}
