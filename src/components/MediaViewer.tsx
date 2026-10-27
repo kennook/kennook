@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { MediaItemDto } from './MediaGrid';
 import { VideoPlayer } from './VideoPlayer';
 import { useShortcut, useTapOrHold } from '@/lib/shortcuts';
@@ -226,6 +226,13 @@ export function MediaViewer({
   // / Plex / Apple TV. Reset on any mouse movement.
   const [chromeVisible, setChromeVisible] = useState(true);
   const idleTimerRef = useRef<number | null>(null);
+  // Mirror of chromeVisible readable from DOM event handlers. Synced in a layout
+  // effect (before the browser dispatches the synthetic mouseleave that hiding —
+  // i.e. applying pointer-events-none — fires under a stationary cursor), so
+  // onMouseLeave can tell a real cursor exit from that synthetic one and not
+  // re-show the chrome it just hid.
+  const chromeVisibleRef = useRef(true);
+  useLayoutEffect(() => { chromeVisibleRef.current = chromeVisible; }, [chromeVisible]);
 
   // Pan offset in pixels (translate applied to media in maxed + cover mode).
   // Only meaningful when content overflows the viewport (cover fit clips
@@ -819,19 +826,32 @@ export function MediaViewer({
     pulseChrome();
   }, [maxed, pulseChrome]);
 
+  // Predicate: is (x,y) inside a corner mapped to "hide controls"? Declared here
+  // so both the hover handlers and the root mouse-move can consult it.
+  const inHideCorner = useHideCornerPredicate();
+
   // Spread onto every chrome wrapper. The `data-kn-chrome` marker is what the
   // geometric hover check keys off; leaving a control re-pulses so the fade
   // resumes promptly once the cursor exits.
   const chromeHoverHandlers = {
     'data-kn-chrome': '',
-    onMouseLeave: () => pulseChrome(),
+    onMouseLeave: (e: React.MouseEvent) => {
+      // Don't re-show the chrome when the "leave" is really the chrome hiding
+      // out from under a stationary cursor (hiding sets pointer-events-none,
+      // which fires a synthetic mouseleave) — that created a hide→show flicker
+      // loop. Nor when the cursor is parked in a hide-controls corner (where the
+      // intent is to keep them hidden; the left reel overlaps those corners).
+      // A real cursor exit still re-pulses via the root mouse-move handler.
+      if (!chromeVisibleRef.current) return;
+      if (inHideCorner(e.clientX, e.clientY)) return;
+      pulseChrome();
+    },
   };
 
   // Root mouse-move: reveal the chrome + re-arm the idle timer — EXCEPT when the
   // cursor sits in a corner mapped to "hide controls" (configurable hot corner),
   // so a mouse jiggler parked there can't keep the controls pinned open (they
   // still fade after the idle window).
-  const inHideCorner = useHideCornerPredicate();
   const handleViewerMouseMove = useCallback((e: React.MouseEvent) => {
     if (inHideCorner(e.clientX, e.clientY)) return;
     pulseChrome();
@@ -1656,19 +1676,21 @@ export function MediaViewer({
             </div>
           )}
 
-          {/* Coming-up film strip — visible in every viewer mode, including
-              slideshow. Position bumps clear of video native controls when
-              applicable. */}
+          {/* Coming-up reel — a VERTICAL column down the LEFT edge (prev above,
+              now, upcoming below) so the stream reads as scroll-up/down, even on
+              desktop. Left side keeps it clear of the right-hand info panel.
+              Anchored between the top-left counter and the bottom-left toolbar;
+              its height drives how many tiles show (ViewerReel measures it). */}
           {reelItems && onSelectItem && position && (
             <div
               data-component="viewer-reel-wrapper"
-              className={`absolute inset-x-0 z-20 ${chromeFadeClass}
+              className={`absolute left-3 top-16 z-20 ${chromeFadeClass}
                           ${item.kind === 'video'
-                            ? (maxed ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-24')
-                            : (maxed ? 'bottom-[var(--kn-toolbar-clearance)]' : 'bottom-3')}
-                          px-3 flex justify-center pointer-events-none`}
+                            ? 'bottom-[var(--kn-controls-clearance)]'
+                            : (maxed ? 'bottom-[var(--kn-toolbar-clearance)]' : 'bottom-16')}
+                          flex items-stretch pointer-events-none`}
             >
-              <div className="pointer-events-auto" {...chromeHoverHandlers}>
+              <div className="pointer-events-auto h-full" {...chromeHoverHandlers}>
                 <ViewerReel
                   items={reelItems}
                   currentIndex={position.index}
@@ -2011,9 +2033,26 @@ export function MediaViewer({
       )}
 
       {/* ── Nav arrows ──────────────────────────────────────────────── */}
+      {/* Up/down (not left/right) to match the vertical reel + the ↑/↓ keys:
+          prev at top-centre, next at bottom-centre. The bottom one clears the
+          video's native controls. */}
       <div {...chromeHoverHandlers} className={chromeFadeClass}>
-        <NavButton side="left"  onClick={onPrev} disabled={!onPrev} scaled={maxed} {...chromeHoverHandlers} />
-        <NavButton side="right" onClick={onNext} disabled={!onNext} scaled={maxed} {...chromeHoverHandlers} />
+        <NavButton
+          dir="up"
+          onClick={onPrev}
+          disabled={!onPrev}
+          scaled={maxed}
+          posClass="top-4 left-1/2 -translate-x-1/2"
+          {...chromeHoverHandlers}
+        />
+        <NavButton
+          dir="down"
+          onClick={onNext}
+          disabled={!onNext}
+          scaled={maxed}
+          posClass={`left-1/2 -translate-x-1/2 ${item.kind === 'video' ? 'bottom-[var(--kn-controls-clearance)]' : 'bottom-6'}`}
+          {...chromeHoverHandlers}
+        />
       </div>
 
 
@@ -2187,7 +2226,8 @@ function SensitiveBadge({
 // ─── Helpers ───────────────────────────────────────────────────────────
 
 function NavButton({
-  side,
+  dir,
+  posClass,
   onClick,
   disabled,
   scaled = false,
@@ -2195,17 +2235,22 @@ function NavButton({
   onMouseLeave,
   'data-kn-chrome': dataChrome,
 }: {
-  side: 'left' | 'right';
+  /** `up` = previous (top-centre), `down` = next (bottom-centre). Matches the
+   *  vertical reel + the ↑/↓ nav keys. */
+  dir: 'up' | 'down';
+  /** Positioning utility classes for the wrapper (so the call site, which knows
+   *  photo-vs-video and the controls clearance, decides the exact offset). */
+  posClass: string;
   onClick?: () => void;
   disabled?: boolean;
   /** Grow on large displays (maxed mode). The zoom lives on the inner button,
-   *  not this positioned wrapper, so the top-1/2 centering stays exact. */
+   *  not this positioned wrapper, so the centering stays exact. */
   scaled?: boolean;
   /** Forwarded to the positioned wrapper so hovering an arrow holds the chrome
    *  idle timer open. They can't be spread on the chrome group wrapper because
    *  it's zero-size (children are absolutely positioned to the viewer root). */
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
+  onMouseEnter?: React.MouseEventHandler;
+  onMouseLeave?: React.MouseEventHandler;
   /** Chrome marker so the root mouse-move handler counts an arrow as chrome. */
   'data-kn-chrome'?: string;
 }) {
@@ -2215,8 +2260,7 @@ function NavButton({
       data-kn-chrome={dataChrome}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className={`absolute top-1/2 -translate-y-1/2 z-10
-                  ${side === 'left' ? 'left-4' : 'right-4'}`}
+      className={`absolute z-10 ${posClass}`}
     >
       <button
         onClick={(e) => { e.stopPropagation(); onClick?.(); }}
@@ -2224,13 +2268,13 @@ function NavButton({
         // event; swallow it here so it can't reach the media element below
         // (which has its own click-to-toggle-play behavior on videos).
         onDoubleClick={(e) => e.stopPropagation()}
-        title={side === 'left' ? 'Previous — ⇧← or J' : 'Next — ⇧→ or K'}
-        aria-label={side === 'left' ? 'Previous' : 'Next'}
+        title={dir === 'up' ? 'Previous — ↑ or J' : 'Next — ↓ or K'}
+        aria-label={dir === 'up' ? 'Previous' : 'Next'}
         className={`w-11 h-11 rounded-full bg-black/80 hover:bg-black/95
                     text-zinc-100 flex items-center justify-center transition shadow-lg
                     ${scaled ? 'kn-chrome-scaled' : ''}`}
       >
-        {side === 'left' ? <ChevronLeftIcon /> : <ChevronRightIcon />}
+        {dir === 'up' ? <ChevronUpIcon /> : <ChevronDownIcon />}
       </button>
     </div>
   );
@@ -2469,14 +2513,14 @@ function CloseIcon() { return (
     <path d="M3 3l10 10M13 3L3 13" strokeLinecap="round" />
   </svg>
 ); }
-function ChevronLeftIcon() { return (
+function ChevronUpIcon() { return (
   <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3 10l5-5 5 5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 ); }
-function ChevronRightIcon() { return (
+function ChevronDownIcon() { return (
   <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 ); }
 function SparkleIcon() { return (

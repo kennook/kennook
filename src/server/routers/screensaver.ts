@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { router, publicProcedure, adminProcedure } from '@/server/trpc';
-import { getScreensaverRotateMs, setScreensaverRotateMs } from '@/server/app-config';
+import { router, adminProcedure } from '@/server/trpc';
 import {
   listScreensavers,
   removeScreensaver,
@@ -26,7 +25,8 @@ export const screensaverRouter = router({
     .input(z.object({ id: z.string(), enabled: z.boolean() }))
     .mutation(({ input }) => { setScreensaverEnabled(input.id, input.enabled); return { ok: true }; }),
 
-  /** Enable only this clip, disabling every other — a one-click "solo". */
+  /** Make this the active screensaver, disabling every other. Only one clip
+   *  plays at a time. */
   setOnly: adminProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => { setOnlyScreensaver(input.id); return { ok: true }; }),
@@ -40,13 +40,6 @@ export const screensaverRouter = router({
   setSpeed: adminProcedure
     .input(z.object({ id: z.string(), speed: z.number() }))
     .mutation(({ input }) => { setScreensaverSpeed(input.id, input.speed); return { ok: true }; }),
-
-  /** Auto-rotate interval (ms; 0 = off) — how often the screensaver advances to
-   *  the next active clip. Public read (the screensaver needs it); admin write. */
-  rotate: publicProcedure.query(() => ({ ms: getScreensaverRotateMs() })),
-  setRotate: adminProcedure
-    .input(z.object({ ms: z.number().int().min(0) }))
-    .mutation(({ input }) => { setScreensaverRotateMs(input.ms); return { ok: true }; }),
 
   /** Delete a clip (registry entry + its files). Idempotent. */
   remove: adminProcedure

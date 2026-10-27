@@ -11,9 +11,14 @@
  * Self-contained: it listens on `window` (gated to the container's bottom band by
  * the event's own coordinates) rather than covering the controls with a div, so
  * it never blocks clicks on the real scrubber/buttons.
+ *
+ * Keyboard-equivalent (so you don't have to chase the cursor onto the right
+ * screen): the `viewer.bookmarkWheel` shortcut (⇧↑/⇧↓ by default) opens and
+ * moves the wheel; Enter commits the centered tag, Esc cancels — same as scroll.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { getBindings, matchesBinding, useBindingsVersion } from '@/lib/shortcuts';
 
 const DWELL_MS = 2000;        // settle this long on an item to commit it
 const COMMIT_ANIM_MS = 550;   // "saved" flourish before it closes
@@ -52,6 +57,12 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   const dwellRef = useRef<number | null>(null);
   const commitTimerRef = useRef<number | null>(null);
   const lastMoveRef = useRef(0);
+  // When the wheel was opened by the keyboard (not scroll), the cursor may be on
+  // another screen entirely — so a stray mousemove must NOT dismiss it.
+  const openedViaKeyboardRef = useRef(false);
+
+  // Re-resolve the shortcut binding when any override tier changes.
+  const bindingsVersion = useBindingsVersion();
 
   // Video changed under an open wheel → cancel it, so a dwell (or an in-flight
   // commit flourish) can't bookmark the wrong clip at a stale timestamp.
@@ -63,9 +74,20 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   }, [videoKey]);
 
   useEffect(() => {
+    const wheelKeys = getBindings('viewer.bookmarkWheel');
     const set = (v: { index: number; committing: string | null } | null) => { wheelRef.current = v; setWheel(v); };
     const clearDwell = () => { if (dwellRef.current) { window.clearTimeout(dwellRef.current); dwellRef.current = null; } };
     const dismiss = () => { clearDwell(); set(null); };
+    // Open the wheel at the current moment, starting on the first (most-used)
+    // tag. Shared by the scroll and keyboard entry points.
+    const openWheel = (viaKeyboard: boolean) => {
+      openedViaKeyboardRef.current = viaKeyboard;
+      msRef.current = getMsRef.current();
+      lastMoveRef.current = performance.now(); // grace before the first step
+      onOpenRef.current?.();
+      set({ index: 1, committing: null });
+      arm(1);
+    };
     const fire = (index: number) => {
       const item = itemsRef.current[index];
       if (!item || item.dismiss) { dismiss(); return; }
@@ -93,11 +115,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       if (!active) {
         if (!overVideo(e, rect) || items.length <= 2) return; // off the video or no tags → let it scroll
         e.preventDefault();
-        msRef.current = getMsRef.current();
-        lastMoveRef.current = performance.now(); // grace before the first step
-        onOpenRef.current?.();
-        set({ index: 1, committing: null }); // start on the first (most-used) tag
-        arm(1);
+        openWheel(false); // start on the first (most-used) tag
         return;
       }
       e.preventDefault();
@@ -120,12 +138,38 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
 
     const onMove = (e: MouseEvent) => {
       if (!wheelRef.current) return;
+      // A keyboard-opened wheel ignores the cursor — it may be on another screen.
+      if (openedViaKeyboardRef.current) return;
       const rect = bandRect();
       if (!rect) return;
       if (!overVideo(e, rect)) dismiss(); // moused off the video
     };
 
     const onKey = (e: KeyboardEvent) => {
+      // Keyboard equivalent of the scroll wheel — open + move without the cursor.
+      // Direction comes from the key (↑/← = back, ↓/→ = forward).
+      if (wheelKeys.some((k) => matchesBinding(e, k))) {
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        const items = itemsRef.current;
+        const active = wheelRef.current;
+        if (!active) {
+          if (items.length <= 2) return; // no tags to pick → let the key do its default
+          e.preventDefault();
+          e.stopPropagation();
+          openWheel(true);
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        if (active.committing) return; // frozen during the save flourish
+        const dir = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 1;
+        const next = Math.min(items.length - 1, Math.max(0, active.index + dir));
+        if (next !== active.index) set({ index: next, committing: null });
+        arm(next);
+        return;
+      }
+
       const active = wheelRef.current;
       if (!active) return;
       if (e.key === 'Escape') {
@@ -149,7 +193,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       clearDwell();
       if (commitTimerRef.current) { window.clearTimeout(commitTimerRef.current); commitTimerRef.current = null; }
     };
-  }, [containerRef]);
+  }, [containerRef, bindingsVersion]);
 
   if (!wheel) return null;
 

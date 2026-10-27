@@ -12,6 +12,73 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-27
+
+- **Fixed: the window-focus pulse now fires reliably on every window.** The
+  "which window did I just focus?" glow could stay dark on an occasional window
+  because the multi-window presence check was a one-shot handshake — a window
+  that missed the initial messages (e.g. it was in the background when the others
+  opened) thought it was alone forever. It's now a periodic heartbeat that
+  self-heals within a couple of seconds.
+
+- **Fixed: controls no longer flicker/re-appear when you park in a hide-controls
+  hot corner.** Hiding the controls made them ignore the mouse, which fired a
+  stray "mouse left" event that immediately re-showed them — a loop. They now
+  stay hidden while the cursor rests in the corner (or anywhere), and still
+  re-appear the moment you actually move the mouse.
+
+- **Shorter left reel.** The vertical thumbnail column is trimmed by a couple of
+  tiles so it keeps clear of the controls at the top and bottom edges.
+
+- **Viewer reel is now a vertical column on the left — scroll up/down, like a
+  feed.** The "coming up" thumbnails moved from a horizontal strip across the
+  bottom to a vertical column down the left edge, so the viewer reads as an
+  up/down stream (even on desktop) and stays clear of the right-hand info panel.
+  It shows the previously-viewed item on top (click to go back), then Now, then
+  as many upcoming as fit the window height. The on-screen prev/next arrows
+  switched from left/right to **↑ (top) / ↓ (bottom)** to match — the ↑/↓ and
+  J/K keys are unchanged.
+
+- **Quick-bookmark wheel now has a keyboard shortcut.** The scroll-wheel bookmark
+  picker (scroll over a playing video to pick from your most-used tags) can now be
+  driven entirely from the keyboard with **⇧↑ / ⇧↓** — no need to chase the cursor
+  onto the right screen first. First press opens the wheel at the current moment,
+  ⇧↑/⇧↓ move through the tags, Enter saves, Esc cancels. Rebindable in the
+  shortcuts settings and listed in the `?` help. (A wheel opened by keyboard
+  ignores the mouse, so a cursor on another monitor won't dismiss it.)
+
+- **One screensaver at a time (no more rotation).** Running several different
+  clips across many windows on one machine exhausted the browser's per-origin
+  connection pool and brought back the old multi-screen lag. The screensaver is
+  now single-select — switching one clip on turns the others off, and every
+  window/device shows the same one — so they share a single cached stream.
+  Removed the auto-rotate interval setting and the multi-enable toggles.
+
+- **Fixed: screensaver no longer gets stuck on a blank/black screen.** The
+  rotation's fade-to-black used a timer that Chrome throttled on a backgrounded
+  or long-idle tab, which could strand the screen on black until you switched
+  tabs. Removing rotation eliminates that path, and the footage is now nudged
+  back to playing whenever the tab becomes visible again.
+
+- **Screensaver lock: choose a passcode or a password.** The lock settings now
+  offer two kinds of shared secret. A **passcode** is a numeric PIN whose length
+  you set on the fly (4–32 digits) and type into the boxes — a short 4-digit PIN
+  is easy to guess, so longer is available for real security. A **password** is
+  free-form text, entered with a confirmation field. Replaces the fixed 4/6/8
+  choice. (Signed-in users still unlock with their own account password.)
+
+- **Steadier multi-screen walls on a server restart / screensaver load.** Two
+  changes reduce the connection-pool crunch when many windows hit the server at
+  once: screensaver clips are now cached hard (several windows in one browser
+  share a single download instead of each re-fetching), and automatic reloads
+  after a new build are spread over a few seconds of random jitter instead of
+  every screen reloading in the same instant.
+
+- **Fixed: dismissing the screensaver no longer leaves a dimmed "ghost" of the
+  controls.** On the window you dismissed from, the chrome could stay at 30%
+  opacity until you moved the mouse. The post-screensaver "quiet" fade now clears
+  as the dismiss gesture completes, so the page returns to normal right away.
+
 ## [0.13.0] - 2026-09-05
 
 - **Auto-rotate the screensaver.** With more than one screensaver enabled, a new

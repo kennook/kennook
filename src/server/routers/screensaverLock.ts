@@ -2,10 +2,11 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, publicProcedure, adminProcedure } from '@/server/trpc';
 import {
+  getLockSecretType,
   getPasscodeLength,
   isLockEnabled,
   lockModeFor,
-  setLockPasscode,
+  setLockSecret,
   verifyLockInput,
 } from '@/server/screensaver-lock';
 
@@ -26,6 +27,10 @@ export const screensaverLockRouter = router({
     enabled: isLockEnabled(),
     mode: lockModeFor(ctx.userId),
     length: getPasscodeLength(),
+    // The shared secret's kind — tells the client whether the anonymous/kiosk
+    // unlock prompt should be numeric PIN boxes or a password field. Only
+    // meaningful when `mode` is 'passcode' (the shared-secret path).
+    secretType: getLockSecretType(),
   })),
 
   /** Check a dismiss attempt against whatever the session's mode requires.
@@ -35,17 +40,21 @@ export const screensaverLockRouter = router({
     .input(z.object({ value: z.string() }))
     .mutation(({ ctx, input }) => ({ ok: verifyLockInput(ctx.userId, input.value) })),
 
-  /** Set the numeric passcode, or clear it with an empty string. Rejects a
-   *  non-numeric / too-short passcode. */
-  setPasscode: adminProcedure
-    .input(z.object({ passcode: z.string() }))
+  /** Set the shared secret — a numeric `passcode` or a free-form `password` —
+   *  or clear the lock with an empty value. Rejects an invalid value for the
+   *  chosen type. */
+  setSecret: adminProcedure
+    .input(z.object({
+      type: z.enum(['passcode', 'password']),
+      value: z.string(),
+    }))
     .mutation(({ input }) => {
       try {
-        setLockPasscode(input.passcode);
+        setLockSecret(input.type, input.value);
       } catch (e) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: e instanceof Error ? e.message : 'Could not set passcode',
+          message: e instanceof Error ? e.message : 'Could not set the lock',
         });
       }
       return { enabled: isLockEnabled() };

@@ -50,6 +50,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'viewer.addToPlaylist', label: 'Add to playlist', category: 'viewer', defaultKeys: ['p', 'P'], description: 'Opens the playlist picker — ↑/↓ to choose, Enter to add' },
   { id: 'viewer.addTag', label: 'Add tag', category: 'viewer', defaultKeys: ['t', 'T'], description: 'Opens the tag input; stays open as you add tags — Escape to finish' },
   { id: 'viewer.addBookmark', label: 'Add bookmark (tags)', category: 'viewer', defaultKeys: ['b', 'B'], description: 'Video · opens the tag input at the current moment' },
+  { id: 'viewer.bookmarkWheel', label: 'Quick bookmark wheel', category: 'viewer', defaultKeys: ['Shift+ArrowUp', 'Shift+ArrowDown'], description: 'Video · open the most-used-tag wheel at the current moment (same as scrolling over the video); ⇧↑/⇧↓ move, Enter saves, Esc cancels' },
   { id: 'viewer.prevBookmark', label: 'Previous bookmark', category: 'viewer', defaultKeys: ['<'], description: 'Video · jump to the bookmark before the current spot (Shift+,)' },
   { id: 'viewer.nextBookmark', label: 'Next bookmark',     category: 'viewer', defaultKeys: ['>'], description: 'Video · jump to the bookmark after the current spot (Shift+.)' },
   { id: 'viewer.trimStart', label: 'Set trim start (in)', category: 'viewer', defaultKeys: ['['], description: 'Video · autoplay starts here' },
@@ -259,7 +260,7 @@ function bindingHasModifier(binding: string): boolean {
  * item). Shift/Alt are left unconstrained for bare bindings because they're
  * part of producing the character (e.g. "?" is Shift+/). Combos check all four.
  */
-function matchesBinding(e: KeyboardEvent, binding: string): boolean {
+export function matchesBinding(e: KeyboardEvent, binding: string): boolean {
   const { key, mods } = parseBinding(binding);
   if (e.key !== key) return false;
   if (e.metaKey !== mods.has('Meta')) return false;

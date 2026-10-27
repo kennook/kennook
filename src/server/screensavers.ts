@@ -44,8 +44,11 @@ export interface CustomScreensaver {
   name: string;
   status: ScreensaverStatus;
   createdAt: number;
-  /** Whether this clip is in the rotation. Only enabled + ready clips play;
-   *  enable several to rotate, one to pin it. Absent = enabled (back-compat). */
+  /** Whether this clip is the active screensaver. At most one clip is active at
+   *  a time (selecting one deselects the others) — multiple windows on one
+   *  machine each streaming a different clip exhausted the browser's per-origin
+   *  connection pool, so rotation/multi-select was removed. Absent = enabled
+   *  (back-compat; legacy multi-enabled installs are narrowed to one on read). */
   enabled?: boolean;
   /** Boomerang loop desired: play forward then reversed so it returns to the
    *  first frame seamlessly (fixes clips that aren't clean loops). */
@@ -125,13 +128,17 @@ export interface ReadyScreensaver {
   speed: number;
 }
 
-/** Clips that are ready AND enabled — the rotation the client plays, each with
- *  whether its seamless-loop variant is ready and its playback speed. (A clip
- *  with no `enabled` field counts as enabled, for back-compat.) */
+/** The single active screensaver clip, as a 0-or-1 element array (the client
+ *  expects a list). At most one clip plays at a time; if a legacy install has
+ *  several still flagged enabled, the newest wins — deterministic, so every
+ *  window on every device shows the same one (and shares its cached stream
+ *  instead of each opening its own connection). Empty → the built-in set plays. */
 export function readyScreensaverClips(): ReadyScreensaver[] {
-  return readRegistry().clips
+  const active = readRegistry().clips
     .filter((c) => c.status === 'ready' && c.enabled !== false)
-    .map((c) => ({ id: c.id, loop: c.loop === true && c.loopStatus === 'ready', speed: c.speed ?? 1 }));
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (!active) return [];
+  return [{ id: active.id, loop: active.loop === true && active.loopStatus === 'ready', speed: active.speed ?? 1 }];
 }
 
 // ── Mutations ────────────────────────────────────────────────────────────────
@@ -167,9 +174,13 @@ function updateScreensaver(id: string, patch: Partial<CustomScreensaver>): void 
   writeRegistry(reg);
 }
 
-/** Toggle a clip in/out of the rotation. No-op if the id is unknown. */
+/** Make a clip the active screensaver, or turn it off. Enabling one deselects
+ *  every other (only one plays at a time); disabling just clears this one,
+ *  falling back to the built-in set when nothing is left active. No-op if the
+ *  id is unknown. */
 export function setScreensaverEnabled(id: string, enabled: boolean): void {
-  updateScreensaver(id, { enabled });
+  if (enabled) { setOnlyScreensaver(id); return; }
+  updateScreensaver(id, { enabled: false });
   notifyManifestChanged();
 }
 

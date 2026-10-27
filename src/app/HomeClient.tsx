@@ -318,16 +318,15 @@ function HomeContent() {
   useEffect(() => {
     if (!quietMode) return;
     const wake = () => setQuietMode(false);
-    window.addEventListener('mousemove', wake, { passive: true });
-    window.addEventListener('keydown', wake, { passive: true });
-    window.addEventListener('wheel', wake, { passive: true });
-    window.addEventListener('touchstart', wake, { passive: true });
-    return () => {
-      window.removeEventListener('mousemove', wake);
-      window.removeEventListener('keydown', wake);
-      window.removeEventListener('wheel', wake);
-      window.removeEventListener('touchstart', wake);
-    };
+    // The dismiss gesture (mousedown/keydown) that turned quiet mode ON already
+    // fired before these listeners could attach, so we ALSO listen for the tail
+    // of that gesture — mouseup/keyup/click — which fires after we're attached.
+    // Without this the chrome stays dimmed to 30% until some later, unrelated
+    // input, which reads as a stuck "ghost" of the controls on the window that
+    // dismissed the screensaver.
+    const events = ['mousemove', 'mouseup', 'click', 'keydown', 'keyup', 'wheel', 'touchstart'] as const;
+    for (const e of events) window.addEventListener(e, wake, { passive: true });
+    return () => { for (const e of events) window.removeEventListener(e, wake); };
   }, [quietMode]);
 
   // A like on another device — patch our caches the same way the local

@@ -67,8 +67,10 @@ export function ConnectionGuard() {
         if (!reloadingRef.current) {
           reloadingRef.current = true;
           setRefreshing(true);
-          // Let the "refreshing" frame paint, then swap.
-          setTimeout(() => window.location.reload(), 350);
+          // Let the "refreshing" frame paint, then swap — with random jitter so a
+          // wall of screens doesn't all reload in the same instant and hammer the
+          // server (and each browser's connection pool) as one thundering herd.
+          setTimeout(() => window.location.reload(), 350 + Math.floor(Math.random() * 4000));
         }
       } else {
         // Same build, just a restart — resume in place and pull everything
