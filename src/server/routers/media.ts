@@ -1193,6 +1193,48 @@ export const mediaRouter = router({
       return { uuid: input.uuid, rotation: input.rotation };
     }),
 
+  // Report that a video failed to play. Each failed ENCOUNTER (one call per
+  // player session that errored — the client dedupes retries) bumps a persisted
+  // per-item counter shared across all users/sessions. Once it reaches
+  // AUTO_EXCLUDE_FAILS, the item is auto-excluded (same soft-delete as `exclude`)
+  // — a video that fails for many people is genuinely broken, whereas a single
+  // user's one-off failure is likely a transient network/drive blip. This is
+  // separate from the per-session retry count that shows the manual exclude
+  // prompt after a few retries in one sitting.
+  reportPlaybackFailure: publicProcedure
+    .input(z.object({ uuid: z.string(), librarySlug: z.string().optional() }))
+    .mutation(({ input, ctx }) => {
+      const AUTO_EXCLUDE_FAILS = 5;
+      const slug = input.librarySlug ?? ctx.library.slug;
+      const sqlite = getRawSqlite(slug);
+      const item = sqlite.prepare(
+        'SELECT id, fail_count FROM media_items WHERE uuid = ? AND deleted_at IS NULL',
+      ).get(input.uuid) as { id: number; fail_count: number } | undefined;
+      // Already gone (purged or excluded) — nothing to count.
+      if (!item) return { count: 0, autoExcluded: false };
+
+      const count = (item.fail_count ?? 0) + 1;
+      const now = Date.now();
+      const autoExcluded = count >= AUTO_EXCLUDE_FAILS;
+      sqlite.prepare(
+        `UPDATE media_items
+            SET fail_count = ?, ${autoExcluded ? 'deleted_at = ?, ' : ''}updated_at = ?
+          WHERE id = ?`,
+      ).run(...(autoExcluded ? [count, now, now, item.id] : [count, now, item.id]));
+
+      if (autoExcluded) {
+        // Fan out like a manual exclude, but with a SYNTHETIC session id (not the
+        // caller's) so NO window skips it as its own echo — the device that
+        // tripped the threshold must also drop the now-excluded item and close
+        // its viewer, via the same `item.excluded` handler every other device uses.
+        publishToAll({
+          sessionId: 'server:autoexclude',
+          event: { type: 'item.excluded', librarySlug: slug, uuid: input.uuid },
+        });
+      }
+      return { count, autoExcluded };
+    }),
+
   // Soft-delete ("exclude") an item: stamp deleted_at so it drops out of EVERY
   // result set (list/search/similar/playlists/people/facets/enrichment all
   // filter `deleted_at IS NULL`). The row and its files are left on disk —

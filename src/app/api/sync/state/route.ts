@@ -13,7 +13,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { getScreensaverState, getAudioSolo, getDataRev, getConfigRev } from '@/server/sync-broker';
+import { getScreensaverState, getScreensaverOwner, getAudioSolo, getDataRev, getConfigRev, getMediaRev } from '@/server/sync-broker';
 import { getSession } from '@/server/auth';
 import { KENNOOK_BUILD_ID } from '@/lib/version';
 
@@ -30,9 +30,11 @@ export async function GET(req: NextRequest): Promise<Response> {
     // bundle (broken chunks) needs a hard reload or the page can just resume.
     {
       screensaver: getScreensaverState(userId),
+      screensaverOwner: getScreensaverOwner(userId),
       audio: getAudioSolo(userId),
       rev: getDataRev(userId),
       config: getConfigRev(),
+      media: getMediaRev(),
       build: KENNOOK_BUILD_ID,
     },
     { headers: { 'Cache-Control': 'no-store' } },

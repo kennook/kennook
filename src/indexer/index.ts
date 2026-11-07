@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import sharp from 'sharp';
 import exifr from 'exifr';
 import { getRawSqlite } from '@/db/client';
+import { bumpMediaRev } from '@/server/sync-broker';
 import { embedImage, floatArrayToBuffer } from '@/ai/embeddings';
 import {
   DEFAULT_LIBRARY_SLUG,
@@ -507,6 +508,13 @@ async function runFreshIndex(absTarget: string, library: Library, ffmpegOk: bool
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`\nDone. Indexed ${indexed}, skipped ${skipped}, failed ${failed} in ${elapsed}s.`);
+
+  // New media landed → bump the shared media revision so already-open devices
+  // pick it up (at their next safe boundary) without a reload. A DB write, which
+  // is how this separate process reaches the web clients (it can't SSE them).
+  if (indexed > 0) {
+    try { bumpMediaRev(); } catch { /* best-effort — never fail a run over this */ }
+  }
 
   // Persist (or clear) the failure list.
   if (failures.length > 0) {

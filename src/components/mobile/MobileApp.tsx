@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc-client';
+import { windowShuffleSeed } from '@/lib/shuffle-salt';
 import { usePageState } from '@/lib/url-state';
 import { usePreference } from '@/lib/preferences';
 import { useSync, useSyncEvent } from '@/lib/sync';
@@ -107,7 +108,8 @@ export function MobileApp() {
     person: url.person ?? undefined,
     sort: url.sort ?? undefined,
     // Seeded-random order when shuffle is on (overrides sort, server-side).
-    shuffleSeed: url.shuffle ?? undefined,
+    // Per-window salt so each screen scatters independently (see shuffle-salt).
+    shuffleSeed: url.shuffle != null ? windowShuffleSeed(url.shuffle) : undefined,
   };
   const recent = trpc.media.list.useInfiniteQuery(
     { limit: PAGE_SIZE, ...filterArgs },
@@ -354,6 +356,9 @@ export function MobileApp() {
   // devices if you ever roll watched filtering into mobile. Deduped per
   // session via a ref so paging through items doesn't spam the endpoint.
   const { mutate: markViewedMutate } = trpc.media.markViewed.useMutation();
+  // Report a failed video playback → server tracks cumulative cross-user failures
+  // and auto-excludes a video that fails too often (fanned out via item.excluded).
+  const reportPlaybackFailureMutation = trpc.media.reportPlaybackFailure.useMutation();
   const viewedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!selected) return;
@@ -569,6 +574,8 @@ export function MobileApp() {
         onNext={onNext}
         onSetLikes={handleSetLikes}
         onRotate={handleRotate}
+        onPlaybackFailure={(it) =>
+          reportPlaybackFailureMutation.mutate({ uuid: it.uuid, librarySlug: it.librarySlug })}
       />
 
       {filterSheetOpen && (

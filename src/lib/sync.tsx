@@ -23,7 +23,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
  */
 
 export type SyncEvent =
-  | { type: 'screensaver'; open: boolean }
+  | { type: 'screensaver'; open: boolean; owner?: string | null }
   /** The set of custom screensaver clips changed (admin uploaded/removed one,
    *  or a transcode finished). Open clients drop their cached manifest and
    *  re-resolve so the new footage shows without a page reload. */
@@ -65,6 +65,10 @@ export type SyncEvent =
   | { type: 'mediaView.changed'; librarySlug: string; uuid: string; orientation: 'portrait' | 'landscape' }
   /** An admin changed instance configuration; clients refetch the config. */
   | { type: 'config.changed' }
+  /** Media result-membership changed somewhere (new media, tags, likes, exclude/
+   *  move/sensitivity). A hint that list/search results are stale — the consumer
+   *  refetches lazily at a safe boundary, not immediately. */
+  | { type: 'media.changed' }
   /** A shortcut-override tier (tenant or user) changed; clients refetch the
    *  override maps and re-resolve their bindings live. */
   | { type: 'shortcuts.changed' }
@@ -333,14 +337,16 @@ class SyncBroker {
         return;
       }
       const data = (await res.json()) as {
-        screensaver?: boolean; audio?: string | null; rev?: string | null;
-        config?: string | null; build?: string;
+        screensaver?: boolean; screensaverOwner?: string | null;
+        audio?: string | null; rev?: string | null;
+        config?: string | null; media?: string | null; build?: string;
       };
       this.markReachable(data.build);
-      this.handleScreensaverPoll(data.screensaver);
+      this.handleScreensaverPoll(data.screensaver, data.screensaverOwner ?? null);
       this.handleAudioPoll(data.audio);
       this.handleDataRevPoll(data.rev);
       this.handleConfigRevPoll(data.config);
+      this.handleMediaRevPoll(data.media);
     } catch {
       this.failCount++;
       if (this.failCount >= SyncBroker.FAILS_BEFORE_DOWN) this.markUnreachable();
@@ -416,7 +422,7 @@ class SyncBroker {
   }
 
   private lastPolledScreensaver: boolean | null = null;
-  private handleScreensaverPoll(open: boolean | undefined): void {
+  private handleScreensaverPoll(open: boolean | undefined, owner: string | null): void {
     if (typeof open !== 'boolean') return;
     const GUARD_MS = 3000;
     // Within the guard window, trust the just-made local toggle: track the
@@ -427,7 +433,7 @@ class SyncBroker {
     }
     if (open === this.lastPolledScreensaver) return; // no change since last look
     this.lastPolledScreensaver = open;
-    const event: SyncEvent = { type: 'screensaver', open };
+    const event: SyncEvent = { type: 'screensaver', open, owner };
     this.emitLocal(event);                                  // this (leader) tab
     this.bc?.postMessage({ sessionId: SESSION_ID, event }); // sibling tabs
   }
@@ -483,6 +489,23 @@ class SyncBroker {
     this.bc?.postMessage({ sessionId: SESSION_ID, event });
   }
 
+  // Media result-membership revision. On a change, emit `media.changed` so this
+  // device knows its list/search results are stale — but the CLIENT refetches
+  // lazily (only at a safe boundary), so results never yank out mid-view. This
+  // is what makes new media / new tags / like changes appear on OTHER devices
+  // (incl. cross-process, and the separate indexer process) without a reload.
+  private lastPolledMediaRev: string | null | undefined = undefined;
+  private handleMediaRevPoll(rev: string | null | undefined): void {
+    if (rev == null) { this.lastPolledMediaRev = rev ?? null; return; }
+    if (rev === this.lastPolledMediaRev) return;
+    const first = this.lastPolledMediaRev === undefined;
+    this.lastPolledMediaRev = rev;
+    if (first) return;
+    const event: SyncEvent = { type: 'media.changed' };
+    this.emitLocal(event);
+    this.bc?.postMessage({ sessionId: SESSION_ID, event });
+  }
+
   private stopStatePoll(): void {
     this.pollLoopRunning = false;
     if (this.pollScheduled != null) { clearTimeout(this.pollScheduled); this.pollScheduled = null; }
@@ -490,6 +513,7 @@ class SyncBroker {
     this.lastPolledScreensaver = null;
     this.lastPolledRev = undefined;
     this.lastPolledConfigRev = undefined;
+    this.lastPolledMediaRev = undefined;
     this.lastPolledAudio = undefined;
     // Leave `connection`/`serverBuild` as last known: when this tab concedes
     // leadership another tab takes over the heartbeat, and the overlay state

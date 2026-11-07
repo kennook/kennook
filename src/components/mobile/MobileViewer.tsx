@@ -25,6 +25,8 @@ interface Props {
   onSetLikes?: (item: MediaItemDto, count: number) => Promise<void> | void;
   /** Persist a rotation override for the current photo. */
   onRotate?: (item: MediaItemDto, rotation: 0 | 90 | 180 | 270) => void;
+  /** A video failed to play — report it for the cross-user auto-exclude count. */
+  onPlaybackFailure?: (item: MediaItemDto) => void;
   /** Pause playback while the screensaver is up so audio doesn't leak behind it. */
   suspended?: boolean;
   /** Whether the images-only slideshow is currently running. */
@@ -60,7 +62,7 @@ interface Props {
  * VideoPlayer is reused as-is — its own controls work fine on touch.
  */
 export function MobileViewer({
-  item, onClose, onPrev, onNext, onSetLikes, onRotate, suspended = false,
+  item, onClose, onPrev, onNext, onSetLikes, onRotate, onPlaybackFailure, suspended = false,
   slideshow = false, canSlideshow = false, onToggleSlideshow,
   slideshowMs = 0, onSlower, onFaster, atMinSpeed = false, atMaxSpeed = false,
   fit = 'cover', onToggleFit, onSlideshowPrev, onSlideshowNext,
@@ -195,6 +197,7 @@ export function MobileViewer({
           src={item.mediaUrl}
           progressKey={`${item.librarySlug}:${item.uuid}`}
           onFullscreenExit={onClose}
+          onError={onPlaybackFailure ? () => onPlaybackFailure(item) : undefined}
           suspended={suspended}
           fit={fit}
         />
@@ -346,17 +349,23 @@ function NativeVideo({
   src,
   progressKey,
   onFullscreenExit,
+  onError,
   suspended = false,
   fit = 'cover',
 }: {
   src: string;
   progressKey: string;
   onFullscreenExit: () => void;
+  /** Fired once per src when playback fails (feeds the cross-user auto-exclude). */
+  onError?: () => void;
   suspended?: boolean;
   fit?: 'cover' | 'contain';
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const lastSaveRef = useRef(0);
+  // Report a failure at most once per src (don't over-count the same encounter).
+  const errorReportedRef = useRef(false);
+  useEffect(() => { errorReportedRef.current = false; }, [src]);
 
   // Pause when the screensaver comes up so the clip's audio doesn't play behind
   // the black overlay. We don't auto-resume on exit — the user taps play.
@@ -435,6 +444,9 @@ function NativeVideo({
       controls
       autoPlay
       playsInline
+      onError={() => {
+        if (!errorReportedRef.current) { errorReportedRef.current = true; onError?.(); }
+      }}
       // Restore prior position when metadata is ready, skipping silly
       // edge cases (within 2s of start or 5s of end).
       onLoadedMetadata={(e) => {
