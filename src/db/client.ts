@@ -74,7 +74,7 @@ export function ensureLibraryUser(sqlite: ReturnType<typeof getRawSqlite>, userI
 
 // Versioned migrations. Each step bumps PRAGMA user_version after running so
 // it's idempotent. To add a new migration: append a new branch, bump LATEST.
-const LATEST_SCHEMA_VERSION = 31;
+const LATEST_SCHEMA_VERSION = 32;
 
 function applyMigrations(sqlite: DatabaseSync) {
   // Try/catch column additions are kept around for DBs created before we
@@ -689,6 +689,17 @@ function applyMigrations(sqlite: DatabaseSync) {
       );
     `);
     version = 31;
+  }
+
+  // ── v32: per-video cumulative playback-failure counter. Each failed playback
+  // ENCOUNTER (across every user/session — not per retry) bumps it; once it
+  // crosses a threshold the item is auto-excluded (soft-deleted), since a video
+  // that fails for many people is genuinely broken rather than a one-off network
+  // blip. Independent of the per-session retry count that drives the manual
+  // "exclude" prompt after a few retries in one sitting.
+  if (version < 32) {
+    try { sqlite.exec('ALTER TABLE media_items ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0'); } catch { /* exists */ }
+    version = 32;
   }
 
   if (version !== LATEST_SCHEMA_VERSION) {

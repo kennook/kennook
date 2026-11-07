@@ -37,6 +37,8 @@ import { SelectionBar } from '@/components/SelectionBar';
 import { useShortcut } from '@/lib/shortcuts';
 import { useHotCornerEngine } from '@/lib/hot-corner-client';
 import { useSync, useSyncEvent } from '@/lib/sync';
+import { getDeviceId } from '@/lib/device-id';
+import { windowShuffleSeed } from '@/lib/shuffle-salt';
 
 interface SelectionRef {
   librarySlug: string;
@@ -143,6 +145,9 @@ function HomeContent() {
   const [anchor, setAnchor] = useState<SelectionRef | null>(null);
   // Walk-away screensaver. Triggered by `S` shortcut, exits on any input.
   const [screensaverOpen, setScreensaverOpen] = useState(false);
+  // The DEVICE id that started the current screensaver. With the
+  // `screensaver.lockToOrigin` config on, only that device may dismiss it.
+  const [screensaverOwner, setScreensaverOwner] = useState<string | null>(null);
   // Post-screensaver "quiet" state: when true, page chrome (header, sidebar,
   // viewer chrome) fades to a low-opacity, non-interactive state. Cleared on
   // the first real user input (mouse move / key / wheel / touch).
@@ -255,17 +260,23 @@ function HomeContent() {
   const config = trpc.config.list.useQuery(undefined, { staleTime: 30_000 });
   const screensaverEnabled =
     config.data?.find((c) => c.key === 'screensaver.enabled')?.value ?? true;
+  // When on, only the device that started the screensaver can dismiss it.
+  const screensaverLockToOrigin =
+    config.data?.find((c) => c.key === 'screensaver.lockToOrigin')?.value ?? false;
   const utils = trpc.useUtils();
   useSyncEvent('config.changed', () => { void utils.config.list.invalidate(); });
 
   const triggerScreensaver = () => {
     if (!screensaverEnabled) return; // disabled in admin Configuration
     if (screensaverOpen) return;     // already up — ignore a repeat 's' press
+    const owner = getDeviceId();     // stamp THIS device as the originator
+    setScreensaverOwner(owner);
     setScreensaverOpen(true);
-    sync.publish({ type: 'screensaver', open: true });
+    sync.publish({ type: 'screensaver', open: true, owner });
   };
   const dismissScreensaver = () => {
     setScreensaverOpen(false);
+    setScreensaverOwner(null);
     setQuietMode(true);
     sync.publish({ type: 'screensaver', open: false });
   };
@@ -290,6 +301,10 @@ function HomeContent() {
   // this one `screensaver` event, so there's no per-tab poll here anymore.
   useSyncEvent('screensaver', (e) => {
     setScreensaverOpen(e.open && screensaverEnabled);
+    // Track who started it so the lock-to-origin rule knows the owner. Clear it
+    // on close; keep a known owner if a re-assert arrives without one.
+    if (!e.open) setScreensaverOwner(null);
+    else if (e.owner !== undefined && e.owner !== null) setScreensaverOwner(e.owner);
   });
 
   // Restore the persisted (per-user) screensaver state directly on load. The
@@ -302,14 +317,28 @@ function HomeContent() {
     let cancelled = false;
     fetch('/api/sync/state', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { screensaver?: boolean } | null) => {
-        if (!cancelled && d?.screensaver && screensaverEnabled) setScreensaverOpen(true);
+      .then((d: { screensaver?: boolean; screensaverOwner?: string | null } | null) => {
+        if (!cancelled && d?.screensaver && screensaverEnabled) {
+          setScreensaverOpen(true);
+          setScreensaverOwner(d.screensaverOwner ?? null);
+        }
       })
       .catch(() => { /* offline — the poll converges later */ });
     return () => { cancelled = true; };
     // Runs once on mount; screensaverEnabled defaults to true until config loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Escape hatch: if an admin turns the screensaver feature OFF while one is
+  // showing, clear it everywhere. This is also the way out of a lock-to-origin
+  // screensaver whose starting device is gone — toggle the feature off, then on.
+  useEffect(() => {
+    if (!screensaverEnabled && screensaverOpen) {
+      setScreensaverOpen(false);
+      setScreensaverOwner(null);
+      sync.publish({ type: 'screensaver', open: false });
+    }
+  }, [screensaverEnabled, screensaverOpen, sync]);
 
   // While quiet mode is on, any real user input wakes the page back up.
   // Listeners attach only when quietMode flips true so we're not paying for
@@ -401,6 +430,51 @@ function HomeContent() {
     trpcUtils.externalSource.categoryItems.invalidate();
   });
 
+  // ── Deferred media refresh ─────────────────────────────────────────────────
+  // Media result-membership changed somewhere (new media indexed, a tag/like
+  // edit, an exclude/move/sensitivity change). We DON'T refetch the grid live —
+  // that would yank the record a user is watching out of the result set and
+  // break their navigation. Instead we mark results stale and refetch only at a
+  // SAFE BOUNDARY, where swapping the set can't disrupt the current view:
+  //   • the screensaver comes up (hidden swap),
+  //   • a slideshow wraps back to the start (it's shown everything),
+  //   • the fullscreen viewer closes back to the grid,
+  //   • the grid is scrolled to the very top.
+  // Per-window shuffle (see shuffle-salt) means a simultaneous refresh across a
+  // wall of screens lands each one on a DIFFERENT item, not all the same.
+  const mediaStaleRef = useRef(false);
+  const flushMediaRefresh = useCallback(() => {
+    if (!mediaStaleRef.current) return;
+    mediaStaleRef.current = false;
+    utils.media.list.invalidate();
+    utils.media.search.invalidate();
+    utils.media.similar.invalidate();
+    utils.media.facets.invalidate();
+  }, [utils]);
+  useSyncEvent('media.changed', () => { mediaStaleRef.current = true; });
+
+  // Boundary: screensaver activates → refresh behind the black overlay.
+  useEffect(() => { if (screensaverOpen) flushMediaRefresh(); }, [screensaverOpen, flushMediaRefresh]);
+
+  // Boundary: fullscreen viewer CLOSES back to the grid (item → none).
+  const prevViewerItemRef = useRef(url.item);
+  useEffect(() => {
+    if (prevViewerItemRef.current && !url.item) flushMediaRefresh();
+    prevViewerItemRef.current = url.item;
+  }, [url.item, flushMediaRefresh]);
+
+  // Boundary: the grid is scrolled to the very top while plainly browsing (no
+  // viewer, no screensaver) — a refetch there surfaces new items without losing
+  // the user's place (they're already at the top). Masonic scrolls the window.
+  useEffect(() => {
+    const onScroll = () => {
+      if (!mediaStaleRef.current || url.item || screensaverOpen) return;
+      if (window.scrollY <= 4) flushMediaRefresh();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [url.item, screensaverOpen, flushMediaRefresh]);
+
   // Quietly warm the browser cache with the screensaver video during idle
   // time so the first trigger plays instantly. ~1.4MB for 1080p.
   useEffect(() => preloadScreensaverInBackground(), []);
@@ -431,7 +505,9 @@ function HomeContent() {
     person: url.person ?? undefined,
     sensitive: url.sensitive ?? undefined,
     sort: url.sort ?? undefined,
-    shuffleSeed: url.shuffle ?? undefined,
+    // Per-window salt so two screens on the same shuffle URL still scatter
+    // differently (no two showing the same file at the same position).
+    shuffleSeed: url.shuffle != null ? windowShuffleSeed(url.shuffle) : undefined,
     // Only pin the current item to the top while the fullscreen viewer is open —
     // so reshuffling doesn't yank the video you're watching. With the viewer
     // closed (just browsing results) shuffle everything, first item included.
@@ -846,7 +922,9 @@ function HomeContent() {
     : hasMore
       ? () => { advanceAfterLoadRef.current = true; loadMore(); }
       : slideshow && atVeryEnd && items.length > 0
-        ? () => setSelectedUuid(items[0].uuid)
+        // Slideshow looped — it's shown the whole set, so this is the moment to
+        // pull in any changed results (behind the wrap) before starting over.
+        ? () => { flushMediaRefresh(); setSelectedUuid(items[0].uuid); }
         : undefined;
 
   const onSeeSimilar = (item: MediaItemDto) => {
@@ -990,6 +1068,12 @@ function HomeContent() {
       trpcUtils.playlist.get.invalidate();
     },
   });
+
+  // Report a failed video playback. The server tracks a cumulative per-video
+  // failure count across all users and auto-excludes one that fails too often;
+  // when it does, it fans out `item.excluded`, which we already handle (drops it
+  // from caches + closes the viewer), so there's nothing to do on success here.
+  const reportPlaybackFailureMutation = trpc.media.reportPlaybackFailure.useMutation();
 
   const setSensitiveMutation = trpc.media.setSensitive.useMutation({
     onSuccess: () => {
@@ -1459,6 +1543,8 @@ function HomeContent() {
         onSelectItem={(it) => setSelectedUuid(it.uuid)}
         onAddToPlaylist={(it) => setAddToPlaylistItem(it)}
         onExclude={(it) => setExcludeItem(it)}
+        onPlaybackFailure={(it) =>
+          reportPlaybackFailureMutation.mutate({ uuid: it.uuid, librarySlug: it.librarySlug })}
         onMove={(it) => setMoveSelection([{ librarySlug: it.librarySlug, itemUuid: it.uuid }])}
         onSetSensitive={(it, override) =>
           setSensitiveMutation.mutate({ uuid: it.uuid, override, librarySlug: it.librarySlug })
@@ -1558,6 +1644,15 @@ function HomeContent() {
       <Screensaver
         open={screensaverOpen}
         onExit={dismissScreensaver}
+        // Lock-to-origin: when on, only the device that started the screensaver
+        // may dismiss it. Others can't exit and aren't prompted. When a device
+        // can't yet tell who the owner is (owner null — e.g. a legacy session),
+        // fall back to allowing dismissal so nobody gets stuck.
+        canDismiss={
+          !screensaverLockToOrigin
+          || !screensaverOwner
+          || screensaverOwner === getDeviceId()
+        }
       />
     </main>
   );

@@ -42,6 +42,15 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'viewer.zoomIn',     label: 'Zoom in',                 category: 'viewer', defaultKeys: ['+', '='], description: 'Maximize mode only · ranges 100%–400%' },
   { id: 'viewer.zoomOut',    label: 'Zoom out',                category: 'viewer', defaultKeys: ['-', '_'], description: 'Maximize mode only · clamped at 100% (use C for Fit)' },
   { id: 'viewer.like',       label: 'Like (rating +1)',        category: 'viewer', defaultKeys: ['l', 'L'], description: 'Cycles 0 → 5 → 0' },
+  // Set the rating directly. ⌘/Ctrl + digit (plain digits are video seek), so
+  // they override the browser's tab-switch ONLY while an item is open. Both
+  // Meta (macOS ⌘) and Ctrl (Windows/Linux) are bound for cross-platform parity.
+  { id: 'viewer.rate0', label: 'Set rating: none', category: 'viewer', defaultKeys: ['Meta+0', 'Ctrl+0'], description: 'Clear likes to 0 — ⌘/Ctrl+0 (only while viewing an item)' },
+  { id: 'viewer.rate1', label: 'Set rating: 1',    category: 'viewer', defaultKeys: ['Meta+1', 'Ctrl+1'], description: 'Set likes directly — ⌘/Ctrl+1…5 (only while viewing an item)' },
+  { id: 'viewer.rate2', label: 'Set rating: 2',    category: 'viewer', defaultKeys: ['Meta+2', 'Ctrl+2'] },
+  { id: 'viewer.rate3', label: 'Set rating: 3',    category: 'viewer', defaultKeys: ['Meta+3', 'Ctrl+3'] },
+  { id: 'viewer.rate4', label: 'Set rating: 4',    category: 'viewer', defaultKeys: ['Meta+4', 'Ctrl+4'] },
+  { id: 'viewer.rate5', label: 'Set rating: 5',    category: 'viewer', defaultKeys: ['Meta+5', 'Ctrl+5'] },
   { id: 'viewer.voiceTag',   label: 'Voice-tag (hold)',        category: 'viewer', defaultKeys: ['v', 'V'], description: 'Hold to record; release to auto-tag from speech', holdable: true },
   { id: 'viewer.slideshowSlower', label: 'Slideshow: slow down', category: 'viewer', defaultKeys: [','], description: 'Slideshow mode only · +1s per photo' },
   { id: 'viewer.slideshowFaster', label: 'Slideshow: speed up',  category: 'viewer', defaultKeys: ['.'], description: 'Slideshow mode only · −1s per photo' },

@@ -75,6 +75,11 @@ interface Props {
    *  from results after repeated failed retries (a likely-corrupt file). Fires
    *  with no args — the parent knows which item is open. */
   onExclude?: () => void;
+  /** Fired once per player session when playback fails (the source errors). The
+   *  parent reports it to the server, which tracks cumulative failures across
+   *  users and auto-excludes a video that fails too many times. Deduped here so
+   *  retries of the same source don't over-count. */
+  onPlaybackFailure?: () => void;
   /** Your most-used bookmark labels + a commit handler → enables the quick
    *  scroll-wheel bookmark picker over the bottom controls (see BookmarkWheel). */
   topBookmarkLabels?: string[];
@@ -135,6 +140,7 @@ export function VideoPlayer({
   climaxMs,
   onSetClimax,
   onExclude,
+  onPlaybackFailure,
   topBookmarkLabels,
   onQuickBookmark,
   onApi,
@@ -167,8 +173,14 @@ export function VideoPlayer({
   // video. Reset on item swap and on a successful play (onPlaying).
   const [retryCount, setRetryCount] = useState(0);
   const RETRIES_BEFORE_EXCLUDE = 3;
+  // Report a playback failure to the parent at most ONCE per encounter (per src),
+  // so a user's retries don't over-count toward the cross-user auto-exclude.
+  const failureReportedRef = useRef(false);
   // A new src is loading until it can play — reset immediately on item swap.
-  useEffect(() => { setBuffering(true); setDamaged(false); setRetryCount(0); }, [src]);
+  useEffect(() => {
+    setBuffering(true); setDamaged(false); setRetryCount(0);
+    failureReportedRef.current = false;
+  }, [src]);
   // Retry after an error — re-fetch the same source. The `error` event fires on
   // transient issues too (a drive spinning up, a momentary stall), so a reload
   // often succeeds; if it genuinely can't decode, onError just flips back (and
@@ -668,7 +680,15 @@ export function VideoPlayer({
         // missed (the silent-stall case), clear the spinner as soon as we have
         // future data rather than waiting on the watchdog poll.
         onLoadedData={(e) => { if (e.currentTarget.readyState >= 3) setBuffering(false); }}
-        onError={() => { setBuffering(false); setDamaged(true); }}
+        onError={() => {
+          setBuffering(false);
+          setDamaged(true);
+          // Count this failed encounter once (toward the cross-user auto-exclude).
+          if (!failureReportedRef.current) {
+            failureReportedRef.current = true;
+            onPlaybackFailure?.();
+          }
+        }}
         onLoadedMetadata={(e) => {
           const dur = e.currentTarget.duration;
           setDuration(dur);
@@ -1067,7 +1087,6 @@ export function VideoPlayer({
           real controls. */}
       {onQuickBookmark && (
         <BookmarkWheel
-          containerRef={rootRef}
           labels={topBookmarkLabels ?? []}
           getCurrentMs={() => Math.round((videoRef.current?.currentTime ?? 0) * 1000)}
           onCommit={onQuickBookmark}

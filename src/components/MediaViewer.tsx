@@ -97,6 +97,9 @@ interface Props {
   /** Exclude (soft-delete) this item. Parent owns the confirm dialog +
    *  the advance-to-next/close behavior. */
   onExclude?: (item: MediaItemDto) => void;
+  /** A video failed to play. Parent reports it to the server for the cumulative
+   *  cross-user failure count (auto-excludes a video that fails too often). */
+  onPlaybackFailure?: (item: MediaItemDto) => void;
   /** Move this item to another library. Tucked under a kebab menu (less
    *  prominent than the primary actions). Parent owns the move dialog +
    *  the advance-to-next/close behavior. */
@@ -140,6 +143,7 @@ export function MediaViewer({
   reelItems, reelHasMore, onSelectItem,
   onAddToPlaylist,
   onExclude,
+  onPlaybackFailure,
   onMove,
   onSetSensitive,
   maxed: controlledMaxed,
@@ -1034,47 +1038,69 @@ export function MediaViewer({
     pulseChrome();
   }, { enabled: videoToolsEnabled });
 
-  // Bookmark step-through — < / > seek to the nearest mark before / after the
-  // current spot (bookmarks are ordered by time), clamped at the ends (no wrap).
-  // Doesn't force play, so it preserves your play/pause state; EPS ignores the
-  // mark you're basically already on so a repeat press advances. Flashes the
-  // landed-on label so a dense set of marks stays navigable.
+  // Bookmark step-through — < / > seek to the previous / next stop. The stops
+  // are START → bookmark → … → bookmark → END, so you can walk the whole clip,
+  // not just the marks (the start and end are implicit stops with no label).
+  // Clamped at the ends (no wrap). Doesn't force play, so it preserves your
+  // play/pause state; a small EPS ignores the stop you're basically already on
+  // so a repeat press advances. Flashes the landed-on label so a dense set of
+  // marks stays navigable.
   useEffect(() => { setBmFlash(null); }, [item?.uuid]); // clear on item change
   useEffect(() => () => { if (bmFlashTimer.current) window.clearTimeout(bmFlashTimer.current); }, []);
   const jumpBookmark = useCallback((dir: 1 | -1) => {
     pulseChrome();
     playerApiRef.current?.showControls(); // reveal the scrubber so the jump is visible
-    const list = bookmarksQuery.data?.bookmarks;
-    if (!list || list.length === 0) return;
+    const list = bookmarksQuery.data?.bookmarks ?? [];
     const cur = playerApiRef.current?.currentMs() ?? 0;
+    const duration = item?.durationMs ?? null;
 
-    // NEXT: nearest mark strictly ahead of the playhead (skip the one we're on).
-    // PREV: index-based "smart previous" (like a music player's ⏮). Find the mark
-    //   whose chapter we're in (nearest at/just-before the playhead), then step to
-    //   the one BEFORE it when we're within PREV_GRACE of it, else restart it.
-    //   Index-based (not a time subtraction) so it never skips closely-spaced
-    //   marks; the grace window means a playhead drifting forward during playback
-    //   doesn't strand you re-landing on the mark you just left.
-    let target: (typeof list)[number] | undefined;
+    // A navigable stop: a real bookmark, or the implicit START (0) / END.
+    let target: { timeMs: number; label: string } | undefined;
+
     if (dir === 1) {
-      target = list.find((b) => b.timestampMs > cur + 400);
+      // NEXT: nearest mark strictly ahead of the playhead (skip the one we're on);
+      // past the last mark, the next stop is END.
+      const mark = list.find((b) => b.timestampMs > cur + 400);
+      if (mark) target = { timeMs: mark.timestampMs, label: mark.label };
+      else if (duration != null && duration > cur + 400) {
+        // Land just shy of the exact end so a PLAYING clip doesn't immediately
+        // fire 'ended' (which could auto-advance in a slideshow).
+        target = { timeMs: Math.max(0, duration - 100), label: 'End' };
+      }
     } else {
+      // PREV: index-based "smart previous" (like a music player's ⏮). Find the
+      //   mark whose chapter we're in (nearest at/just-before the playhead), then
+      //   step to the stop BEFORE it when we're within PREV_GRACE of it, else
+      //   restart it. Index-based (not a time subtraction) so it never skips
+      //   closely-spaced marks. The stop before the FIRST mark is START (0).
       const PREV_GRACE = 2000;
       let ci = -1; // index of the chapter mark at/just-before the playhead
       for (let i = 0; i < list.length; i++) {
         if (list[i].timestampMs <= cur + 250) ci = i; else break;
       }
-      if (ci < 0) return; // before the first mark — nothing behind
-      target = (cur - list[ci].timestampMs) <= PREV_GRACE && ci > 0 ? list[ci - 1] : list[ci];
+      if (ci < 0) {
+        // In the pre-roll (before the first mark) — the previous stop is START.
+        if (cur > 400) target = { timeMs: 0, label: 'Start' }; // else already at start → clamp
+      } else {
+        const withinGrace = (cur - list[ci].timestampMs) <= PREV_GRACE;
+        if (withinGrace) {
+          target = ci > 0
+            ? { timeMs: list[ci - 1].timestampMs, label: list[ci - 1].label }
+            : { timeMs: 0, label: 'Start' }; // before the first mark → START
+        } else {
+          target = { timeMs: list[ci].timestampMs, label: list[ci].label }; // restart chapter
+        }
+      }
     }
+
     if (!target) return; // clamp at the ends
-    playerApiRef.current?.seek(target.timestampMs);
+    playerApiRef.current?.seek(target.timeMs);
     bmFlashSeq.current += 1;
-    setBmFlash({ label: target.label, timeMs: target.timestampMs, seq: bmFlashSeq.current });
+    setBmFlash({ label: target.label, timeMs: target.timeMs, seq: bmFlashSeq.current });
     if (bmFlashTimer.current) window.clearTimeout(bmFlashTimer.current);
     bmFlashTimer.current = window.setTimeout(() => setBmFlash(null), 1600);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookmarksQuery.data, pulseChrome]);
+  }, [bookmarksQuery.data, item?.durationMs, pulseChrome]);
   useShortcut('viewer.prevBookmark', (e) => { e.preventDefault(); jumpBookmark(-1); }, { enabled: videoToolsEnabled });
   useShortcut('viewer.nextBookmark', (e) => { e.preventDefault(); jumpBookmark(1); }, { enabled: videoToolsEnabled });
 
@@ -1112,11 +1138,11 @@ export function MediaViewer({
 
   const displayLikes = pendingLikes ?? item?.likeCount ?? 0;
 
-  const bumpLikes = useCallback(() => {
+  // Commit an ABSOLUTE like count (debounced + optimistic). Shared by the `l`
+  // cycle (bumpLikes) and the ⌘/Ctrl+N direct-set shortcuts (setLikesTo).
+  const commitLikes = useCallback((next: number) => {
     if (!item || !onSetLikes) return;
     const target = item;
-    const base = pendingLikesRef.current ?? target.likeCount;
-    const next = base >= MAX_LIKES ? 0 : base + 1;
     pendingLikesRef.current = next; // advance immediately so rapid presses chain
     setPendingLikes(next);
     pendingItemRef.current = target;
@@ -1127,13 +1153,26 @@ export function MediaViewer({
     }, LIKE_DEBOUNCE_MS);
     // Flash the like in the middle of the viewer, like a shortcut action.
     flashHud('like', String(next));
+    // Sparkle only when there's actually a rating — clearing to 0 shouldn't
+    // throw confetti.
     const now = Date.now();
-    if (now - lastSparkleAtRef.current > LIKE_DEBOUNCE_MS) {
+    if (next > 0 && now - lastSparkleAtRef.current > LIKE_DEBOUNCE_MS) {
       lastSparkleAtRef.current = now;
       setSparkleKey((k) => k + 1);
     }
     pulseChrome();
   }, [item, onSetLikes, pulseChrome]);
+
+  const bumpLikes = useCallback(() => {
+    if (!item || !onSetLikes) return;
+    const base = pendingLikesRef.current ?? item.likeCount;
+    commitLikes(base >= MAX_LIKES ? 0 : base + 1);
+  }, [item, onSetLikes, commitLikes]);
+
+  // Set the rating directly (⌘/Ctrl+0…5), clamped to the valid range.
+  const setLikesTo = useCallback((n: number) => {
+    commitLikes(Math.max(0, Math.min(MAX_LIKES, n)));
+  }, [commitLikes]);
 
   // Clear the optimistic overlay once the server count catches up — then
   // subsequent bumps base off the real value again.
@@ -1166,6 +1205,17 @@ export function MediaViewer({
   }, [item?.uuid, pendingLikes, onSetLikes]);
 
   useShortcut('viewer.like', bumpLikes, { enabled: !!item && !!onSetLikes });
+
+  // Direct rating set — ⌘/Ctrl+0…5. Enabled only when an item is open, so the
+  // combos override the browser's tab-switch only while viewing (useShortcut
+  // preventDefaults modifier combos). Six fixed hooks (stable call order).
+  const canSetLikes = !!item && !!onSetLikes;
+  useShortcut('viewer.rate0', () => setLikesTo(0), { enabled: canSetLikes });
+  useShortcut('viewer.rate1', () => setLikesTo(1), { enabled: canSetLikes });
+  useShortcut('viewer.rate2', () => setLikesTo(2), { enabled: canSetLikes });
+  useShortcut('viewer.rate3', () => setLikesTo(3), { enabled: canSetLikes });
+  useShortcut('viewer.rate4', () => setLikesTo(4), { enabled: canSetLikes });
+  useShortcut('viewer.rate5', () => setLikesTo(5), { enabled: canSetLikes });
 
   // On each new item, flash its rating as center hearts (the same HUD the like
   // action uses) — replaces the old top rating chip. Rated items only, so
@@ -1442,6 +1492,8 @@ export function MediaViewer({
               // After repeated failed retries the error panel offers to exclude
               // the likely-corrupt video — routes through the standard confirm.
               onExclude={onExclude ? () => onExclude(item) : undefined}
+              // Report a failed playback encounter (cross-user auto-exclude).
+              onPlaybackFailure={onPlaybackFailure ? () => onPlaybackFailure(item) : undefined}
               onApi={(api) => { playerApiRef.current = api; }}
               // Autoplay trim: shaded on the scrubber always; enforced (start/
               // stop) only during the slideshow.
@@ -1684,11 +1736,23 @@ export function MediaViewer({
           {reelItems && onSelectItem && position && (
             <div
               data-component="viewer-reel-wrapper"
-              className={`absolute left-3 top-16 z-20 ${chromeFadeClass}
-                          ${item.kind === 'video'
-                            ? 'bottom-[var(--kn-controls-clearance)]'
-                            : (maxed ? 'bottom-[var(--kn-toolbar-clearance)]' : 'bottom-16')}
+              // z-[5]: BELOW the action controls (toolbar/nav/counter are z-10) so
+              // the reel never steals their clicks where they overlap on the left
+              // — it only needs to sit above the media (z-auto).
+              className={`absolute left-3 top-16 z-[5] ${chromeFadeClass}
                           flex items-stretch pointer-events-none`}
+              // Bottom stops ABOVE the bottom-left toolbar so they don't overlap:
+              // for video the toolbar sits at --kn-controls-clearance, so clear it
+              // by that plus the toolbar's own height (toolbar-clearance minus its
+              // bottom-3 base); for a photo (maxed) the reel ends at the toolbar's
+              // top (--kn-toolbar-clearance); non-maxed has no bottom-left toolbar.
+              style={{
+                bottom: item.kind === 'video'
+                  ? 'calc(var(--kn-controls-clearance) + var(--kn-toolbar-clearance) - 0.75rem)'
+                  : maxed
+                    ? 'var(--kn-toolbar-clearance)'
+                    : '4rem',
+              }}
             >
               <div className="pointer-events-auto h-full" {...chromeHoverHandlers}>
                 <ViewerReel

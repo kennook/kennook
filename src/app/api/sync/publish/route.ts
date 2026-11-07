@@ -26,10 +26,10 @@ export async function POST(req: NextRequest) {
   // own windows/devices, never other accounts. Screensaver additionally
   // persists under the user's id so a (re)connecting tab syncs to their truth.
   const userId = getSession(req.headers.get('cookie')).userId;
-  const env = payload as { sessionId?: string; event?: { type?: string; open?: boolean } };
+  const env = payload as { sessionId?: string; event?: { type?: string; open?: boolean; owner?: string } };
   const evt = env?.event;
   if (evt?.type === 'screensaver' && typeof evt.open === 'boolean') {
-    setScreensaverState(userId, evt.open);
+    setScreensaverState(userId, evt.open, evt.owner ?? null);
   } else if (evt?.type === 'audio.unmuted') {
     // Persist the solo owner (origin session) so cross-process devices mute via
     // the poll — the in-memory publishToUser below only reaches this process.

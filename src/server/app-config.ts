@@ -40,6 +40,16 @@ export const CONFIG_SCHEMA: ConfigItem[] = [
     default: true,
   },
   {
+    key: 'screensaver.lockToOrigin',
+    label: 'Only the starting device can dismiss',
+    description:
+      'When the screensaver is triggered, only the device that started it can ' +
+      'dismiss it. Other connected devices show the screensaver but can’t exit ' +
+      'it — they aren’t even prompted for the passcode. Off → any device can ' +
+      'dismiss (with the passcode/password if one is set).',
+    default: false,
+  },
+  {
     key: 'auth.anonymousViewing',
     label: 'Anonymous viewing',
     description:

@@ -19,6 +19,7 @@ export function ScreensaverAdmin() {
   const config = trpc.config.list.useQuery();
   const enabled = config.data?.find((c) => c.key === 'screensaver.enabled')?.value ?? true;
   const softenFilter = config.data?.find((c) => c.key === 'screensaver.filter')?.value ?? true;
+  const lockToOrigin = config.data?.find((c) => c.key === 'screensaver.lockToOrigin')?.value ?? false;
 
   const set = trpc.config.set.useMutation({
     onMutate: async ({ key, value }) => {
@@ -74,6 +75,26 @@ export function ScreensaverAdmin() {
             disabled={set.isPending || config.isLoading}
             label="Soften screensaver footage"
             onChange={(value) => set.mutate({ key: 'screensaver.filter', value })}
+          />
+        </div>
+
+        {/* Dismissal control */}
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 max-w-2xl
+                        flex items-start justify-between gap-4 mb-6">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-zinc-100">Only the starting device can dismiss</div>
+            <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">
+              When the screensaver is triggered, only the device that started it
+              can dismiss it. Other connected devices show the screensaver but
+              can’t exit it — they aren’t even prompted for the passcode. Off → any
+              device can dismiss (with the passcode/password if one is set).
+            </p>
+          </div>
+          <Toggle
+            on={lockToOrigin}
+            disabled={set.isPending || config.isLoading}
+            label="Only the starting device can dismiss the screensaver"
+            onChange={(value) => set.mutate({ key: 'screensaver.lockToOrigin', value })}
           />
         </div>
 

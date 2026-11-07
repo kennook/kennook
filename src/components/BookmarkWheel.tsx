@@ -1,20 +1,17 @@
 'use client';
 
 /**
- * Quick bookmark picker — an "easter-egg" scroll wheel over the video controls.
- * Scroll the mouse wheel in the bottom controls band of a playing video and a
- * vertical wheel of your most-used bookmark tags appears; keep scrolling to move
- * through them; dwell ~3s on one and it's saved at the moment you opened the
- * wheel (no typing). The first and last entries are "Cancel"; mousing out of the
- * controls area or pressing Escape also dismisses.
+ * Quick bookmark picker — a vertical wheel of your most-used bookmark tags that
+ * you step through with the keyboard. Open it with the `viewer.bookmarkWheel`
+ * shortcut (⇧↑/⇧↓ by default) on a playing video; ⇧↑/⇧↓ move through the tags,
+ * Enter commits the centered one at the moment you opened it (no typing), Esc
+ * cancels. Dwell ~2s on a tag and it commits on its own. The first and last
+ * entries are "Cancel".
  *
- * Self-contained: it listens on `window` (gated to the container's bottom band by
- * the event's own coordinates) rather than covering the controls with a div, so
- * it never blocks clicks on the real scrubber/buttons.
- *
- * Keyboard-equivalent (so you don't have to chase the cursor onto the right
- * screen): the `viewer.bookmarkWheel` shortcut (⇧↑/⇧↓ by default) opens and
- * moves the wheel; Enter commits the centered tag, Esc cancels — same as scroll.
+ * Keyboard-only by design: a scroll-wheel gesture used to open it too, but that
+ * fired too easily during normal scrolling, so it was removed in favour of the
+ * explicit shortcut. Self-contained — it listens on `window` and never covers
+ * the real controls.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -22,12 +19,10 @@ import { getBindings, matchesBinding, useBindingsVersion } from '@/lib/shortcuts
 
 const DWELL_MS = 2000;        // settle this long on an item to commit it
 const COMMIT_ANIM_MS = 550;   // "saved" flourish before it closes
-const MOVE_COOLDOWN_MS = 85; // throttle wheel → one step per interval so it's easy to land on one
 const SLOTS = [-2, -1, 0, 1, 2] as const;
 
 interface WheelItem { dismiss: boolean; label: string }
 interface Props {
-  containerRef: React.RefObject<HTMLElement | null>;
   labels: string[];
   getCurrentMs: () => number;
   onCommit: (timeMs: number, label: string) => void;
@@ -38,7 +33,7 @@ interface Props {
   videoKey?: string;
 }
 
-export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, onOpen, videoKey }: Props) {
+export function BookmarkWheel({ labels, getCurrentMs, onCommit, onOpen, videoKey }: Props) {
   const [wheel, setWheel] = useState<{ index: number; committing: string | null } | null>(null);
 
   const items = useMemo<WheelItem[]>(() => [
@@ -56,10 +51,6 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
   const msRef = useRef(0);
   const dwellRef = useRef<number | null>(null);
   const commitTimerRef = useRef<number | null>(null);
-  const lastMoveRef = useRef(0);
-  // When the wheel was opened by the keyboard (not scroll), the cursor may be on
-  // another screen entirely — so a stray mousemove must NOT dismiss it.
-  const openedViaKeyboardRef = useRef(false);
 
   // Re-resolve the shortcut binding when any override tier changes.
   const bindingsVersion = useBindingsVersion();
@@ -78,12 +69,9 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
     const set = (v: { index: number; committing: string | null } | null) => { wheelRef.current = v; setWheel(v); };
     const clearDwell = () => { if (dwellRef.current) { window.clearTimeout(dwellRef.current); dwellRef.current = null; } };
     const dismiss = () => { clearDwell(); set(null); };
-    // Open the wheel at the current moment, starting on the first (most-used)
-    // tag. Shared by the scroll and keyboard entry points.
-    const openWheel = (viaKeyboard: boolean) => {
-      openedViaKeyboardRef.current = viaKeyboard;
+    // Open the wheel at the current moment, starting on the first (most-used) tag.
+    const openWheel = () => {
       msRef.current = getMsRef.current();
-      lastMoveRef.current = performance.now(); // grace before the first step
       onOpenRef.current?.();
       set({ index: 1, committing: null });
       arm(1);
@@ -101,53 +89,9 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
     };
     const arm = (index: number) => { clearDwell(); dwellRef.current = window.setTimeout(() => fire(index), DWELL_MS); };
 
-    const bandRect = () => containerRef.current?.getBoundingClientRect() ?? null;
-    // Anywhere over the video (the whole element) — both to open and to keep open.
-    const overVideo = (e: { clientX: number; clientY: number }, rect: DOMRect) =>
-      e.clientX >= rect.left && e.clientX <= rect.right
-      && e.clientY >= rect.top && e.clientY <= rect.bottom;
-
-    const onWheel = (e: WheelEvent) => {
-      const rect = bandRect();
-      if (!rect) return;
-      const items = itemsRef.current;
-      const active = wheelRef.current;
-      if (!active) {
-        if (!overVideo(e, rect) || items.length <= 2) return; // off the video or no tags → let it scroll
-        e.preventDefault();
-        openWheel(false); // start on the first (most-used) tag
-        return;
-      }
-      e.preventDefault();
-      if (active.committing) return; // frozen during the save flourish
-      // Throttle: advance at most one item per MOVE_COOLDOWN_MS regardless of how
-      // fast the wheel fires (trackpads/hi-res wheels emit many events), so it's
-      // easy to land on one. Any scroll still re-arms the dwell so it won't commit
-      // mid-scroll.
-      const now = performance.now();
-      if (now - lastMoveRef.current >= MOVE_COOLDOWN_MS) {
-        lastMoveRef.current = now;
-        const dir = e.deltaY > 0 ? 1 : -1;
-        const next = Math.min(items.length - 1, Math.max(0, active.index + dir));
-        if (next !== active.index) set({ index: next, committing: null });
-        arm(next);
-      } else {
-        arm(active.index);
-      }
-    };
-
-    const onMove = (e: MouseEvent) => {
-      if (!wheelRef.current) return;
-      // A keyboard-opened wheel ignores the cursor — it may be on another screen.
-      if (openedViaKeyboardRef.current) return;
-      const rect = bandRect();
-      if (!rect) return;
-      if (!overVideo(e, rect)) dismiss(); // moused off the video
-    };
-
     const onKey = (e: KeyboardEvent) => {
-      // Keyboard equivalent of the scroll wheel — open + move without the cursor.
-      // Direction comes from the key (↑/← = back, ↓/→ = forward).
+      // Open + move the wheel from the keyboard (no cursor involved). Direction
+      // comes from the key (↑/← = back, ↓/→ = forward).
       if (wheelKeys.some((k) => matchesBinding(e, k))) {
         const t = e.target as HTMLElement | null;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -157,7 +101,7 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
           if (items.length <= 2) return; // no tags to pick → let the key do its default
           e.preventDefault();
           e.stopPropagation();
-          openWheel(true);
+          openWheel();
           return;
         }
         e.preventDefault();
@@ -183,17 +127,13 @@ export function BookmarkWheel({ containerRef, labels, getCurrentMs, onCommit, on
       }
     };
 
-    window.addEventListener('wheel', onWheel, { passive: false });
-    window.addEventListener('mousemove', onMove);
     window.addEventListener('keydown', onKey, { capture: true });
     return () => {
-      window.removeEventListener('wheel', onWheel);
-      window.removeEventListener('mousemove', onMove);
       window.removeEventListener('keydown', onKey, { capture: true });
       clearDwell();
       if (commitTimerRef.current) { window.clearTimeout(commitTimerRef.current); commitTimerRef.current = null; }
     };
-  }, [containerRef, bindingsVersion]);
+  }, [bindingsVersion]);
 
   if (!wheel) return null;
 

@@ -12,6 +12,62 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-07
+
+- **Other devices now pick up new and updated media on their own.** Until now, a
+  screen left alone never refreshed its results — newly indexed videos, new tags,
+  likes, or exclusions made on one device wouldn't appear on another until a
+  manual reload. Now any such change is picked up automatically — but only at a
+  **safe moment** so it never yanks the item you're watching out from under you:
+  when the screensaver comes up, when a slideshow loops back to the start, when
+  you close the fullscreen viewer, or when the grid is scrolled to the top. New
+  media from the indexer propagates the same way.
+
+- **Each screen now shuffles independently.** Two screens signed in as the same
+  user no longer share one shuffle order, so they won't land on the same file at
+  the same time — each window scatters the same library differently.
+
+- **Bookmark navigation now includes the start and end of the video.** Stepping
+  back (`<`) from before the first bookmark jumps to the very beginning, and
+  stepping forward (`>`) past the last bookmark jumps to the end — so the marks
+  you walk through are **start → bookmark → … → bookmark → end**, not just the
+  bookmarks themselves.
+
+- **Set a rating directly with ⌘/Ctrl + number.** While viewing an item, press
+  ⌘0–⌘5 (Ctrl0–Ctrl5 on Windows/Linux) to set its like level straight to that
+  number — no more tapping **L** repeatedly to cycle around. ⌘0 clears it. These
+  only intercept the keys while an item is open, so ⌘-number still switches
+  browser tabs everywhere else; all rebindable in the shortcuts settings.
+
+- **Auto-exclude videos that keep failing for everyone.** KenNook now tracks how
+  often each video fails to play, across all users and devices. A single user's
+  one-off failure is usually a transient network/drive blip, so nothing changes
+  there — you still get the Retry prompt, and after a few failed retries in one
+  sitting the manual "Exclude from search" option (unchanged). But once the same
+  video has failed **5 times** in total — the same user coming back to it, or
+  different users hitting it while browsing — it's **automatically excluded** from
+  results (soft-delete; the file stays on disk and is recoverable), on the
+  assumption that a video failing for many people is genuinely broken.
+
+- **Removed the scroll-wheel bookmark gesture on videos.** Scrolling over a
+  playing video no longer opens the quick-bookmark wheel — it fired too easily
+  during normal scrolling. Use the keyboard shortcut instead (⇧↑/⇧↓ by default),
+  which does the same thing more deliberately.
+
+- **Fixed: the left thumbnail reel no longer blocks the viewer controls.** In
+  full-screen, the reel column could sit on top of the bottom-left controls (Like,
+  Info, …), making them unclickable. The reel now renders beneath the controls and
+  stops above the toolbar, so they’re always clickable and no longer overlapped.
+
+- **Screensaver: optionally lock dismissal to the starting device.** A new
+  Screensaver admin toggle, "Only the starting device can dismiss." When on, the
+  device that triggers the screensaver is the only one that can exit it (with the
+  passcode/password if one is set); every other connected device shows the
+  screensaver but can’t dismiss it and isn’t prompted at all — useful for a wall
+  of screens controlled from one place. Off by default (any device can dismiss,
+  as before). If the starting device goes away, turn the screensaver feature off
+  and back on to clear it everywhere.
+
 ## [0.14.0] - 2026-10-27
 
 - **Fixed: the window-focus pulse now fires reliably on every window.** The

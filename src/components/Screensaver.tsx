@@ -9,6 +9,11 @@ import { PinInput } from '@/components/PinInput';
 interface Props {
   open: boolean;
   onExit: () => void;
+  /** When false, this device may NOT dismiss the screensaver — dismiss gestures
+   *  are ignored and the unlock prompt never appears (the `screensaver.
+   *  lockToOrigin` rule, for every device except the one that started it).
+   *  Defaults to true. */
+  canDismiss?: boolean;
 }
 
 /**
@@ -105,7 +110,7 @@ const SCREENSAVER_FILTER = 'brightness(0.2) contrast(1) saturate(0.8) blur(4px)'
  * overlay can be bypassed with devtools — but a real screen-lock for a
  * signed-in session.
  */
-export function Screensaver({ open, onExit }: Props) {
+export function Screensaver({ open, onExit, canDismiss = true }: Props) {
   // Lazily resolve the video to play on first open. Two pieces of state
   // need to come together first:
   //   - the manifest (fetched on demand, cached for the session)
@@ -184,6 +189,9 @@ export function Screensaver({ open, onExit }: Props) {
   const promptInputRef = useRef<HTMLInputElement>(null);
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
+  // Latest canDismiss for the once-mounted window listeners (like lockedRef).
+  const canDismissRef = useRef(canDismiss);
+  canDismissRef.current = canDismiss;
 
   // Reset the prompt whenever the screensaver closes so the next open starts
   // clean (no stale entry text / error).
@@ -364,9 +372,10 @@ export function Screensaver({ open, onExit }: Props) {
   useEffect(() => {
     if (!open || prompting) return;
 
-    // Locked → a dismiss gesture reveals the prompt instead of exiting.
-    // Unlocked → exit immediately, as before.
+    // lock-to-origin → this (non-owner) device can't dismiss at all: swallow the
+    // gesture, no prompt. Locked → reveal the unlock prompt. Else → exit now.
     const dismiss = () => {
+      if (!canDismissRef.current) return;
       if (lockedRef.current) setPrompting(true);
       else onExit();
     };
