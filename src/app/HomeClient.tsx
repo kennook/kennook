@@ -443,9 +443,17 @@ function HomeContent() {
   // Per-window shuffle (see shuffle-salt) means a simultaneous refresh across a
   // wall of screens lands each one on a DIFFERENT item, not all the same.
   const mediaStaleRef = useRef(false);
+  // Armed by a refresh so the orphan-recovery effect (below) knows to re-seat a
+  // viewer whose item fell OUT of the refreshed set — e.g. you were watching a
+  // video full-screen, the screensaver fired a refresh, and an "unwatched" filter
+  // dropped the (now-watched) video from the results. We start a fresh playlist
+  // from the new head instead of leaving a dead viewer. Armed only by a refresh
+  // (not on initial load), so a plain deep link still stays on its exact item.
+  const refreshJumpRef = useRef(false);
   const flushMediaRefresh = useCallback(() => {
     if (!mediaStaleRef.current) return;
     mediaStaleRef.current = false;
+    refreshJumpRef.current = true;
     utils.media.list.invalidate();
     utils.media.search.invalidate();
     utils.media.similar.invalidate();
@@ -769,6 +777,23 @@ function HomeContent() {
     if (!reshuffleJumpRef.current) return;
     if (showingStale || active.isLoading) return; // wait for the fresh result set
     reshuffleJumpRef.current = false;
+    if (selectedUuid && items.length > 0 && !items.some((i) => i.uuid === selectedUuid)) {
+      setSelectedUuid(items[0].uuid);
+    }
+  }, [showingStale, active.isLoading, items, selectedUuid, setSelectedUuid]);
+
+  // A deferred media refresh (e.g. fired while the screensaver was up) re-fetched
+  // the results, and the item open in the viewer may have fallen out of the fresh
+  // set — most often an "unwatched"/filter result dropping the video you were just
+  // watching. That orphans the viewer (Next dead, reel lost). When the refresh
+  // armed `refreshJumpRef`, re-seat onto the new head once the fresh page lands —
+  // a different video + a fresh playlist. Unlike the slideshow re-anchor this also
+  // covers plain full-screen, but ONLY after a refresh (never on first load), so a
+  // deep link still opens on its exact item.
+  useEffect(() => {
+    if (!refreshJumpRef.current) return;
+    if (showingStale || active.isLoading) return; // wait for the fresh result set
+    refreshJumpRef.current = false;
     if (selectedUuid && items.length > 0 && !items.some((i) => i.uuid === selectedUuid)) {
       setSelectedUuid(items[0].uuid);
     }
