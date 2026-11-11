@@ -8,7 +8,13 @@ export const metadata: Metadata = {
   description: 'Your personal media library, smarter.',
   icons: {
     icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    apple: [{ url: '/icon-192.png' }],
   },
+  // Installed-PWA hints. The manifest (app/manifest.ts) is what makes it
+  // installable — an installed PWA gets Chrome autoplay-with-sound that survives
+  // the auto-update reload. These round out the install / standalone experience.
+  applicationName: 'KenNook',
+  appleWebApp: { capable: true, title: 'KenNook', statusBarStyle: 'black-translucent' },
 };
 
 // Disable pinch + double-tap zoom on mobile. The viewer's video element
@@ -21,6 +27,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: '#1A1815',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -12,6 +12,23 @@ Anything under **Upgrade notes** requires action on the operator's part
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-11
+
+- **KenNook is now installable as an app (PWA).** Added a web-app manifest and
+  icons, so Chrome offers "Install KenNook" and it runs in its own standalone
+  window. The practical win: an installed app gets Chrome's autoplay-with-sound
+  permission, and that survives the silent auto-update reload — so after you cut
+  a release, screens resume playing videos **with sound on their own**, instead
+  of needing someone to walk device-to-device and press play. Install once per
+  screen (Chrome address-bar install icon) and run it as the app.
+
+- **Fixed: a background refresh no longer leaves the viewer stranded.** If a
+  results refresh happened while you were watching a video full-screen (e.g. the
+  screensaver came up) and that video dropped out of the refreshed set — common
+  with an "unwatched" filter once you'd just watched it — the viewer could be left
+  unable to advance, with its reel/playlist lost. It now starts a fresh playlist
+  from the new head instead. (A plain deep link still opens on its exact item.)
+
 ## [0.15.0] - 2026-11-07
 
 - **Other devices now pick up new and updated media on their own.** Until now, a
